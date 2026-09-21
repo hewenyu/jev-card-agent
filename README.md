@@ -45,7 +45,7 @@ Each hand has a persistent session. Inputs include visible action history, oppon
 
 For successful Jev requests, records retain the original request and the schema-parsed `model`, `usage` and `answers`; they do not archive the verbatim HTTP response. Failed calls retain attempts, status and available diagnostic details, which may be incomplete.
 
-Jev gets an initial attempt and **at most three retries**, sharing the action deadline and persistent cost budget. Attempts, failures, known usage and unknown-cost reservations are recorded separately. If no valid model result arrives in time, the runtime records a legal fallback. Authentication failures and budget or ledger failures are not blindly retried. Optional analysis providers follow bounded retries too and are never enabled automatically.
+Every submitted live action must come from Jev. Jev gets an initial attempt and **at most three retries**, with **10 seconds per request and 40 seconds for the whole decision**, always bounded by the platform action deadline. Costs are recorded for review and never impose a monetary limit. If no valid Jev result is available, the runtime records the failed decision, submits no locally chosen action and stops playing. This stop persists across restarts; an operator must explicitly resume through the private management interface. The platform may apply its own timeout action, which is not a Jev choice. Authentication, provider balance, model identity and ledger failures are not blindly retried.
 
 Decision views show saved analysis, the thinking text or summary actually returned by the provider, Jev probabilities and the final choice. Missing thinking is marked unavailable; the application does not invent it. Jev probabilities are not poker equity or expected profit.
 
@@ -75,14 +75,14 @@ cp -n .env.example .env
 chmod 600 .env
 ```
 
-Fill in `OPEN_POKER_API_KEY` and `JEV_API_KEY` in your private `.env`, plus an independent `API_TOKEN` for internal administration; the browser never receives these credentials. Pure Jev needs no analysis-model key. `DEEPSEEK_API_KEY` is only needed when explicitly enabling the DeepSeek combined policy. See the [configuration guide](docs/running.md) for protocols, timeouts and budgets.
+Fill in `OPEN_POKER_API_KEY` and `JEV_API_KEY` in your private `.env`, plus an independent `API_TOKEN` for internal administration; the browser never receives these credentials. Pure Jev needs no analysis-model key. `DEEPSEEK_API_KEY` is only needed when explicitly enabling the DeepSeek combined policy. See the [configuration guide](docs/running.md) for protocols, timeouts and cost records.
 
 ```sh
 # Check platform authentication without joining a table.
 npm run diagnose
 
-# Join real matches with bounded runtime and model spending.
-npm run bot -- --strategy jev --max-hands 10 --max-minutes 30 --budget-usd 1
+# Join real matches with bounded hand count and runtime.
+npm run bot -- --strategy jev --max-hands 10 --max-minutes 30
 ```
 
 To serve the website and agent together, configure:
@@ -91,9 +91,11 @@ To serve the website and agent together, configure:
 PUBLIC_HISTORY=true
 AUTO_START_BOT=true
 BOT_STRATEGY=jev
+JEV_TIMEOUT_MS=10000
+JEV_DECISION_TIMEOUT_MS=40000
 ```
 
-Set these values explicitly after copying `.env.example`. Keep existing Jev timeouts, budgets and the cost ledger when switching strategies. Auto-start has no hand or duration cap and enables auto-rebuy; model calls remain subject to existing budgets and platform availability. Recorded raw game events and decision history are retained, while model session inputs stay bounded. Future review findings injected into the harness should be versioned and compared on the same frozen inputs.
+Set these values explicitly after copying `.env.example`. Preserve the cost ledger when switching strategies. Auto-start has no hand or duration cap and enables auto-rebuy; a persisted model-failure stop blocks automatic play until an operator resumes it. There is no application monetary budget gate. Recorded raw game events and decision history are retained, while model session inputs stay bounded. Future review findings injected into the harness should be versioned and compared on the same frozen inputs.
 
 Then run `npm run build` and `npm run start`. Without auto-start, the server only serves the console. The standalone `bot` command is a separate entry point; use one runtime per Bot and database. Real model calls cost money, and hand/time limits do not guarantee that many hands will finish.
 
@@ -106,6 +108,7 @@ sh scripts/manage.sh start
 sh scripts/manage.sh status
 sh scripts/manage.sh logs
 sh scripts/manage.sh backup
+sh scripts/manage.sh resume
 sh scripts/manage.sh stop
 sh scripts/manage.sh restart
 sh scripts/manage.sh update
@@ -115,7 +118,7 @@ sh scripts/manage.sh update
 
 GitHub Actions checks the project and automatically publishes **uncached `linux/amd64` and `linux/arm64` images**, pulling a fresh base image. **Server updates remain manual.** Normal updates preserve history and the model-cost ledger. See [deployment](docs/deployment.md) and [image releases](docs/docker-release.md).
 
-For this deployment, the owner has authorized archiving the old samples and starting pure Jev collection with empty local history. The [reset procedure](docs/deployment.md#经明确要求开始全新运行) is to validate and publish the new image, drain and stop the old runtime, take a private consistent backup, then clear old runs, hands, decisions, actions, events, evaluations, funding-display records and recovery checkpoints offline. Preserve the cost ledger and unknown reservations, and retain newly collected history continuously. This does not reset model spending, the official account balance or OpenPoker’s records. This paragraph describes the authorized plan; completion evidence belongs in the verification report.
+This update preserves all existing runs, hands, decisions, raw events and cost records. The corrected runtime starts a new run carrying its code and context versions, so earlier fallback-contaminated samples remain reviewable without being mistaken for new Jev-only observations. Do not clear history during this update. A model-failure stop survives container restart and image updates; `sh scripts/manage.sh resume` invokes the protected `POST /api/runtime/resume` endpoint and starts with the configured strategy. The public website cannot resume play.
 
 ## Development and verification
 
@@ -133,7 +136,7 @@ Real Arena runs and provider calls are documented, but they do not establish lon
 ## Documentation
 
 - [Architecture and scope](docs/architecture.md)
-- [Evaluation methodology and budgets](docs/evaluation.md)
+- [Evaluation methodology and cost accounting](docs/evaluation.md)
 - [OpenPoker and model contracts](docs/transports.md)
 - [Running, configuration and backups](docs/running.md)
 - [Server deployment and manual updates](docs/deployment.md)

@@ -36,6 +36,9 @@ case "$action" in
     docker compose ps
     exit 0
     ;;
+  resume)
+    docker compose exec -T app node --input-type=module < "$script_dir/resume-runtime.mjs"
+    ;;
   logs)
     docker compose logs --tail 100 -f "$@" app
     exit 0
@@ -54,7 +57,7 @@ case "$action" in
     exit 0
     ;;
   *)
-    printf '%s\n' 'Usage: sh scripts/manage.sh {start|stop|restart|update|status|logs|backup}' >&2
+    printf '%s\n' 'Usage: sh scripts/manage.sh {start|stop|restart|update|resume|status|logs|backup}' >&2
     exit 2
     ;;
 esac

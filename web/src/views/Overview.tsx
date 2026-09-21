@@ -32,6 +32,12 @@ export function Overview({ run, revision }: { run: RunSummary | undefined; revis
         <Empty title="No runs recorded">Statistics appear when the agent starts playing.</Empty>
       ) : (
         <>
+          {run.fallbackCount > 0 && (
+            <p className="warning-notice">
+              This run includes {number(run.fallbackCount)} historical runtime fallback decisions.
+              These results include their outcomes and are not a pure Jev comparison.
+            </p>
+          )}
           <div className="metrics-grid results-metrics">
             <article className="metric">
               <span>

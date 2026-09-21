@@ -70,9 +70,8 @@ curl --fail http://127.0.0.1:8787/health
 | `JEV_API_KEY`              | TypeSafe Jev 凭据；Jev/组合策略必需                           |
 | `JEV_BASE_URL`             | `https://api.typesafe.ai`                                     |
 | `JEV_MODEL`                | `jev-1.13.0`                                                  |
-| `JEV_TIMEOUT_MS`           | `3000`，纯 Jev 调用/决策预算                                  |
-| `TOTAL_BUDGET_USD`         | `9`，当前数据库记录的累计模型预算                             |
-| `RUN_BUDGET_USD`           | `1`，未由启动参数覆盖时的单 Run 预算                          |
+| `JEV_TIMEOUT_MS`           | `10000`，单次 Jev 请求期限                                    |
+| `JEV_DECISION_TIMEOUT_MS`  | `40000`，纯 Jev 整次决策期限，仍受平台行动期限约束            |
 | `HOST`、`PORT`             | `127.0.0.1`、`8787`                                           |
 | `DATABASE_PATH`            | `data/jev.sqlite`；生产持久化路径                             |
 | `DEMO_DATABASE_PATH`       | `data/demo.sqlite`；演示路径                                  |
@@ -84,7 +83,7 @@ curl --fail http://127.0.0.1:8787/health
 
 `OPENPOKER_API_KEY`、`OPENPOKER_WS_URL`、`OPENPOKER_REST_URL` 作为兼容别名保留；同时配置时优先 `OPEN_POKER_*`。
 
-费用是用量与配置单价的估算，不是账户余额或供应商账单。取消/失败而用量未知的调用保留费用预留，不假定失败免费。费用账本随数据库保存；复制新库或删除旧库会分离账本，不能据此重新获得已经消费的额度。
+费用是用量与配置单价的估算，不是账户余额或供应商账单。取消/失败而用量未知的调用保留费用预留，不假定失败免费。费用账本随数据库保存；未知用量预留仅用于估算费用，不阻止后续调用。程序不再使用 `TOTAL_BUDGET_USD`、`RUN_BUDGET_USD` 或 `--budget-usd`；从私有配置移除旧项，供应商真实余额不足仍会作为模型失败停牌。
 
 ## 连接与模型探针
 
@@ -110,36 +109,41 @@ npm run diagnose -- --reasoning --skip-openpoker
 
 ## 正式自动参赛
 
-填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY` 与内部 `API_TOKEN`，设置 `AUTO_START_BOT=true`、`BOT_STRATEGY=jev`、`PUBLIC_HISTORY=true`，执行 `npm run build`、`npm run start`。纯 Jev 不需要 `DEEPSEEK_API_KEY` 或其他分析模型密钥；已有超时与费用预算保持不变。完整地址与部署配置见[部署手册](deployment.md)。服务启动后自动参赛，网页只展示实时牌桌、自己的手牌和已保存决策。策略、模型、预算和自动启动配置保存在后台。
+填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY` 与内部 `API_TOKEN`，设置 `AUTO_START_BOT=true`、`BOT_STRATEGY=jev`、`PUBLIC_HISTORY=true`，执行 `npm run build`、`npm run start`。纯 Jev 不需要 `DEEPSEEK_API_KEY` 或其他分析模型密钥；单次请求默认 10 秒，整次决策默认 40 秒，最多重试三次。费用只记录，不作金额限制。完整地址与部署配置见[部署手册](deployment.md)。服务启动后自动参赛，网页只展示实时牌桌、自己的手牌和已保存决策。策略、模型、期限和自动启动配置保存在后台。
 
 无界面入口：
 
 ```sh
-npm run bot -- --strategy jev --max-hands 10 --max-minutes 30 --budget-usd 1 --buy-in 2000
+npm run bot -- --strategy jev --max-hands 10 --max-minutes 30 --buy-in 2000
 ```
 
 该命令会正式入队、匹配、自动决策和结算。不要同时用同一 Bot 启动其他 Runtime。单数据库 lease 防止重复本地控制，不能协调另一数据库或另一台机器上的 Bot。
 
-| 参数               | 含义                                                        |
-| ------------------ | ----------------------------------------------------------- |
-| `--strategy jev`   | 本轮纯 Jev 策略；`jev-reasoning` 与 `baseline` 可作显式对照 |
-| `--max-hands 10`   | 达到手数后停止；默认 `0` 不按手数限制                       |
-| `--max-minutes 30` | 时长上限；默认 `0` 不按时长限制                             |
-| `--budget-usd 1`   | 单 Run 模型费用限制                                         |
-| `--buy-in 2000`    | 虚拟筹码买入；当前平台范围 1,000–5,000                      |
-| `--no-auto-rebuy`  | 关闭默认启用的自动补充虚拟筹码                              |
+| 参数               | 含义                                                             |
+| ------------------ | ---------------------------------------------------------------- |
+| `--strategy jev`   | 本轮纯 Jev 策略；组合模型实验需显式配置，baseline 仅用于离线对照 |
+| `--max-hands 10`   | 达到手数后停止；默认 `0` 不按手数限制                            |
+| `--max-minutes 30` | 时长上限；默认 `0` 不按时长限制                                  |
+| `--buy-in 2000`    | 虚拟筹码买入；当前平台范围 1,000–5,000                           |
+| `--no-auto-rebuy`  | 关闭默认启用的自动补充虚拟筹码                                   |
 
-手数、时长分别是停止条件，不保证指定时间内匹配并完成足够手数。两者均 `0` 时持续参赛，仍受模型预算、平台状态和明确停止影响。
+手数、时长分别是停止条件，不保证指定时间内匹配并完成足够手数。两者均 `0` 时持续参赛，仍受平台行动期限、模型失败停牌和明确停止影响。
 
 首次 `SIGINT`/`SIGTERM` 请求在手牌边界优雅停止，默认不设等待上限；第二次信号请求强制离桌。Compose 部署使用 `sh scripts/manage.sh stop` 等待手牌完成并确认离桌后停止服务。更新代码或迁移数据前先停止 Bot，并确认 Runtime 已停止且平台已离桌，再关闭服务；单手可能超过容器的停止宽限期，不应以强杀容器代替正常排空。
 
-默认重启控制台服务不会自动开始新 Run。重新执行 Bot 命令或启用自动启动时会检查实际牌桌并恢复状态，不把旧回合建议直接提交到新回合。baseline 无 Jev 费用，但仍参加真实 OpenPoker 对局。
+默认重启控制台服务不会自动开始新 Run。重新执行 Bot 命令或启用自动启动时会检查实际牌桌并恢复状态，不把旧回合建议直接提交到新回合。baseline 对照使用下文离线评估入口，不作为正式采样的行动来源。
 
-服务器需要在容器重启后恢复自主参赛时，设置 `AUTO_START_BOT=true`、`BOT_STRATEGY=jev`，保留同一持久数据库。HTTP 监听成功后会调用一次正常的 Bot 启动流程：买入 `2000`、启用 auto-rebuy、不限制手数和时长，单 Run 模型预算使用 `RUN_BUDGET_USD`，累计预算仍使用持久账本。启动失败会输出错误、关闭 HTTP 服务并以失败状态退出，由容器重启策略处理。Demo 和只读 Demo 即使设置此开关也不会自动参赛。CLI 的手数、时长和费用限制仍按指定启动参数生效。
+服务器需要在容器重启后恢复自主参赛时，设置 `AUTO_START_BOT=true`、`BOT_STRATEGY=jev`，保留同一持久数据库。HTTP 监听成功后会调用一次正常的 Bot 启动流程：买入 `2000`、启用 auto-rebuy、不限制手数和时长，模型费用持续记录但不限制调用金额；持久模型失败停牌存在时不会自动入队。启动失败会输出错误、关闭 HTTP 服务并以失败状态退出，由容器重启策略处理。Demo 和只读 Demo 即使设置此开关也不会自动参赛。CLI 的手数、时长限制仍按指定启动参数生效。
 
 此开关只控制进程启动后的参赛，不下载或更新镜像。服务器镜像更新由部署者手动执行 `sh scripts/manage.sh update`，脚本先等待当前手牌结束并确认离桌，再通过 Compose 拉取和重建；不要安装自动更新镜像的服务。
 
-需要由进程管理器自动重启的本地无界面服务，可在构建后使用 `node --env-file-if-exists=.env dist/cli/bot.js --strategy jev --budget-usd 1` 作为启动命令。该命令启动即参赛，默认不限手数/时长。Docker 部署使用下文的 Compose 管理入口和 `AUTO_START_BOT`，保留控制台及管理 API。模型累计预算随持久数据库保留；同一账号只运行一个实例。
+需要由进程管理器自动重启的本地无界面服务，可在构建后使用 `node --env-file-if-exists=.env dist/cli/bot.js --strategy jev` 作为启动命令。该命令启动即参赛，默认不限手数/时长。Docker 部署使用下文的 Compose 管理入口和 `AUTO_START_BOT`，保留控制台及管理 API。模型费用账本与失败停牌状态随持久数据库保留；同一账号只运行一个实例。
+
+## 模型失败停牌与显式恢复
+
+每个正式提交的行动必须有 Jev 的有效合法选择；失败、取消或过期结果不触发本地 check/fold。回合已变化的旧请求取消后直接丢弃；当前合法行动无法获得有效模型结果时，Runtime 保存失败决策和调用诊断后停止参赛，并持久记录停牌状态。平台可能自行执行超时动作，复盘需按平台事件保留，不能归入 Jev 已接受决策。暂停后不继续用本地规则消耗盲注，也不自动重启采样。
+
+服务、容器重启和镜像更新不会清除模型失败停牌。排除实际供应商故障后，由服务器操作者执行 `sh scripts/manage.sh resume`。该命令从容器内访问带内部 Bearer 鉴权的 `POST /api/runtime/resume`，默认按当前配置启动新 Run；公开网页不能触发。HTTP 健康与只读历史在停牌期间仍可用。不要删除数据库、恢复检查点或费用记录来绕过停牌。
 
 ## 账户筹码、牌桌筹码与自动补筹
 
@@ -172,7 +176,7 @@ npm run bot -- --strategy jev --max-hands 10 --max-minutes 30 --budget-usd 1 --b
 
 可选组合流程：**冻结本手 session 与当前局面 → 推理分析 → Jev 最终选择 → Runtime 校验并提交**。推理模型只提供建议和可观察依据，没有动作提交权。只有后台显式设置 `REASONING_MODE=adaptive` 时，才使用旧的 **Jev 初始选择及路由 → 按需分析 → Jev 再次选择** 流程。
 
-always 模式分析超时、预算不足或供应商失败时，在剩余时间内由 Jev 决策；无法及时获得合法模型结果时使用本地 fallback，不转向 GPT、Claude 或其他 provider。adaptive 模式分析失败时可保留仍有效的初始 Jev 选择。两种模式的迟到结果均由 Runtime 拒绝，记录失败阶段，不将故障降级标记为完成分析。
+always 模式分析超时或供应商失败时，在剩余时间内由 Jev 决策；无法及时获得有效 Jev 结果时不提交本地动作，记录失败并持久停牌，不转向 GPT、Claude 或其他 provider。adaptive 模式分析失败时可保留仍有效的初始 Jev 选择。两种模式的迟到结果均由 Runtime 拒绝，记录失败阶段，不将故障降级标记为完成分析。
 
 | 变量                                 | 含义                                                                        |
 | ------------------------------------ | --------------------------------------------------------------------------- |
@@ -194,14 +198,14 @@ always 模式分析超时、预算不足或供应商失败时，在剩余时间�
 | `REASONING_INPUT_PRICE_PER_MILLION`  | 标准 provider 输入价格预留估算，按实际定价核对                              |
 | `REASONING_OUTPUT_PRICE_PER_MILLION` | 标准 provider 输出价格预留估算，按实际定价核对                              |
 
-组合策略实验需要显式记录 provider、型号、thinking、超时与费用配置；这些可选变量不启用纯 Jev 的额外分析调用。DeepSeek 使用独立输入、缓存命中和输出价格；官方峰值估算见[验证记录](verification.md)。首次请求后最多重试 3 次，受共同的 Hybrid deadline 和预算限制，不保证用完次数。
+组合策略实验需要显式记录 provider、型号、thinking、超时与费用配置；这些可选变量不启用纯 Jev 的额外分析调用。DeepSeek 使用独立输入、缓存命中和输出价格；官方峰值估算见[验证记录](verification.md)。首次请求后最多重试 3 次，受共同的 Hybrid deadline 限制，不保证用完次数。
 
 `responses` 使用 `POST /v1/responses` 与 Bearer 鉴权；`messages` 使用 `POST /v1/messages`、`x-api-key` 和 Anthropic 版本头。这是模型 HTTP 协议，不是 OpenPoker webhook。
 
 模型名按供应商实际支持的标识配置。`.env.example` 的默认模型名和保守价格参数不等于代理商的支持或价格承诺。响应实际模型与请求不一致时，默认作为 `reasoning_model_mismatch` 拒绝，不把代理替换的模型算作指定模型验证成功。
 
 ```sh
-npm run bot -- --strategy jev-reasoning --max-hands 10 --max-minutes 30 --budget-usd 1
+npm run bot -- --strategy jev-reasoning --max-hands 10 --max-minutes 30
 ```
 
 记录保留分析模式、实际分析、供应商实际返回的思考摘要、Jev 最终选择、请求/实际模型、各次调用状态及用量；adaptive 模式另记录 Jev 路由判断。供应商未返回思考文本时明确标记缺失，不补写。供应商兼容性、身份、费用和延迟以真实探针/运行证据为准；mock 测试只证明客户端行为。
@@ -255,6 +259,7 @@ HOST=0.0.0.0 READ_ONLY_DEMO=true DEMO_DATABASE_PATH=data/public-demo.sqlite node
 
 ```sh
 sh scripts/manage.sh backup
+sh scripts/manage.sh resume
 ```
 
 管理脚本通过 `docker compose exec` 使用容器内 Node.js SQLite online backup，在 `/app/data/backups/` 创建一致副本，再通过 `docker compose cp` 复制到宿主机 `data/backups/`。备份含敏感运行数据，默认宿主目录位于 Git 忽略的 `data/` 下，应限制访问，不公开上传。
@@ -311,6 +316,7 @@ sh scripts/manage.sh update
 sh scripts/manage.sh status
 sh scripts/manage.sh logs
 sh scripts/manage.sh backup
+sh scripts/manage.sh resume
 ```
 
 `start` 使用配置的镜像，默认是 `hewenyulucky/jev-card-agent:latest`，首次缺少镜像时自动拉取；发现已有运行实例时保持容器不变，配置调整通过 `restart` 或 `update` 生效。`stop`、`restart`、`update` 先请求正常停止，等待当前手牌结束并通过平台 REST 确认离桌；无法确认时不继续停止或替换容器。`restart` 使用本地镜像，`update` 才显式拉取配置标签的最新镜像并重建。旧 `scripts/update-container.sh` 入口保留并转交 `manage.sh update`。`logs` 显示最近 100 行并持续跟踪，Ctrl+C 只退出日志查看。
@@ -339,14 +345,14 @@ npm run test:e2e
 
 ## 持续收集与会话复盘
 
-本次按所有者授权安排一次历史归档与清理：先在手牌边界离桌、停止服务、备份旧数据库，再离线清理旧 Run、手牌、决策、行动、事件、评估、资金展示和恢复检查点，新版纯 Jev 从空的本地历史采样。正常重启与后续更新仍保留新采集历史；费用账本、未知费用预留、官方账户余额和官方比赛记录不清零。具体步骤见[清理流程](deployment.md#经明确要求开始全新运行)，实际完成状态另记验证报告。
+本次复盘后的更新保留全部已有历史和费用账本，不清空数据库。新版以独立 Run 和明确的代码、上下文版本重新采样；旧版 fallback 样本按实际决策来源单独分析，不作为新版全部动作来自 Jev 的证据。
 
-本轮 Bot 目标使用 `BOT_STRATEGY=jev`，由 Jev 直接选择合法候选，先运行数小时收集真实数据。不会每次调用 DeepSeek，也不自动调用 GPT 或 Claude；超时、预算不足或无法及时取得合法模型结果时明确记录 fallback。配置目标不等于已经完成数小时持续运行验收，实际时间和样本量另见验证记录。
+本轮 Bot 目标使用 `BOT_STRATEGY=jev`，由 Jev 直接选择合法候选，先运行数小时收集真实数据。不会每次调用 DeepSeek，也不自动调用 GPT 或 Claude；无法及时取得有效 Jev 结果时明确记录失败，不提交本地动作并停牌。配置目标不等于已经完成数小时持续运行验收，实际时间和样本量另见验证记录。
 
 每手一个本地持久会话，同手不同动作有独立 decisionId 和 turn。上下文包括当前行动历史、对手统计及样本分母、最近 10 手已核实结果，并保留当前决策的信息截止。完整原始事件与决策记录持久保存，模型输入仍有大小上限，不把整个数据库无限附加到每次请求。组合策略的同手分析记忆最多 12 次，每回合分析最多 4000 字符、合计最多 12,000 字符，优先保留较近回合；完整供应商文本另存用于复盘。请求由保存的上下文重建，不依赖供应商托管会话。
 
-后续将复盘结论注入 harness 时，应显式标注策略版本、提示或上下文构造版本，冻结同一批原始输入进行对照，并记录运行配置、时间范围、样本量、错误与 fallback。当前服务不根据新历史在线自动修改策略，也不把短期盈利当作已验证优势。
+后续将复盘结论注入 harness 时，应显式标注策略版本、提示或上下文构造版本，冻结同一批原始输入进行对照，并记录运行配置、时间范围、样本量和错误；旧版数据另列 fallback 来源。当前服务不根据新历史在线自动修改策略，也不把短期盈利当作已验证优势。
 
-Jev 与推理服务默认均为首次调用后最多重试 3 次，每次尝试独立计费和记录。重试仅用于临时网络错误、限流、服务端错误、单次超时或无效响应；鉴权、余额/总预算、模型不匹配或账本失败不盲目重试。所有尝试共享当前行动期限，不延长 OpenPoker 窗口，也不重复提交下注。取消或失败后仍保留已经完成的分析及已知调用记录。
+Jev 与推理服务默认均为首次调用后最多重试 3 次，每次尝试独立计费和记录。重试仅用于临时网络错误、限流、服务端错误、单次超时或无效响应；鉴权、供应商余额、模型不匹配或账本失败不盲目重试。所有尝试共享当前行动期限，不延长 OpenPoker 窗口，也不重复提交下注。取消或失败后仍保留已经完成的分析及已知调用记录。
 
 按所有者的公开演示要求，实时页面展示 Bot 当前手牌、决策处理阶段及本手已保存的决策复盘。历史中保留分析、供应商实际返回的思考摘要、Jev 最终选择和调用记录；供应商未返回思考文本时显示未提供，不补写。网页不能改策略或触发新调用。

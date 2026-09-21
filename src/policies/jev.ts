@@ -78,7 +78,7 @@ export class JevProvider implements RoutingJev {
     if (!config.apiKey.trim()) throw new Error('Jev API key is required');
     this.model = config.model ?? 'jev-1.13.0';
     this.url = endpoint(config.baseUrl ?? 'https://api.typesafe.ai', 'systemone');
-    this.timeoutMs = config.timeoutMs ?? 3000;
+    this.timeoutMs = config.timeoutMs ?? 10000;
     if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs <= 0)
       throw new Error('Invalid Jev timeout');
     this.fetcher = config.fetch ?? globalThis.fetch;
@@ -167,7 +167,7 @@ export class JevProvider implements RoutingJev {
       questions.needs_analysis = {
         type: 'choice',
         instructions:
-          'Would a separate reasoning model’s brief analysis materially help this decision enough to justify its latency and cost? Decide from strategic ambiguity and incomplete evidence, not a fixed numerical confidence threshold. The first action choice remains available if analysis cannot finish.',
+          'Would a separate reasoning model’s brief analysis materially improve this decision within the remaining action time? Decide from strategic ambiguity and incomplete evidence, not monetary cost or a fixed numerical confidence threshold. The first action choice remains available if analysis cannot finish.',
         criteria: {
           yes: 'Request an additional analysis before a final Jev decision.',
           no: 'Use the current Jev action directly; additional analysis is unnecessary.',

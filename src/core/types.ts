@@ -3,6 +3,7 @@ import type { StrategyVersions } from './versions.js';
 import type { DecisionSession } from './session.js';
 
 export type RawMessage = Record<string, unknown>;
+export type DecisionSource = 'jev' | 'baseline' | 'fallback' | 'unavailable';
 export type Action = 'fold' | 'check' | 'call' | 'raise' | 'all_in';
 export type Street = 'idle' | 'preflop' | 'flop' | 'turn' | 'river';
 export interface ValidAction {
@@ -29,6 +30,8 @@ export interface HistoryEntry {
   street: Street;
   amount: number | null;
   toCallBefore: number | null;
+  reportedStreet?: string | null;
+  streetSource?: 'pre_action_state' | 'event';
   actionId: string | null;
   timestamp: string | null;
 }
@@ -97,7 +100,7 @@ export interface DecisionContext {
 export interface Proposal {
   candidateId: string;
   selected: string;
-  source: 'jev' | 'baseline' | 'fallback';
+  source: DecisionSource;
   explanation: string;
   probabilities?: Record<string, number>;
   confidence?: number;

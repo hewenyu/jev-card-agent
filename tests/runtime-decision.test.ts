@@ -73,17 +73,18 @@ describe('decision failure accounting', () => {
       15,
       (progress) => phases.push(progress.phase),
     );
-    expect(result?.action?.payload.action).toBe('check');
+    expect(result?.action).toBeNull();
+    expect(result?.decision.status).toBe('failed');
     expect(result?.decision.proposal.attempts).toEqual([attempt]);
     expect(result?.decision.proposal.routing?.analysis).toBe('Completed advisory');
     expect(result?.decision.proposal.routing?.thinking).toBe('Returned summary');
-    expect(phases).toEqual(['jev', 'fallback']);
+    expect(phases).toEqual(['jev']);
     callback?.({
       phase: 'jev',
       analysis: 'Late overwrite',
       attempts: [{ ...attempt, id: 'late' }],
     });
-    expect(phases).toEqual(['jev', 'fallback']);
+    expect(phases).toEqual(['jev']);
     expect(result?.decision.proposal.attempts).toHaveLength(1);
   });
 
@@ -112,26 +113,27 @@ describe('decision failure accounting', () => {
     expect(result?.decision.proposal.routing?.analysis).toBe('Partial provider result');
   });
 
-  it('propagates provider ledger failures instead of submitting a fallback', async () => {
-    await expect(
-      decide(
-        task(),
-        {
-          apiKey: 'unused',
-          store: {} as RuntimeStore,
-          policy: {
-            decide: async () => {
-              throw new ProviderLedgerError(new Error('ledger failed'));
-            },
+  it('records provider ledger failures without submitting a fallback', async () => {
+    const result = await decide(
+      task(),
+      {
+        apiKey: 'unused',
+        store: {} as RuntimeStore,
+        policy: {
+          decide: async () => {
+            throw new ProviderLedgerError(new Error('ledger failed'));
           },
         },
-        'run',
-        1000,
-      ),
-    ).rejects.toThrow('ledger failed');
+      },
+      'run',
+      1000,
+    );
+    expect(result?.decision.status).toBe('failed');
+    expect(result?.decision.fallbackReason).toBe('ledger failed');
+    expect(result?.action).toBeNull();
   });
 
-  it('settles known failed-provider usage and preserves diagnostics in the legal fallback trace', async () => {
+  it('preserves failed-provider usage and diagnostics without submitting a fallback', async () => {
     const attempt = {
       id: 'attempt1',
       provider: 'jev' as const,
@@ -144,13 +146,11 @@ describe('decision failure accounting', () => {
       errorCode: 'invalid_choice',
       diagnostics: { choice: 'unknown', probabilitySum: 0.82 },
     };
-    const budget = { reserve: vi.fn(() => 'reservation1'), settle: vi.fn() };
     const result = await decide(
       task(),
       {
         apiKey: 'unused',
         store: {} as RuntimeStore,
-        budget,
         policy: {
           decide: async () => {
             throw new ProviderError('invalid_choice', attempt);
@@ -160,42 +160,47 @@ describe('decision failure accounting', () => {
       'run1',
       1000,
     );
-    expect(result?.action?.payload.action).toBe('check');
-    expect(result?.decision.proposal.source).toBe('fallback');
+    expect(result?.action).toBeNull();
+    expect(result?.decision.status).toBe('failed');
+    expect(result?.decision.proposal.source).toBe('unavailable');
     expect(result?.decision.proposal.attempts).toEqual([attempt]);
     expect(result?.decision.fallbackReason).toBe('invalid_choice');
-    expect(budget.settle).toHaveBeenCalledTimes(1);
-    expect(budget.settle).toHaveBeenCalledWith(
-      'reservation1',
-      expect.objectContaining({ usage: attempt.usage }),
-    );
   });
 
-  it('keeps unknown failures reserved and refuses to hide ledger failures as model fallbacks', async () => {
-    const budget = { reserve: vi.fn(() => 'reservation1'), settle: vi.fn() };
-    await decide(
+  it('rejects a local policy proposal in strict Jev mode', async () => {
+    const policy = {
+      decide: vi.fn(async () => ({
+        candidateId: 'check',
+        selected: 'check',
+        source: 'baseline' as const,
+        explanation: 'local rule',
+        latencyMs: 0,
+      })),
+    };
+    const result = await decide(
       task(),
-      {
-        apiKey: 'unused',
-        store: {} as RuntimeStore,
-        budget,
-        policy: {
-          decide: async () => {
-            throw new Error('network failure');
-          },
-        },
-      },
+      { apiKey: 'unused', store: {} as RuntimeStore, policy },
       'run1',
       1000,
     );
-    expect(budget.settle).toHaveBeenCalledWith('reservation1', null);
+    expect(result?.action).toBeNull();
+    expect(result?.decision.status).toBe('failed');
+    expect(result?.decision.fallbackReason).toBe('non_jev_policy_proposal');
+    expect(result?.decision.proposal.selected).toBe('');
+  });
+
+  it('does not call a model or select a local action when recovery time is unknown', async () => {
+    const current = { ...task(), recovered: true };
     const policy = { decide: vi.fn() };
-    budget.reserve.mockImplementation(() => {
-      throw new Error('ledger unavailable');
-    });
-    await expect(
-      decide(task(), { apiKey: 'unused', store: {} as RuntimeStore, budget, policy }, 'run1', 1000),
-    ).rejects.toThrow('ledger unavailable');
+    const result = await decide(
+      current,
+      { apiKey: 'unused', store: {} as RuntimeStore, policy },
+      'run1',
+      1000,
+    );
     expect(policy.decide).not.toHaveBeenCalled();
+    expect(result?.decision.status).toBe('failed');
+    expect(result?.decision.fallbackReason).toBe('recovered_turn_unknown_remaining_time');
+    expect(result?.action).toBeNull();
   });
 });

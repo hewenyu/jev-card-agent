@@ -28,7 +28,6 @@ const startSchema = z
     buyIn: z.number().int().min(1000).max(5000).default(2000),
     maxHands: z.number().int().min(0).max(1_000_000).default(0),
     maxMinutes: z.number().min(0).max(525_600).default(0),
-    budgetUsd: z.number().min(0).max(100).default(1),
     autoRebuy: z.boolean().default(true),
   })
   .strict();
@@ -214,6 +213,9 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
     controller.start(startSchema.parse(request.body ?? {})),
   );
   app.post('/api/runtime/stop', () => controller.stop());
+  app.post('/api/runtime/resume', async (request) =>
+    controller.resume(request.body ? startSchema.parse(request.body) : undefined),
+  );
   app.post('/api/demo/reset', () => {
     controller.resetDemo();
     return controller.overview();
@@ -240,11 +242,12 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
         input.strategy,
         input.limit,
         policyFor(config, input.strategy, meter),
-        undefined,
         {
           id: evaluationId,
           timeoutMs:
-            input.strategy === 'jev-reasoning' ? config.hybridTimeoutMs : config.jevTimeoutMs,
+            input.strategy === 'jev-reasoning'
+              ? config.hybridTimeoutMs
+              : config.jevDecisionTimeoutMs,
         },
       );
     } finally {

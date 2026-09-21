@@ -15,7 +15,7 @@ cp -n .env.example .env
 chmod 600 .env
 ```
 
-也可以下载仓库源码后进入解压目录执行后两条命令。已有 `.env` 应保留，不要覆盖。在 `.env` 中填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY` 与内部 `API_TOKEN`，保留既有 Jev 超时、预算账本和费用限制。所有者本轮选择纯 Jev 持续收集真实对局数据；以下是目标配置，实际上线完成时间与集成证据见[验证报告](verification.md)，不能把配置说明当成上线验收。
+也可以下载仓库源码后进入解压目录执行后两条命令。已有 `.env` 应保留，不要覆盖。在 `.env` 中填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY` 与内部 `API_TOKEN`，保留费用账本，并设置 Jev 单次请求 10 秒、整次决策 40 秒。费用只记录，不按金额限制调用。所有者本轮选择纯 Jev 持续收集真实对局数据；以下是目标配置，实际上线完成时间与集成证据见[验证报告](verification.md)，不能把配置说明当成上线验收。
 
 ```dotenv
 BIND_ADDRESS=127.0.0.1
@@ -23,11 +23,13 @@ CONSOLE_PORT=8787
 PUBLIC_HISTORY=true
 AUTO_START_BOT=true
 BOT_STRATEGY=jev
+JEV_TIMEOUT_MS=10000
+JEV_DECISION_TIMEOUT_MS=40000
 ```
 
-`BOT_STRATEGY=jev` 让 Jev 根据当前局面与有界上下文直接选择合法行动，不请求 DeepSeek 或其他分析模型。Jev 首次调用后最多重试 3 次，共享当前行动期限与既有预算；不能及时得到合法模型结果时记录本地合法 fallback。此配置不修改 `JEV_TIMEOUT_MS`、`RUN_BUDGET_USD` 或 `TOTAL_BUDGET_USD`。
+`BOT_STRATEGY=jev` 让 Jev 根据当前局面与有界上下文直接选择合法行动，不请求 DeepSeek 或其他分析模型。首次调用后最多重试 3 次，共享 40 秒决策期限及平台行动期限，每次请求最多 10 秒。每个提交动作必须来自有效 Jev 结果；失败时不提交本地动作，记录诊断并持久停牌。移除旧配置中的 `RUN_BUDGET_USD` 和 `TOTAL_BUDGET_USD`，它们不再是运行配置。
 
-`AUTO_START_BOT=true` 在服务就绪后自动开始一个 Run，不限制手数或时长，启用 auto-rebuy。先持续运行数小时收集数据，完整原始牌局和决策保存在同一持久卷；后台不会根据短期输赢自动改写策略。后续复盘和 harness 对照见[评估文档](evaluation.md)。
+`AUTO_START_BOT=true` 在服务就绪且不存在持久模型失败停牌时自动开始一个 Run，不限制手数或时长，启用 auto-rebuy。先持续运行数小时收集数据，完整原始牌局和决策保存在同一持久卷；后台不会根据短期输赢自动改写策略。后续复盘和 harness 对照见[评估文档](evaluation.md)。
 
 ### 可选分析模型
 
@@ -56,6 +58,7 @@ sh scripts/manage.sh status
 | `sh scripts/manage.sh stop`    | 等待当前手牌结束并确认离桌，然后停止服务               |
 | `sh scripts/manage.sh restart` | 同样先排空，再用本地镜像重新启动服务                   |
 | `sh scripts/manage.sh update`  | 同样先排空，显式拉取配置标签的最新镜像并重建服务       |
+| `sh scripts/manage.sh resume`  | 排除模型故障后显式恢复，按当前配置开始新 Run           |
 | `sh scripts/manage.sh status`  | 查看 Compose 服务状态                                  |
 | `sh scripts/manage.sh logs`    | 查看最近 100 行日志并持续跟踪，Ctrl+C 退出查看         |
 | `sh scripts/manage.sh backup`  | 在线创建一致 SQLite 备份并复制到宿主机 `data/backups/` |
@@ -75,11 +78,29 @@ sh scripts/manage.sh logs
 
 `latest` 是可变标记。需要固定版本或回退时，在 `.env` 设置 `JEV_IMAGE=hewenyulucky/jev-card-agent:sha-完整提交号`，再手动执行 `sh scripts/manage.sh update`。也可按镜像发布记录配置 digest。`JEV_IMAGE` 不会覆盖持久数据。
 
+## 模型失败后的恢复
+
+模型失败停牌持久化在同一数据库中；`AUTO_START_BOT=true`、容器重启或手动镜像更新都不会绕过它。HTTP 网站继续只读展示历史和故障状态。排除供应商真实欠费、鉴权或服务故障后，在部署目录执行 `sh scripts/manage.sh resume`，由容器内带内部令牌调用 `POST /api/runtime/resume`，按当前配置启动新 Run。公网代理不开放此写接口。停止失败的模型调用后，平台可能自行处理未提交的超时回合，应保留该事实而非记为 Jev 决策。
+
 ## 数据与运行
 
-`jev-card-agent-data` 卷保存 SQLite 主文件及 WAL/SHM，更新容器时保留。不要执行 `docker compose down -v`，除非明确要删除全部运行数据。备份与恢复方法见[运行手册](running.md#sqlite-持久化备份与恢复)。费用账本随数据库保留；模型预算不足会采用合法 fallback，不自动充值。
+`jev-card-agent-data` 卷保存 SQLite 主文件及 WAL/SHM，更新容器时保留。不要执行 `docker compose down -v`，除非明确要删除全部运行数据。备份与恢复方法见[运行手册](running.md#sqlite-持久化备份与恢复)。费用账本随数据库保留，仅记录费用，不阻止调用。真实模型失败或无有效 Jev 选择会停牌；未知费用记录不会被当作欠费，也不会生成本地 fallback 动作。
 
 日常停止、启动和重启使用上述管理入口。健康检查只表示 HTTP 可响应，Bot 实际连接与错误查看控制台或日志。公开日志前移除私有运行标识和牌局信息。`backup` 使用运行中容器内的 Node.js SQLite online backup 写入 `/app/data/backups/`，再通过 `docker compose cp` 复制到宿主机；备份默认保存于被 Git 忽略的 `data/backups/`，包含敏感记录，不公开上传。
+
+### 修正旧版对手统计
+
+从早期版本更新到 `visible-context-v5` 时，旧 checkpoint 可能含错街行动累计的对手统计。先更新宿主机 `scripts/`，备份并安全离桌，再用新镜像离线重建一次；不要清理原始牌局或决策：
+
+```sh
+sh scripts/manage.sh backup
+sh scripts/manage.sh stop
+docker compose pull app
+docker compose run --rm --no-deps -T --entrypoint node app --input-type=module < scripts/rebuild-opponents.mjs
+sh scripts/manage.sh start
+```
+
+脚本按原始 live events 重放，只替换 checkpoint 中的对手累计统计及迁移标记，保留牌桌状态、历史请求、决策、结算与费用账本。有有效运行租约或未结束手牌时拒绝执行；相同事件水位可重复执行。新安装没有旧 checkpoint，无需运行此迁移。以后常规更新使用 `manage.sh update`。
 
 账户筹码由服务器读取官方 `season/me` 并统一刷新，浏览器只读后端快照。运维核对时区分 Account available（离桌余额）、Account at table（REST 在桌快照）、Seat stack（WebSocket 当前座位筹码）与 Net result（已核实手牌净收益）；REST 与牌桌事件的更新时间不同，不能要求两种在桌数值始终相等。请求失败保留最后值并标记过期，不清零余额，不用历史收益推算余额。先检查快照更新时间和连接状态，不能仅因数值不同就重启 Bot 或重复补筹。
 
@@ -89,11 +110,11 @@ sh scripts/manage.sh logs
 
 ### 经明确要求开始全新运行
 
-本次所有者已明确授权归档旧样本并清理本地历史，以最新部署的纯 Jev 代码重新采样。以下是执行要求，不是已完成清理或上线的声明；新采集历史之后持续保留，常规更新不会重复清空数据。
+本次复盘后的部署必须保留现有全部历史与费用账本，以新 Run 和版本标识区分修正前后的数据，不执行清库。以下清理流程仅在将来再次明确要求清理时适用，不能把以前某次授权当作每次更新都清库。
 
 获得此类明确授权后，应先完成新镜像验证与发布，等待旧 Bot 当前手牌结束、由官方 REST 确认离桌，再停止 Compose 服务。创建权限为 `600` 的一致数据库备份后，离线清理旧 Run、牌局、决策、行动、原始事件、评估和资金展示记录，同时清除牌桌恢复检查点、旧 session 来源、活动 Run 标记及已停止进程的租约。不能仅清空页面列表而保留会重新恢复旧桌的检查点。
 
-模型 `usage` 与 `provider_usage` 账本必须保留，清理前后累计费用及未知请求预留保持一致；清理历史不增加剩余模型额度。备份留在服务器私有目录，不通过公开网站访问。清理操作只在服务停止后的运维环境执行，不提供公开写接口；只启动已验证的新镜像，确认新 Run、新牌桌状态及新产生的历史，官方账户余额和补筹冷却由服务端重新同步。此操作不删除 OpenPoker 官方持有的账户或比赛记录。
+模型 `usage` 与 `provider_usage` 账本必须保留，清理前后累计费用及未知请求预留保持一致；这些记录仅用于费用追溯，不用于限制新调用。备份留在服务器私有目录，不通过公开网站访问。清理操作只在服务停止后的运维环境执行，不提供公开写接口；只启动已验证的新镜像，确认新 Run、新牌桌状态及新产生的历史，官方账户余额和补筹冷却由服务端重新同步。此操作不删除 OpenPoker 官方持有的账户或比赛记录。
 
 ## 域名与 Nginx
 

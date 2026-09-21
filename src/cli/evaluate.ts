@@ -29,10 +29,10 @@ async function main(): Promise<void> {
       args.strategy,
       numberArg(args.limit, 50, 'limit'),
       policyFor(config, args.strategy, meter),
-      undefined,
       {
         id: evaluationId,
-        timeoutMs: args.strategy === 'jev-reasoning' ? config.hybridTimeoutMs : config.jevTimeoutMs,
+        timeoutMs:
+          args.strategy === 'jev-reasoning' ? config.hybridTimeoutMs : config.jevDecisionTimeoutMs,
       },
     );
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

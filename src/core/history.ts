@@ -1,4 +1,4 @@
-import type { Action, Street } from './types.js';
+import type { Action, DecisionSource, Street } from './types.js';
 
 export interface HistoricalDecision {
   decisionId: string;
@@ -9,6 +9,8 @@ export interface HistoricalDecision {
   board: string[];
   holeCards: string[];
   action: Action;
+  source: DecisionSource | 'unknown';
+  fallbackReason: string | null;
   amount?: number;
 }
 
@@ -105,6 +107,8 @@ export function summarizeRecentOutcomes(
         board: decision.board,
         holeCards: decision.holeCards,
         action: decision.action,
+        source: decision.source ?? 'unknown',
+        fallbackReason: decision.fallbackReason ?? null,
         ...(decision.amount === undefined ? {} : { amount: decision.amount }),
       })),
       decisionsTruncated: decisions.length > MAX_OUTCOME_DECISIONS,

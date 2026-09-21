@@ -332,7 +332,7 @@ describe('spectator SSE lifecycle', () => {
         buyIn: 2000,
         maxHands: 0,
         maxMinutes: 0,
-        budgetUsd: 0,
+
         autoRebuy: true,
       });
       await vi.waitFor(() => {

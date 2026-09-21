@@ -3,7 +3,6 @@ import type { Candidate, DecisionContext, Policy, Proposal } from '../core/types
 import { BaselinePolicy } from '../policies/baseline.js';
 import { ProviderError } from '../policies/metering.js';
 import type { EvaluationView, StrategyName } from '../shared/api.js';
-import type { BudgetPort } from '../runtime/types.js';
 import { Queries } from '../storage/queries.js';
 import type { Store } from '../storage/store.js';
 import { proposalCost } from '../storage/cost.js';
@@ -15,7 +14,6 @@ export async function evaluateRun(
   strategy: StrategyName,
   limit = 20,
   policy?: Policy,
-  budget?: BudgetPort,
   options: { id?: string; timeoutMs?: number } = {},
 ): Promise<EvaluationView> {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100)
@@ -49,17 +47,12 @@ export async function evaluateRun(
       action: c.action.kind as Candidate['action'],
       ...(c.action.raiseToChips === undefined ? {} : { amount: c.action.raiseToChips }),
     }));
-    let reservation: string | null = null;
     let proposal: Proposal | null = null;
     const started = performance.now();
     try {
-      if (strategy === 'jev' && budget) {
-        reservation = budget.reserve(`evaluation-${result.id}`, context, candidates);
-        if (reservation === null) throw new Error('Evaluation budget exhausted');
-      }
       proposal = await selected.decide(context, candidates, {
         signal: AbortSignal.timeout(
-          options.timeoutMs ?? (strategy === 'jev-reasoning' ? 15000 : 5000),
+          options.timeoutMs ?? (strategy === 'jev-reasoning' ? 15000 : 40000),
         ),
       });
       if (!candidates.some((c) => c.id === proposal!.candidateId))
@@ -77,7 +70,7 @@ export async function evaluateRun(
         proposal = {
           candidateId: '',
           selected: '',
-          source: 'fallback',
+          source: 'unavailable',
           explanation: error.code,
           latencyMs: error.attempt.latencyMs,
           model: error.attempt.actualModel ?? undefined,
@@ -93,12 +86,9 @@ export async function evaluateRun(
         alternative: null,
         status: error instanceof Error ? error.message : 'Evaluation failed',
       });
-    } finally {
-      if (reservation !== null) budget!.settle(reservation, proposal);
     }
     result.samples++;
     totalLatency += performance.now() - started;
-    if (strategy === 'jev' && budget && reservation === null) break;
   }
   result.meanLatencyMs = totalLatency / result.samples;
   const ledger = store.db

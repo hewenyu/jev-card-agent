@@ -19,14 +19,20 @@ import {
 import { LobbyLifecycle } from './lobby.js';
 import { FundingMonitor } from './funding.js';
 import { authorityKey, decide, type DecisionTask } from './decision.js';
-import type { RuntimeDependencies, RuntimeStatus, StartOptions, StoredAction } from './types.js';
+import type {
+  DecisionRecord,
+  RuntimeDependencies,
+  RuntimeStatus,
+  StartOptions,
+  StoredAction,
+} from './types.js';
 
 const defaults = {
   buyIn: 2000,
   autoRebuy: true,
   maxHands: 0,
   maxDurationMs: 0,
-  decisionTimeoutMs: 3000,
+  decisionTimeoutMs: 40_000,
   turnTimeoutMs: 45_000,
   submissionReserveMs: 1500,
   reconnectMinMs: 500,
@@ -57,6 +63,8 @@ export class PokerRuntime extends EventEmitter {
   private leaveAttempts = 0;
   private leaveVerification = false;
   private stopRequested = false;
+  private decisionHalted = false;
+  private requireJev = true;
   private activeTask: DecisionTask | null = null;
   private decisionTasks = new Set<Promise<void>>();
   private knownTurns = new Set<string>();
@@ -136,6 +144,7 @@ export class PokerRuntime extends EventEmitter {
   async start(options: StartOptions = {}): Promise<void> {
     if (this.running) throw new Error('Runtime is already running');
     this.options = { ...defaults, ...options };
+    this.requireJev = options.kind !== 'demo' && options.strategy !== 'baseline';
     if (
       !Number.isInteger(this.options.buyIn) ||
       this.options.buyIn < 1000 ||
@@ -157,6 +166,7 @@ export class PokerRuntime extends EventEmitter {
     this.lifetime = new AbortController();
     this.lobby.resetSeason();
     this.stopRequested = false;
+    this.decisionHalted = false;
     this.leaving = false;
     this.leaveAttempts = 0;
     this.leaveVerification = false;
@@ -542,14 +552,22 @@ export class PokerRuntime extends EventEmitter {
 
   private authorize(recovered: boolean, event: ServerEvent): void {
     const state = this.snapshot.state;
-    if (!state.turnToken || !state.handId || !state.tableId || this.leaving) return;
+    if (!state.turnToken || !state.handId || !state.tableId || this.leaving || this.decisionHalted)
+      return;
     const key = authorityKey(state);
     if (this.activeTask?.key === key || this.blockedAuthorities.has(key)) return;
     this.dependencies.store.assertRuntimeLease?.();
     this.cancelTask();
-    const pending = [...this.pending.values()].find(
+    let pending = [...this.pending.values()].find(
       (action) => `${action.payload.hand_id}:${action.payload.turn_token}` === key,
     );
+    if (pending && this.requireJev && pending.decisionSource !== 'jev') {
+      this.dependencies.store.updateAction(pending.id, 'unresolved', {
+        reason: 'non_jev_pending_action',
+      });
+      this.pending.delete(pending.id);
+      pending = undefined;
+    }
     if (pending) {
       if (Date.now() < pending.deadlineAt) this.submit(pending);
       else {
@@ -573,6 +591,7 @@ export class PokerRuntime extends EventEmitter {
       state: structuredClone(state),
       deadlineAt,
       recovered,
+      requireJev: this.requireJev,
       opponents: this.opponents.snapshot(),
     };
     this.activeTask = task;
@@ -607,7 +626,6 @@ export class PokerRuntime extends EventEmitter {
       .then((result) => {
         if (!result) return;
         if (
-          !result.action ||
           result.decision.status === 'cancelled' ||
           this.activeTask !== task ||
           task.controller.signal.aborted ||
@@ -621,11 +639,27 @@ export class PokerRuntime extends EventEmitter {
           if (this.activeTask === task) this.activeTask = null;
           return;
         }
+        if (result.decision.status === 'failed' || !result.action) {
+          this.pauseForDecisionFailure(result.decision, task);
+          return;
+        }
         const selected = result.decision.candidates.find(
           (candidate) => candidate.id === result.decision.proposal.candidateId,
         );
         if (!selected || !validateCandidate(selected, this.snapshot.state)) {
-          this.resync();
+          if (this.requireJev) {
+            result.decision.status = 'failed';
+            result.decision.fallbackReason = 'candidate_no_longer_legal';
+            result.decision.proposal = {
+              ...result.decision.proposal,
+              source: 'unavailable',
+              candidateId: '',
+              selected: '',
+              explanation:
+                'The Jev proposal was no longer legal at submission; no action was submitted.',
+            };
+            this.pauseForDecisionFailure(result.decision, task);
+          } else this.resync();
           return;
         }
         this.dependencies.store.saveDecision(result.decision);
@@ -640,6 +674,31 @@ export class PokerRuntime extends EventEmitter {
       .catch((error) => this.fail(error))
       .finally(() => this.decisionTasks.delete(pendingDecision));
     this.decisionTasks.add(pendingDecision);
+  }
+
+  private pauseForDecisionFailure(decision: DecisionRecord, task: DecisionTask): void {
+    this.dependencies.store.saveDecision(decision);
+    const reason = decision.fallbackReason ?? 'model_decision_unavailable';
+    this.dependencies.store.saveDecisionBlock?.({
+      runId: this.snapshot.runId!,
+      decisionId: decision.id,
+      reason,
+      createdAt: new Date().toISOString(),
+    });
+    this.decisionHalted = true;
+    this.snapshot.lastError = reason;
+    this.activeTask = null;
+    this.snapshot.decision = {
+      id: decision.id,
+      sessionId: decision.context.session!.id,
+      tableId: task.state.tableId!,
+      handId: task.state.handId!,
+      phase: 'failed',
+      startedAt: decision.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+    this.emit('decision', decision);
+    this.stop(true);
   }
 
   private submit(action: StoredAction): void {
@@ -776,7 +835,7 @@ export class PokerRuntime extends EventEmitter {
   private cancelTask(): void {
     if (!this.activeTask) return;
     this.activeTask.controller.abort();
-    // An interrupted call has no submission; recovery may choose its legal fallback.
+    // An interrupted call has no submission; recovery must honor the configured decision policy.
     this.knownTurns.delete(this.activeTask.key);
     this.activeTask = null;
   }

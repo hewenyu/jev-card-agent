@@ -10,7 +10,6 @@ import { LedgerMeter } from '../storage/provider-meter.js';
 import { HybridPolicy } from '../policies/hybrid.js';
 import { ReasoningProvider } from '../policies/reasoning.js';
 import { DeepSeekProvider } from '../policies/deepseek.js';
-import { Budget } from '../storage/budget.js';
 import { seedDemo } from '../storage/demo.js';
 import { json } from '../storage/database.js';
 import type { AppConfig } from './config.js';
@@ -22,7 +21,6 @@ export interface RunRequest {
   buyIn: number;
   maxHands: number;
   maxMinutes: number;
-  budgetUsd: number;
   autoRebuy: boolean;
 }
 export function reasoningFor(config: AppConfig, meter?: ProviderMeter): ReasoningProvider {
@@ -51,15 +49,8 @@ export function reasoningFor(config: AppConfig, meter?: ProviderMeter): Reasonin
     meter,
   });
 }
-export function ledgerFor(
-  config: AppConfig,
-  store: Store,
-  runId: string,
-  runUsd = config.runBudgetUsd,
-): LedgerMeter {
+export function ledgerFor(config: AppConfig, store: Store, runId: string): LedgerMeter {
   return new LedgerMeter(store, runId, {
-    totalUsd: config.totalBudgetUsd,
-    runUsd,
     reasoningInputPerMillion: config.reasoningInputPricePerMillion,
     reasoningCacheReadInputPerMillion: config.reasoningCacheReadInputPricePerMillion,
     reasoningOutputPerMillion: config.reasoningOutputPricePerMillion,
@@ -92,7 +83,6 @@ export function policyFor(
 
 export class Controller {
   readonly queries: Queries;
-  readonly budget: Budget;
   readonly spectator: SpectatorFeed;
   runtime: PokerRuntime | null = null;
   private strategy: StrategyName = 'jev';
@@ -107,7 +97,6 @@ export class Controller {
     readonly store: Store,
   ) {
     this.queries = new Queries(store);
-    this.budget = new Budget(store, config.totalBudgetUsd, config.runBudgetUsd);
     this.demoSelected = config.demo;
     if (config.demo) {
       if (store.db.prepare("SELECT id FROM runs WHERE mode!='demo' LIMIT 1").get())
@@ -117,6 +106,10 @@ export class Controller {
     this.spectator = new SpectatorFeed(this.view());
   }
   async start(request: RunRequest): Promise<RuntimeView> {
+    if (this.store.loadDecisionBlock())
+      throw new Error(
+        'Bot paused after a model decision failure; use the private resume command after resolving it',
+      );
     if (this.closing) throw new Error('Controller is closing');
     if (this.config.readOnlyDemo || this.config.demo)
       throw new Error('Live runtime is disabled in demo mode');
@@ -147,15 +140,12 @@ export class Controller {
       this.strategy = request.strategy;
       this.demoSelected = false;
       const runId = randomUUID();
-      this.budget.setRunLimit(runId, request.budgetUsd);
       this.runtime = new PokerRuntime({
         apiKey: this.config.openPokerApiKey,
         policy: policyFor(
           this.config,
           request.strategy,
-          request.strategy !== 'baseline'
-            ? ledgerFor(this.config, this.store, runId, request.budgetUsd)
-            : undefined,
+          request.strategy !== 'baseline' ? ledgerFor(this.config, this.store, runId) : undefined,
         ),
         store: this.store,
         wsUrl: this.config.openPokerWsUrl,
@@ -214,7 +204,7 @@ export class Controller {
         decisionTimeoutMs:
           request.strategy === 'jev-reasoning'
             ? this.config.hybridTimeoutMs
-            : this.config.jevTimeoutMs,
+            : this.config.jevDecisionTimeoutMs,
       });
       return this.view();
     } catch (error) {
@@ -228,7 +218,33 @@ export class Controller {
     this.runtime?.stop(graceful);
     return this.view();
   }
+  canAutoStart(): boolean {
+    return this.store.loadDecisionBlock() === null;
+  }
+  async resume(
+    request: RunRequest = {
+      strategy: this.config.botStrategy,
+      buyIn: 2000,
+      maxHands: 0,
+      maxMinutes: 0,
+      autoRebuy: true,
+    },
+  ): Promise<RuntimeView> {
+    if (this.starting || this.view().running) throw new Error('Runtime is already running');
+    const previous = this.store.loadDecisionBlock();
+    this.store.clearDecisionBlock();
+    try {
+      const view = await this.start(request);
+      if (!view.running && previous && !this.store.loadDecisionBlock())
+        this.store.saveDecisionBlock(previous);
+      return view;
+    } catch (error) {
+      if (previous && !this.store.loadDecisionBlock()) this.store.saveDecisionBlock(previous);
+      throw error;
+    }
+  }
   view(): RuntimeView {
+    const blocked = this.store.loadDecisionBlock();
     const status = this.runtime?.status();
     const running = !!status && !['idle', 'stopped', 'failed'].includes(status.phase);
     const demoState = this.demoSelected
@@ -243,16 +259,19 @@ export class Controller {
       decision: status?.decision ?? null,
       status: this.starting
         ? 'connecting'
-        : (status?.phase ?? (this.demoSelected ? 'demo' : 'idle')),
-      mode: this.demoSelected ? 'demo' : status ? 'live' : 'idle',
-      runId: status?.runId ?? (this.demoSelected ? 'demo-jev' : null),
+        : (status?.phase ?? (this.demoSelected ? 'demo' : blocked ? 'stopped' : 'idle')),
+      mode: this.demoSelected ? 'demo' : status || blocked ? 'live' : 'idle',
+      runId: status?.runId ?? (this.demoSelected ? 'demo-jev' : (blocked?.runId ?? null)),
       strategy: this.strategy,
       table: demoState
         ? tableView(demoState)
         : status?.state.tableId
           ? tableView(status.state)
           : null,
-      error: this.controllerError ?? status?.lastError ?? null,
+      error:
+        this.controllerError ??
+        status?.lastError ??
+        (blocked ? `Model decision failed; bot paused: ${blocked.reason}` : null),
     };
   }
   overview(): Overview {

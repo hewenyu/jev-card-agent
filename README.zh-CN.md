@@ -45,7 +45,7 @@ flowchart LR
 
 成功的 Jev 请求保存原请求及 schema 解析后的 `model`、`usage`、`answers`，并非逐字保存 HTTP 响应。失败调用保留 attempts、状态和可取得的部分诊断，不能假定拥有完整失败响应。
 
-Jev 首次调用后**最多重试三次**，共同受当前行动期限和持久费用预算约束。各次尝试、失败、已知用量与未知费用预留分别记录；无法及时取得有效模型结果时，Runtime 记录合法降级。鉴权、预算或账本错误不盲目重试。可选分析 provider 同样遵守有限重试，不会自动开启。
+正式运行提交的每个行动必须来自 Jev。Jev 首次调用后**最多重试三次**，**单次 10 秒、整次决策 40 秒**，同时遵守平台当前行动期限。费用只记录，不设置金额门槛。无法得到有效 Jev 结果时，记录失败、不提交本地选择的动作并停牌；该状态跨重启保留，须通过私有管理入口显式恢复。平台可能自行执行超时动作，该动作不能算作 Jev 决策。鉴权、供应商余额、模型身份和账本错误不盲目重试。
 
 决策视图展示已保存分析、供应商实际返回的思考文本或摘要、Jev 候选概率与最终选择。未返回思考时明确显示缺失，不生成补写。Jev 选项概率不是扑克胜率或预期盈利。
 
@@ -75,14 +75,14 @@ cp -n .env.example .env
 chmod 600 .env
 ```
 
-在私有 `.env` 填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY`，另设独立 `API_TOKEN` 用于内部管理；浏览器不会接收这些凭证。纯 Jev 无需分析模型密钥，`DEEPSEEK_API_KEY` 仅在显式启用 DeepSeek 组合策略时需要。协议、超时和预算配置见[运行手册](docs/running.md)。
+在私有 `.env` 填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY`，另设独立 `API_TOKEN` 用于内部管理；浏览器不会接收这些凭证。纯 Jev 无需分析模型密钥，`DEEPSEEK_API_KEY` 仅在显式启用 DeepSeek 组合策略时需要。协议、超时和费用记录见[运行手册](docs/running.md)。
 
 ```sh
 # 检查平台鉴权，不加入牌桌。
 npm run diagnose
 
 # 加入真实对局，并限制运行时长和模型费用。
-npm run bot -- --strategy jev --max-hands 10 --max-minutes 30 --budget-usd 1
+npm run bot -- --strategy jev --max-hands 10 --max-minutes 30
 ```
 
 同时运行网站与 Agent 时，配置：
@@ -91,9 +91,11 @@ npm run bot -- --strategy jev --max-hands 10 --max-minutes 30 --budget-usd 1
 PUBLIC_HISTORY=true
 AUTO_START_BOT=true
 BOT_STRATEGY=jev
+JEV_TIMEOUT_MS=10000
+JEV_DECISION_TIMEOUT_MS=40000
 ```
 
-复制 `.env.example` 后显式设置以上值。保留既有 Jev 超时、费用预算与账本，不因切换策略清零或扩大限制。自动启动不限制手数和时长，启用 auto-rebuy；模型调用仍受既有预算与平台状态约束。已记录的原始牌局事件与决策历史持久保存，模型输入使用有界 session；后续注入 harness 的复盘结论应版本化，并在同一组冻结输入上比较。
+复制 `.env.example` 后显式设置以上值。切换策略保留费用账本。自动启动不限制手数和时长，启用 auto-rebuy；如已因模型失败停牌，则保持停牌直至私有管理入口显式恢复，不因重启自动绕过。程序不按金额阻止模型调用。已记录的原始牌局事件与决策历史持久保存，模型输入使用有界 session；后续注入 harness 的复盘结论应版本化，并在同一组冻结输入上比较。
 
 随后执行 `npm run build` 和 `npm run start`。未开启自动启动时只提供控制台页面。独立 `bot` 命令是另一运行入口，同一个 Bot 和数据库只运行一个 Runtime。真实模型调用产生费用，手数和时长上限不保证完成对应数量的牌局。
 
@@ -106,6 +108,7 @@ sh scripts/manage.sh start
 sh scripts/manage.sh status
 sh scripts/manage.sh logs
 sh scripts/manage.sh backup
+sh scripts/manage.sh resume
 sh scripts/manage.sh stop
 sh scripts/manage.sh restart
 sh scripts/manage.sh update
@@ -115,7 +118,7 @@ sh scripts/manage.sh update
 
 GitHub Actions 自动检查，并**无缓存发布 `linux/amd64` 与 `linux/arm64` 镜像**，构建时重新拉取基础镜像。**服务器保持手动更新。** 常规更新保留历史和模型费用账本。详见[部署手册](docs/deployment.md)与[镜像发布流程](docs/docker-release.md)。
 
-本次部署已获所有者授权：归档旧样本，从空的本地历史开始纯 Jev 采样。按[历史清理流程](docs/deployment.md#经明确要求开始全新运行)，先验证并发布新版镜像，排空并停止旧 Runtime，创建私有一致备份，再离线清理旧 Run、手牌、决策、行动、事件、评估、资金展示记录及恢复检查点。费用账本和未知请求预留继续保留，新采集历史持续保存；清理不重置模型消费或官方账户余额，不删除 OpenPoker 官方记录。这是已授权的执行计划，是否完成以验证报告为准。
+本次更新保留所有已有 Run、手牌、决策、行动、原始事件及费用记录，不清理历史。修正后的 Runtime 使用新 Run，并保存代码与上下文版本；旧版本中包含 fallback 的样本继续保留供复盘，不混充新的纯 Jev 数据。模型失败停牌跨容器重启和镜像更新保留。`sh scripts/manage.sh resume` 通过受保护的 `POST /api/runtime/resume` 显式恢复，并按当前配置启动；公开网页没有恢复参赛权限。
 
 ## 开发与验证
 
@@ -133,7 +136,7 @@ npm run test:e2e
 ## 文档
 
 - [架构与范围](docs/architecture.md)
-- [评估方法与预算](docs/evaluation.md)
+- [评估方法与费用记录](docs/evaluation.md)
 - [OpenPoker 与模型接入合同](docs/transports.md)
 - [运行、配置与备份](docs/running.md)
 - [服务器部署与手动更新](docs/deployment.md)

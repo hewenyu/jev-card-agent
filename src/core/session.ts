@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Action, Street } from './types.js';
+import type { Action, DecisionSource, Street } from './types.js';
 
 export interface SessionTurn {
   decisionId: string;
@@ -7,6 +7,8 @@ export interface SessionTurn {
   tableSeq: number;
   street: Street;
   status: string;
+  source: DecisionSource | 'unknown';
+  fallbackReason: string | null;
   action: { kind: Action; raiseToChips?: number } | null;
   analysis: string | null;
   analysisTruncated: boolean;
@@ -39,6 +41,8 @@ export function buildSession(
   let remaining = MAX_SESSION_ANALYSIS_TOTAL;
   const previousTurns = structuredClone(previous.slice(-MAX_SESSION_TURNS));
   for (const turn of [...previousTurns].reverse()) {
+    turn.source ??= 'unknown';
+    turn.fallbackReason ??= null;
     if (!turn.analysis) continue;
     const retained = turn.analysis.slice(0, Math.min(remaining, MAX_SESSION_ANALYSIS));
     turn.analysisTruncated ||= retained.length < turn.analysis.length;

@@ -148,7 +148,7 @@ export class HybridPolicy implements Policy {
       if (error instanceof ProviderError)
         attempts.push(...(error.attempts ?? (error.attempt ? [error.attempt] : [])));
       options.onProgress?.({ phase: 'reasoning', attempts: [...attempts] });
-      // A late result must never become an actionable proposal; runtime chooses any safe fallback.
+      // A late result must never become actionable; the live runtime records failure without an action.
       signal.throwIfAborted();
       return keep('analysis_or_reconsider_failed', {
         ...completedAnalysis,

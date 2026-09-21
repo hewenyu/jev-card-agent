@@ -271,7 +271,7 @@ describe('DeepSeek configuration and ledger', () => {
         buyIn: 2000,
         maxHands: 1,
         maxMinutes: 1,
-        budgetUsd: 1,
+
         autoRebuy: false,
       });
       const serialized = String(db.db.prepare('SELECT config FROM runs').get()?.config);

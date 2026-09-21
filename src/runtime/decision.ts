@@ -6,7 +6,7 @@ import { ProviderError, ProviderLedgerError } from '../policies/metering.js';
 import { buildSession } from '../core/session.js';
 import type { DecisionProgress } from '../core/types.js';
 import type { LiveDecisionProgress } from '../shared/api.js';
-import type { BudgetPort, DecisionRecord, RuntimeDependencies, StoredAction } from './types.js';
+import type { DecisionRecord, RuntimeDependencies, StoredAction } from './types.js';
 
 export interface DecisionTask {
   key: string;
@@ -14,6 +14,7 @@ export interface DecisionTask {
   deadlineAt: number;
   state: PokerState;
   recovered: boolean;
+  requireJev?: boolean;
   opponents: OpponentStats[];
 }
 export function authorityKey(state: PokerState): string {
@@ -27,8 +28,7 @@ export async function decide(
   onProgress?: (progress: LiveDecisionProgress) => void,
 ): Promise<{ decision: DecisionRecord; action: StoredAction | null } | null> {
   const candidates = buildCandidates(task.state);
-  if (!candidates.length || !task.state.handId || !task.state.turnToken || !task.state.tableId)
-    return null;
+  if (!task.state.handId || !task.state.turnToken || !task.state.tableId) return null;
   const createdAt = new Date().toISOString();
   const decisionId = randomUUID();
   const context = buildContext(task.state, task.opponents, {
@@ -72,16 +72,14 @@ export async function decide(
   };
   const started = Date.now();
   let proposal: Proposal | null = null;
+  let rejectedProposal: Proposal | null = null;
+  const requireJev = task.requireJev !== false;
   const failedAttempts: ProviderAttempt[] = [];
-  let fallbackReason: string | null = task.recovered
-    ? 'recovered_turn_unknown_remaining_time'
-    : null;
-  let reservation: string | null = null;
-  if (!fallbackReason && budgetMs > 0 && !task.controller.signal.aborted) {
-    // Ledger failures must propagate to the runtime; they are not model failures.
-    reservation = dependencies.budget?.reserve(runId, context, candidates) ?? null;
-    if (dependencies.budget && reservation === null) fallbackReason = 'model_budget_exhausted';
-  }
+  let fallbackReason: string | null = !candidates.length
+    ? 'no_legal_candidates'
+    : task.recovered
+      ? 'recovered_turn_unknown_remaining_time'
+      : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const callController = new AbortController();
   const abort = () => {
@@ -89,12 +87,6 @@ export async function decide(
     callController.abort(task.controller.signal.reason);
   };
   task.controller.signal.addEventListener('abort', abort, { once: true });
-  const settle = (budget: BudgetPort | undefined, value: Proposal | null) => {
-    if (budget && reservation !== null) {
-      budget.settle(reservation, value);
-      reservation = null;
-    }
-  };
   let policyCall: Promise<Proposal> | undefined;
   let policyError: unknown;
   try {
@@ -120,11 +112,18 @@ export async function decide(
           policyError = error;
         });
         proposal = await Promise.race([policyCall, timeout]);
-        settle(dependencies.budget, proposal);
         const selected = candidates.find((candidate) => candidate.id === proposal?.candidateId);
-        if (!selected || !validateCandidate(selected, task.state)) {
+        if (
+          !selected ||
+          !validateCandidate(selected, task.state) ||
+          (requireJev && proposal.source !== 'jev')
+        ) {
+          rejectedProposal = proposal;
+          fallbackReason =
+            requireJev && proposal.source !== 'jev'
+              ? 'non_jev_policy_proposal'
+              : 'invalid_policy_candidate';
           proposal = null;
-          fallbackReason = 'invalid_policy_candidate';
         }
       }
     }
@@ -143,53 +142,59 @@ export async function decide(
         if (graceTimer) clearTimeout(graceTimer);
       }
     }
-    if (error instanceof ProviderLedgerError || policyError instanceof ProviderLedgerError)
+    if (
+      !requireJev &&
+      (error instanceof ProviderLedgerError || policyError instanceof ProviderLedgerError)
+    )
       throw policyError instanceof ProviderLedgerError ? policyError : error;
     const providerError = policyError instanceof ProviderError ? policyError : error;
     if (providerError instanceof ProviderError && providerError.attempt) {
       failedAttempts.push(...(providerError.attempts ?? [providerError.attempt]));
-      if (providerError.attempt.usage) {
-        // Invalid model outputs can still incur a known charge. This object is only for billing.
-        settle(dependencies.budget, {
-          candidateId: candidates[0]!.id,
-          selected: candidates[0]!.id,
-          source: 'fallback',
-          explanation: 'Provider failure with reported usage',
-          latencyMs: providerError.attempt.latencyMs,
-          usage: providerError.attempt.usage,
-          attempts: failedAttempts,
-        });
-      }
     }
     fallbackReason = providerError instanceof Error ? providerError.message : 'policy_failed';
   } finally {
     if (timer) clearTimeout(timer);
     task.controller.signal.removeEventListener('abort', abort);
-    settle(dependencies.budget, null);
   }
-  const cancelled = task.controller.signal.aborted || Date.now() >= task.deadlineAt;
+  const cancelled = task.controller.signal.aborted;
+  if (!cancelled && Date.now() >= task.deadlineAt) {
+    rejectedProposal = proposal;
+    proposal = null;
+    fallbackReason = 'decision_deadline_elapsed';
+  }
   collectingOnly = cancelled;
   if (!proposal) {
-    if (!cancelled) report({ phase: 'fallback' });
-    const candidate = cancelled ? null : chooseFallback(candidates);
+    if (!cancelled && !requireJev) report({ phase: 'fallback' });
+    const candidate = cancelled || requireJev ? null : chooseFallback(candidates);
     proposal = {
+      ...rejectedProposal,
       candidateId: candidate?.id ?? '',
       selected: candidate?.id ?? '',
-      source: 'fallback',
+      source: requireJev ? 'unavailable' : 'fallback',
       explanation: cancelled
         ? 'Decision cancelled; no action was submitted.'
-        : 'Safe legal action selected by runtime fallback.',
+        : requireJev
+          ? 'Jev decision unavailable; no action was submitted.'
+          : 'Safe legal action selected by runtime fallback.',
       latencyMs: Date.now() - started,
       attempts: [
         ...new Map(
-          [...progressAttempts.values(), ...failedAttempts].map((attempt) => [attempt.id, attempt]),
+          [
+            ...(rejectedProposal?.attempts ?? []),
+            ...progressAttempts.values(),
+            ...failedAttempts,
+          ].map((attempt) => [attempt.id, attempt]),
         ).values(),
       ],
       ...(analysisProgress
         ? {
             routing: {
               mode: 'hybrid',
-              outcome: cancelled ? 'decision_cancelled' : 'runtime_fallback_after_analysis',
+              outcome: cancelled
+                ? 'decision_cancelled'
+                : requireJev
+                  ? 'model_decision_failed'
+                  : 'runtime_fallback_after_analysis',
               analysis: analysisProgress.analysis,
               thinking: analysisProgress.thinking ?? null,
               thinkingSource: analysisProgress.thinkingSource ?? 'not_provided',
@@ -209,12 +214,17 @@ export async function decide(
     candidates,
     proposal,
     fallbackReason: cancelled ? 'decision_cancelled' : fallbackReason,
-    ...(cancelled ? { status: 'cancelled' as const } : {}),
+    ...(cancelled
+      ? { status: 'cancelled' as const }
+      : requireJev && fallbackReason
+        ? { status: 'failed' as const }
+        : {}),
   };
-  if (cancelled) return { decision, action: null };
+  if (cancelled || decision.status === 'failed') return { decision, action: null };
   const candidate = candidates.find((item) => item.id === proposal.candidateId);
   if (!candidate || !validateCandidate(candidate, task.state)) return null;
   const action: StoredAction = {
+    decisionSource: proposal.source,
     id: randomUUID(),
     runId,
     decisionId: decision.id,

@@ -43,7 +43,7 @@ describe('provider retries share a deadline and keep independent charges', () =>
     const progress: DecisionProgress[] = [];
     let calls = 0;
     try {
-      const meter = new LedgerMeter(store, 'retry-run', { totalUsd: 100, runUsd: 100 });
+      const meter = new LedgerMeter(store, 'retry-run');
       const provider = reasoner(
         async () => {
           calls++;
@@ -142,7 +142,7 @@ describe('provider retries share a deadline and keep independent charges', () =>
     fetcher.mockClear();
     await expect(
       reasoner(fetcher, { meter: { before: () => null, after() {} } }).analyze(context, candidates),
-    ).rejects.toThrow('provider_budget_exhausted');
+    ).rejects.toThrow('provider_input_too_large');
     expect(fetcher).not.toHaveBeenCalled();
   });
 
@@ -238,6 +238,8 @@ describe('final Jev request size', () => {
         tableSeq: i,
         street: 'flop' as const,
         status: 'accepted',
+        source: 'jev' as const,
+        fallbackReason: null,
         action: { kind: 'check' as const },
         analysis: 'a'.repeat(4000),
         analysisTruncated: false,

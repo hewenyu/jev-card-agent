@@ -92,6 +92,31 @@ describe('durable hand sessions', () => {
       store.close();
     }
   });
+  it('distinguishes historical fallback actions from successful Jev decisions in session memory', () => {
+    const store = storeFixture();
+    try {
+      const fallback = recorded('fallback', 1);
+      fallback.proposal.source = 'fallback';
+      fallback.fallbackReason = 'model_budget_exhausted';
+      store.saveDecision(fallback);
+      store.saveDecision(recorded('jev', 2));
+      const session = buildSession(
+        'table',
+        'hand',
+        'next',
+        store.sessionTurns('table', 'hand', '2026-01-02T00:00:00.000Z', 3),
+      );
+      expect(
+        session.previousTurns.map(({ source, fallbackReason }) => ({ source, fallbackReason })),
+      ).toEqual([
+        { source: 'fallback', fallbackReason: 'model_budget_exhausted' },
+        { source: 'jev', fallbackReason: null },
+      ]);
+    } finally {
+      store.close();
+    }
+  });
+
   it('bounds retained analysis and turns while preserving the real ordinal and truncation evidence', () => {
     const store = storeFixture();
     try {
@@ -182,8 +207,10 @@ describe('durable hand sessions', () => {
       ]);
       expect(result?.decision.proposal.routing?.thinking).toBe('Provider summary');
       expect(result?.decision.fallbackReason).toBe('jev_failed');
-      expect(result?.action?.payload.action).toBe('check');
-      expect(progress).toEqual(['jev', 'fallback']);
+      expect(result?.action).toBeNull();
+      expect(result?.decision.status).toBe('failed');
+      expect(result?.decision.proposal.source).toBe('unavailable');
+      expect(progress).toEqual(['jev']);
       expect(JSON.stringify(result?.decision.context.session)).not.toContain(state.turnToken);
     } finally {
       store.close();

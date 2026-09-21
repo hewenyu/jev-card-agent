@@ -12,7 +12,7 @@ it('does not create a runtime when close overtakes the asynchronous start bounda
     buyIn: 2000,
     maxHands: 0,
     maxMinutes: 0,
-    budgetUsd: 0,
+
     autoRebuy: true,
   };
   try {

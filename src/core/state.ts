@@ -162,13 +162,18 @@ function applyAction(state: PokerState, message: RawMessage): PokerState {
   const action = message.action as Action;
   const actionId = string(message.action_id) ?? string(message.client_action_id) ?? null;
   if (actionId && state.history.some((h) => h.actionId === actionId)) return state;
+  // OpenPoker can report the next street on the action that closes this one.
+  // Only a matching actor snapshot proves which street the action belonged to.
+  const knownActionStreet = state.actorSeat === seat && state.street !== 'idle';
   const historyEntry: HistoryEntry = {
     handId: state.handId,
     tableSeq: chips(message.table_seq) ?? null,
     seat,
     name: string(message.name) ?? state.seats.find((s) => s.seat === seat)?.name ?? null,
     action,
-    street: street(message.street) ?? state.street,
+    street: knownActionStreet ? state.street : (street(message.street) ?? state.street),
+    reportedStreet: string(message.street) ?? null,
+    streetSource: knownActionStreet ? 'pre_action_state' : 'event',
     amount: chips(message.amount) ?? null,
     toCallBefore: chips(message.to_call_before) ?? null,
     actionId,

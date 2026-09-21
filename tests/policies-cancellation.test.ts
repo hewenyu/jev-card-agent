@@ -28,7 +28,7 @@ describe.each(['jev', 'reasoning'] as const)('%s cancellation settlement', (prov
     ['json', 'reject'],
   ] as const)('settles before store closure despite late %s %s', async (stage, outcome) => {
     const store = new Store(':memory:');
-    const meter = new LedgerMeter(store, 'cancel-run', { totalUsd: 100, runUsd: 100 });
+    const meter = new LedgerMeter(store, 'cancel-run');
     const after = vi.spyOn(meter, 'after');
     const started = deferred<void>();
     const pendingFetch = deferred<Response>();

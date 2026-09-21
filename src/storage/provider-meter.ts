@@ -3,8 +3,6 @@ import type { ProviderAttempt, ProviderCall, ProviderMeter } from '../core/types
 import type { Store } from './store.js';
 
 export interface MeterOptions {
-  totalUsd?: number;
-  runUsd?: number;
   reasoningInputPerMillion?: number;
   reasoningCacheReadInputPerMillion?: number;
   reasoningOutputPerMillion?: number;
@@ -18,8 +16,6 @@ export class LedgerMeter implements ProviderMeter {
     options: MeterOptions = {},
   ) {
     this.options = {
-      totalUsd: 9,
-      runUsd: 1,
       reasoningInputPerMillion: 10,
       reasoningOutputPerMillion: 50,
       ...options,
@@ -63,25 +59,6 @@ export class LedgerMeter implements ProviderMeter {
     const db = this.store.db;
     db.exec('BEGIN IMMEDIATE');
     try {
-      const global = Number(
-        db
-          .prepare('SELECT COALESCE(SUM(COALESCE(charged_nanos,reserved_nanos)),0) AS n FROM usage')
-          .get()?.n,
-      );
-      const run = Number(
-        db
-          .prepare(
-            'SELECT COALESCE(SUM(COALESCE(charged_nanos,reserved_nanos)),0) AS n FROM usage WHERE run_id=?',
-          )
-          .get(this.runId)?.n,
-      );
-      if (
-        global + reserved > this.options.totalUsd * 1e9 ||
-        run + reserved > this.options.runUsd * 1e9
-      ) {
-        db.exec('ROLLBACK');
-        return null;
-      }
       const id = randomUUID();
       db.prepare(
         'INSERT INTO usage(id,run_id,reserved_nanos,status,created_at) VALUES(?,?,?,?,?)',

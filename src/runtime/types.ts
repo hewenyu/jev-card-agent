@@ -54,7 +54,7 @@ export interface StartOptions {
   gracefulStopTimeoutMs?: number;
 }
 export interface DecisionRecord {
-  status?: 'proposed' | 'cancelled';
+  status?: 'proposed' | 'cancelled' | 'failed';
   id: string;
   runId: string;
   handId: string;
@@ -66,6 +66,7 @@ export interface DecisionRecord {
 }
 export type ActionStatus = 'prepared' | 'sent' | 'accepted' | 'rejected' | 'unresolved';
 export interface StoredAction {
+  decisionSource?: Proposal['source'];
   id: string;
   runId: string;
   decisionId: string;
@@ -99,6 +100,7 @@ export interface RuntimeStore {
   finishRun(id: string, status: RuntimePhase, endedAt: string, error: string | null): void;
   appendEvent(runId: string, event: ServerEvent, receivedAt: string): number | void;
   saveDecision(decision: DecisionRecord): void;
+  saveDecisionBlock?(block: DecisionBlock): void;
   prepareAction(action: StoredAction): void;
   updateAction(id: string, status: ActionStatus, details?: Record<string, unknown>): void;
   pendingActions(): StoredAction[];
@@ -106,16 +108,16 @@ export interface RuntimeStore {
   loadCheckpoint(): RuntimeCheckpoint | null;
   saveHand(runId: string, state: PokerState, event: ServerEvent): void;
 }
-export interface BudgetPort {
-  /** Atomically reserve a worst-case request cost; null prevents a paid call. */
-  reserve(runId: string, context: DecisionContext, candidates: Candidate[]): string | null;
-  settle(reservationId: string, proposal: Proposal | null): void;
+export interface DecisionBlock {
+  runId: string;
+  decisionId: string;
+  reason: string;
+  createdAt: string;
 }
 export interface RuntimeDependencies {
   apiKey: string;
   policy: Policy;
   store: RuntimeStore;
-  budget?: BudgetPort;
   wsUrl?: string;
   restUrl?: string;
 }

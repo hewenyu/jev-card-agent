@@ -18,6 +18,8 @@ function decision(index = 0): HistoricalDecision {
     board: ['2h', '3d', '4c'],
     holeCards: ['Ah', 'Kd'],
     action: 'check',
+    source: 'jev',
+    fallbackReason: null,
   };
 }
 function outcome(index = 0): HistoricalOutcome {
@@ -70,6 +72,21 @@ describe('bounded historical decision feedback', () => {
     expect(summary?.decisions[0]?.board).toHaveLength(3);
   });
 
+  it('preserves fallback provenance instead of attributing accepted actions to the run strategy', () => {
+    const historical = outcome();
+    historical.decisions[0] = {
+      ...decision(),
+      source: 'fallback',
+      fallbackReason: 'model_budget_exhausted',
+    };
+    const [summary] = summarizeRecentOutcomes([historical], asOf, null);
+    expect(summary?.strategy).toBe('jev');
+    expect(summary?.decisions[0]).toMatchObject({
+      source: 'fallback',
+      fallbackReason: 'model_budget_exhausted',
+    });
+  });
+
   it('takes the latest ten unique hands and latest eight unique actions in stable order', () => {
     const source = Array.from({ length: 15 }, (_, index) => outcome(index));
     const last = source[14]!;
@@ -102,7 +119,7 @@ describe('bounded historical decision feedback', () => {
     expect(context.strategyVersions).not.toBe(STRATEGY_VERSIONS);
     expect(context.recentOutcomes[0]?.profitBb).toBe(-1.5);
     expect(context.lastTableSeq).toBe(42);
-    expect(STRATEGY_VERSIONS.prompt).toBe('poker-choice-v3');
+    expect(STRATEGY_VERSIONS.prompt).toBe('poker-choice-v4');
     expect(buildContext(state).recentOutcomes).toEqual([]);
     expect(buildContext(state).asOf).toBeNull();
   });

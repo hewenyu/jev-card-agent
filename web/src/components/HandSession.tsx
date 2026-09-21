@@ -10,6 +10,7 @@ const phaseLabels = {
   jev: 'Jev is choosing the final action',
   completed: 'Decision recorded',
   fallback: 'Runtime selected a legal fallback',
+  failed: 'Model decision failed · bot paused',
   submitted: 'Action submitted',
 };
 

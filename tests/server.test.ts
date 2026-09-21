@@ -420,12 +420,11 @@ describe('opt-in server bot startup', () => {
     };
     return { app, order };
   }
-  it('starts exactly once after listening with persistent budget and continuous runtime defaults', async () => {
+  it('starts exactly once after listening with continuous runtime defaults and no amount limits', async () => {
     const { app, order } = startupFixture();
     const config = loadConfig({
       AUTO_START_BOT: 'true',
       BOT_STRATEGY: 'baseline',
-      RUN_BUDGET_USD: '0.75',
     });
     await listenAndStart(app, config);
     expect(order).toEqual(['listen', 'start']);
@@ -436,7 +435,6 @@ describe('opt-in server bot startup', () => {
       autoRebuy: true,
       maxHands: 0,
       maxMinutes: 0,
-      budgetUsd: 0.75,
     });
     expect(app.close).not.toHaveBeenCalled();
   });

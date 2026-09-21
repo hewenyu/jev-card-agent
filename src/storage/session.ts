@@ -1,4 +1,4 @@
-import type { Candidate, DecisionContext, Proposal } from '../core/types.js';
+import type { Candidate, DecisionContext, DecisionSource, Proposal } from '../core/types.js';
 import { MAX_SESSION_ANALYSIS, type SessionTurn } from '../core/session.js';
 import { json } from './database.js';
 import type { Store } from './store.js';
@@ -14,7 +14,7 @@ export function sessionTurns(
   const turns: SessionTurn[] = [];
   const rows = store.db
     .prepare(
-      'SELECT id,created_at,context,candidates,proposal,selected,status FROM decisions WHERE hand_id=? AND created_at<=? ORDER BY created_at,id',
+      'SELECT id,created_at,context,candidates,proposal,selected,status,source,fallback_reason FROM decisions WHERE hand_id=? AND created_at<=? ORDER BY created_at,id',
     )
     .iterate(handId, asOf);
   for (const row of rows) {
@@ -39,8 +39,12 @@ export function sessionTurns(
       tableSeq: context.lastTableSeq,
       street: context.street,
       status: String(row.status),
+      source: ['jev', 'baseline', 'fallback', 'unavailable'].includes(String(row.source))
+        ? (row.source as DecisionSource)
+        : 'unknown',
+      fallbackReason: typeof row.fallback_reason === 'string' ? row.fallback_reason : null,
       action:
-        selected && row.status !== 'cancelled'
+        selected && row.status !== 'cancelled' && row.status !== 'failed'
           ? {
               kind: selected.action,
               ...(selected.amount === undefined ? {} : { raiseToChips: selected.amount }),

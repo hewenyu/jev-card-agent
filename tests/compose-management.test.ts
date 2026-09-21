@@ -36,7 +36,13 @@ if (action === 'ps' && args.includes('--status')) {
   if (process.env.TEST_RUNNING === '1') process.stdout.write('fake-container\n');
 } else if (action === 'exec') {
   const source = fs.readFileSync(0, 'utf8');
-  if (source.includes('DatabaseSync')) {
+  if (source.includes('/api/runtime/resume')) {
+    if (!source.includes('http://127.0.0.1:') || !source.includes("method: 'POST'") ||
+        !source.includes('process.env.API_TOKEN') || !source.includes('Authorization:')) process.exit(93);
+    log(['resume-start', 'POST', 'loopback', 'backend-token']);
+    if (process.env.FAIL_RESUME === '1') process.exit(41);
+    log(['resume-complete']);
+  } else if (source.includes('DatabaseSync')) {
     if (!source.includes('await backup(db, target)')) process.exit(91);
     log(['backup-start']);
     if (process.env.FAIL_BACKUP === '1') process.exit(31);
@@ -171,6 +177,24 @@ describe('manual Compose management', () => {
     expect(fixture().run('logs', {}, ['--since', '10m']).calls).toEqual([
       ['compose', 'logs', '--tail', '100', '-f', '--since', '10m', 'app'],
     ]);
+  });
+
+  it('resumes through authenticated loopback inside Compose without recreating or publishing controls', () => {
+    const { calls, status } = fixture().run('resume');
+    expect(status).toBe(0);
+    expect(calls).toEqual([
+      exec,
+      ['resume-start', 'POST', 'loopback', 'backend-token'],
+      ['resume-complete'],
+      ['compose', 'ps'],
+    ]);
+  });
+
+  it('propagates a refused resume without restarting the container or claiming success', () => {
+    const { calls, status, stdout } = fixture().run('resume', { FAIL_RESUME: '1' });
+    expect(status).toBe(41);
+    expect(calls).toEqual([exec, ['resume-start', 'POST', 'loopback', 'backend-token']]);
+    expect(stdout).not.toContain('Bot resumed');
   });
 
   it('runs the legacy update entry point through the same drain and Compose sequence', () => {

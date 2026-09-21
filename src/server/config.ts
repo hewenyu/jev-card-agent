@@ -17,6 +17,7 @@ export interface AppConfig {
   jevBaseUrl: string;
   jevModel: string;
   jevTimeoutMs: number;
+  jevDecisionTimeoutMs: number;
   reasoningApiKey: string;
   reasoningProvider: 'standard' | 'deepseek';
   deepseekBaseUrl: string;
@@ -34,8 +35,6 @@ export interface AppConfig {
   reasoningInputPricePerMillion: number;
   reasoningCacheReadInputPricePerMillion: number;
   reasoningOutputPricePerMillion: number;
-  totalBudgetUsd: number;
-  runBudgetUsd: number;
   autoStartBot: boolean;
   botStrategy: StrategyName;
 }
@@ -96,7 +95,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
     jevApiKey: synthetic ? '' : env.JEV_API_KEY || '',
     jevBaseUrl: env.JEV_BASE_URL || 'https://api.typesafe.ai',
     jevModel: env.JEV_MODEL || 'jev-1.13.0',
-    jevTimeoutMs: numeric(env.JEV_TIMEOUT_MS, 3000, 'JEV_TIMEOUT_MS', 1),
+    jevTimeoutMs: numeric(env.JEV_TIMEOUT_MS, 10000, 'JEV_TIMEOUT_MS', 1),
+    jevDecisionTimeoutMs: numeric(env.JEV_DECISION_TIMEOUT_MS, 40000, 'JEV_DECISION_TIMEOUT_MS', 1),
     reasoningApiKey: synthetic
       ? ''
       : (deepseek ? env.DEEPSEEK_API_KEY : env.REASONING_API_KEY) || '',
@@ -132,8 +132,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
       deepseek ? prices[2]! : 50,
       deepseek ? 'DEEPSEEK_OUTPUT_PRICE_PER_MILLION' : 'REASONING_OUTPUT_PRICE_PER_MILLION',
     ),
-    totalBudgetUsd: numeric(env.TOTAL_BUDGET_USD, 9, 'TOTAL_BUDGET_USD'),
-    runBudgetUsd: numeric(env.RUN_BUDGET_USD, 1, 'RUN_BUDGET_USD'),
     autoStartBot: !synthetic && env.AUTO_START_BOT === 'true',
     botStrategy: botStrategy as StrategyName,
   };
@@ -141,6 +139,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
     throw new Error('REASONING_API_FORMAT must be responses or messages');
   if (config.hybridTimeoutMs > 40_000)
     throw new Error('HYBRID_TIMEOUT_MS must leave submission time below the 45-second turn');
+  if (config.jevDecisionTimeoutMs > 40_000 || config.jevTimeoutMs > config.jevDecisionTimeoutMs)
+    throw new Error('Jev timeouts require a single attempt <= total decision time <= 40000ms');
   if (
     !Number.isSafeInteger(config.reasoningMaxOutputTokens) ||
     config.reasoningMaxOutputTokens > 32768

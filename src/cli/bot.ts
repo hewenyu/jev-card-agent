@@ -8,7 +8,6 @@ async function main(): Promise<void> {
     strategy: { type: 'string', default: 'jev' },
     'max-hands': { type: 'string', default: '0' },
     'max-minutes': { type: 'string', default: '0' },
-    'budget-usd': { type: 'string' },
     'buy-in': { type: 'string', default: '2000' },
     'no-auto-rebuy': { type: 'boolean', default: false },
   });
@@ -29,7 +28,6 @@ async function main(): Promise<void> {
       strategy: args.strategy,
       maxHands: numberArg(args['max-hands'], 0, 'max-hands'),
       maxMinutes: numberArg(args['max-minutes'], 0, 'max-minutes'),
-      budgetUsd: numberArg(args['budget-usd'], config.runBudgetUsd, 'budget-usd'),
       buyIn: numberArg(args['buy-in'], 2000, 'buy-in'),
       autoRebuy: args['no-auto-rebuy'] !== true,
     });

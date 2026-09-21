@@ -4,8 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createInitialState } from '../src/core/index.js';
 import type { PokerState, Proposal, ProviderAttempt, ProviderCall } from '../src/core/types.js';
-import { Budget } from '../src/storage/budget.js';
-import { proposalCost } from '../src/storage/cost.js';
+import { proposalCost, usageSummary } from '../src/storage/cost.js';
 import { LedgerMeter } from '../src/storage/provider-meter.js';
 import { Queries } from '../src/storage/queries.js';
 import { Store } from '../src/storage/store.js';
@@ -62,18 +61,16 @@ describe('provider cost ledger', () => {
         throw new DOMException('Timed out', 'TimeoutError');
       },
     };
-    const result = await evaluateRun(store, 'demo-jev', 'jev-reasoning', 1, policy, undefined, {
+    const result = await evaluateRun(store, 'demo-jev', 'jev-reasoning', 1, policy, {
       id: 'cancelled-eval',
     });
     expect(result.errors).toBe(1);
-    expect(result.costUsd).toBe(new Budget(store).summary().reservedUsd);
+    expect(result.costUsd).toBe(usageSummary(store).reservedUsd);
     expect(result.costUsd).toBeGreaterThan(0);
   });
   it('charges each provider at its configured rate even on model mismatch and settles only once', () => {
     const store = makeStore();
     const meter = new LedgerMeter(store, 'run', {
-      totalUsd: 1,
-      runUsd: 1,
       reasoningInputPerMillion: 2,
       reasoningOutputPerMillion: 8,
     });
@@ -84,7 +81,7 @@ describe('provider cost ledger', () => {
     const jevId = meter.before({ ...call, provider: 'jev', purpose: 'reconsider' })!;
     const jev = attempt('jev', { provider: 'jev', purpose: 'reconsider' });
     meter.after(jev, jevId);
-    expect(new Budget(store).summary().estimatedUsd).toBeCloseTo(0.002842, 9);
+    expect(usageSummary(store).estimatedUsd).toBeCloseTo(0.002842, 9);
     expect(proposalCost(store, proposal([failed, jev]))).toBeCloseTo(0.002842, 9);
     expect(
       store.db.prepare('SELECT status FROM provider_usage WHERE attempt_id=?').get('mismatch')
@@ -97,17 +94,17 @@ describe('provider cost ledger', () => {
     directories.push(directory);
     const path = join(directory, 'test.sqlite');
     const first = makeStore(path);
-    const meter = new LedgerMeter(first, 'run', { totalUsd: 0.3, runUsd: 0.3 });
+    const meter = new LedgerMeter(first, 'run');
     const id = meter.before(call)!;
     expect(id).toBeTruthy();
     const cancelled = attempt('cancelled', { status: 'cancelled', usage: null });
     meter.after(cancelled, id);
-    const reserved = new Budget(first).summary().reservedUsd;
+    const reserved = usageSummary(first).reservedUsd;
     expect(reserved).toBeGreaterThan(0.2);
     expect(proposalCost(first, proposal([cancelled]))).toBe(reserved);
     const second = makeStore(path);
-    expect(new LedgerMeter(second, 'run', { totalUsd: 0.3, runUsd: 0.3 }).before(call)).toBeNull();
-    expect(new Budget(second).summary().unknownRequests).toBe(1);
+    expect(new LedgerMeter(second, 'run').before(call)).toBeTruthy();
+    expect(usageSummary(second).unknownRequests).toBe(1);
   });
 });
 

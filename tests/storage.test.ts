@@ -2,11 +2,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Store } from '../src/storage/store.js';
 import { seedDemo } from '../src/storage/demo.js';
 import { Queries } from '../src/storage/queries.js';
-import { Budget } from '../src/storage/budget.js';
+import { LedgerMeter } from '../src/storage/provider-meter.js';
+import { usageSummary } from '../src/storage/cost.js';
 import { evaluateRun } from '../src/evaluation/service.js';
-import { buildCandidates, buildContext, createInitialState } from '../src/core/index.js';
 import { redact } from '../src/storage/database.js';
-import type { PokerState } from '../src/core/types.js';
 
 const stores: Store[] = [];
 function fixture() {
@@ -100,47 +99,24 @@ describe('persistent decision evidence', () => {
   });
 });
 
-describe('budget accounting', () => {
-  const state: PokerState = {
-    ...createInitialState(),
-    tableId: 'table',
-    handId: 'hand',
-    heroSeat: 0,
-    turnToken: 'test-turn',
-    validActions: [{ action: 'check' }],
-    seats: [],
-    complete: false,
+describe('usage accounting without amount limits', () => {
+  const call = {
+    provider: 'jev' as const,
+    purpose: 'decision' as const,
+    requestedModel: 'jev-1.13.0',
+    inputCharacters: 1000,
+    maxOutputTokens: 100,
   };
-  const context = buildContext(state),
-    candidates = buildCandidates(state);
-  it('counts in-flight and unknown usage against the cap', () => {
+  it('keeps large historical estimates and unknown calls without refusing another request', () => {
     const { store } = fixture();
-    const budget = new Budget(store, 0.004, 0.004);
-    const id = budget.reserve('run', context, candidates)!;
-    expect(id).toBeTruthy();
-    expect(budget.reserve('run', context, candidates)).toBeNull();
-    budget.settle(id, null);
-    expect(budget.summary().unknownRequests).toBe(1);
-    expect(budget.reserve('run', context, candidates)).toBeNull();
-  });
-  it('reconciles actual usage once and prevents an oversized payload', () => {
-    const { store } = fixture();
-    const budget = new Budget(store, 0.004, 0.004);
-    const id = budget.reserve('run', context, candidates)!;
-    const proposal = {
-      candidateId: 'check',
-      selected: 'check',
-      source: 'jev' as const,
-      explanation: 'test',
-      latencyMs: 1,
-      usage: { input_tokens: 1000, output_tokens: 10 },
-    };
-    budget.settle(id, proposal);
-    budget.settle(id, { ...proposal, usage: { input_tokens: 9000, output_tokens: 10 } });
-    expect(budget.summary().estimatedUsd).toBeCloseTo(0.000042, 9);
-    expect(budget.reserve('run', context, candidates)).not.toBeNull();
-    expect(
-      budget.reserve('another', { ...context, version: 'x'.repeat(49_000) }, candidates),
-    ).toBeNull();
+    store.db
+      .prepare('INSERT INTO usage(id,run_id,reserved_nanos,status,created_at) VALUES(?,?,?,?,?)')
+      .run('legacy', 'old', 1000 * 1e9, 'unknown', new Date().toISOString());
+    const meter = new LedgerMeter(store, 'run');
+    expect(meter.before(call)).toBeTruthy();
+    expect(meter.before(call)).toBeTruthy();
+    expect(usageSummary(store).unknownRequests).toBe(1);
+    expect(usageSummary(store).reservedUsd).toBeCloseTo(1000.005376, 9);
+    expect(meter.before({ ...call, inputCharacters: 49_000 })).toBeNull();
   });
 });

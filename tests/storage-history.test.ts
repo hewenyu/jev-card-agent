@@ -187,12 +187,33 @@ describe('persisted historical feedback', () => {
         board: ['2h', '3d', '4s'],
         holeCards: ['Ah', 'Kd'],
         action: 'raise',
+        source: 'jev',
+        fallbackReason: null,
         amount: 120,
       },
     ]);
     expect(JSON.stringify(outcome)).not.toContain('Qc');
     outcome!.decisions[0]!.board.push('Ac');
     expect(store.recentOutcomes(timestamp(30), 'current')[0]?.decisions[0]?.board).toHaveLength(3);
+  });
+
+  it('keeps actual decision source and failure reason in accepted historical feedback', () => {
+    const store = fixture();
+    settle(store);
+    recordDecision(store, 'fallback');
+    store.db
+      .prepare('UPDATE decisions SET source=?,fallback_reason=? WHERE id=?')
+      .run('fallback', 'model_budget_exhausted', 'fallback');
+    const history = store.recentOutcomes(timestamp(30), 'current');
+    const context = buildContext(state('current'), [], {
+      asOf: timestamp(30),
+      recentOutcomes: history,
+    });
+    expect(context.recentOutcomes[0]?.decisions[0]).toMatchObject({
+      source: 'fallback',
+      fallbackReason: 'model_budget_exhausted',
+    });
+    expect(context.recentOutcomes[0]?.strategy).toBe('jev');
   });
 
   it.each(['missing', 'negative'] as const)(

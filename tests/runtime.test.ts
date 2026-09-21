@@ -1,176 +1,16 @@
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WebSocketServer, type WebSocket } from 'ws';
-import { PokerRuntime } from '../src/runtime/runtime.js';
+import { describe, expect, it, vi } from 'vitest';
+import type { WebSocket } from 'ws';
 import { BaselinePolicy } from '../src/policies/baseline.js';
 import type { Policy } from '../src/core/types.js';
-import type {
-  DecisionRecord,
-  RuntimeCheckpoint,
-  RuntimeStore,
-  StoredAction,
-} from '../src/runtime/types.js';
-
-class MemoryStore implements RuntimeStore {
-  assertRuntimeLease() {}
-  actions = new Map<string, StoredAction>();
-  decisions: DecisionRecord[] = [];
-  events: unknown[] = [];
-  checkpoint: RuntimeCheckpoint | null = null;
-  beginRun() {}
-  finishRun() {}
-  appendEvent(...args: unknown[]) {
-    this.events.push(args);
-  }
-  saveDecision(value: DecisionRecord) {
-    this.decisions.push(value);
-  }
-  prepareAction(value: StoredAction) {
-    this.actions.set(value.id, structuredClone(value));
-  }
-  updateAction(id: string, status: StoredAction['status']) {
-    const action = this.actions.get(id);
-    if (action) action.status = status;
-  }
-  pendingActions() {
-    return [...this.actions.values()].filter((a) => !['accepted', 'rejected'].includes(a.status));
-  }
-  saveCheckpoint(value: RuntimeCheckpoint) {
-    this.checkpoint = structuredClone(value);
-  }
-  loadCheckpoint() {
-    return this.checkpoint;
-  }
-  saveHand() {}
-}
-const cleanups: (() => Promise<void>)[] = [];
-afterEach(async () => {
-  for (const cleanup of cleanups.splice(0)) await cleanup();
-});
-async function arena(
-  handler: (ws: WebSocket, message: Record<string, unknown>, connection: number) => void,
-  activeGame: Record<string, unknown> | (() => Record<string, unknown>) = { playing: false },
-  confirmLeave = true,
-  seasonBalance: () => Record<string, unknown> = () => ({
-    chip_balance: 5000,
-    chips_at_table: 0,
-    pro_tier: false,
-    auto_rebuy: true,
-  }),
-) {
-  let connection = 0;
-  const messages: Record<string, unknown>[] = [];
-  const http = createServer((request, response) => {
-    expect(request.headers.authorization).toBe('Bearer test-secret');
-    response.setHeader('content-type', 'application/json');
-    if (request.url === '/api/season/me') {
-      response.end(JSON.stringify(seasonBalance()));
-      return;
-    }
-    response.end(JSON.stringify(typeof activeGame === 'function' ? activeGame() : activeGame));
-  });
-  const server = new WebSocketServer({ server: http });
-  server.on('connection', (ws, request) => {
-    expect(request.headers.authorization).toBe('Bearer test-secret');
-    const index = ++connection;
-    ws.on('message', (bytes) => {
-      const message = JSON.parse(bytes.toString()) as Record<string, unknown>;
-      messages.push(message);
-      handler(ws, message, index);
-      if (confirmLeave && message.type === 'leave_table')
-        send(ws, { type: 'error', code: 'not_at_table' });
-    });
-    send(ws, { type: 'connected', agent_id: 'hero', name: 'hero' });
-  });
-  await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
-  const port = (http.address() as AddressInfo).port;
-  cleanups.push(async () => {
-    for (const ws of server.clients) ws.terminate();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    await new Promise<void>((resolve) => http.close(() => resolve()));
-  });
-  return { wsUrl: `ws://127.0.0.1:${port}`, restUrl: `http://127.0.0.1:${port}`, messages };
-}
-function send(ws: WebSocket, value: Record<string, unknown>) {
-  ws.send(JSON.stringify(value));
-}
-function joined(ws: WebSocket) {
-  send(ws, {
-    type: 'table_joined',
-    table_id: 't1',
-    seat: 0,
-    players: [
-      { seat: 0, name: 'hero', stack: 2000 },
-      { seat: 1, name: 'other', stack: 2000 },
-    ],
-  });
-}
-function turn(ws: WebSocket, hand: number, sequence = hand * 100) {
-  send(ws, {
-    type: 'hand_start',
-    table_id: 't1',
-    hand_id: `h${hand}`,
-    table_seq: sequence,
-    seat: 0,
-    blinds: { small_blind: 10, big_blind: 20 },
-  });
-  send(ws, {
-    type: 'hole_cards',
-    table_id: 't1',
-    hand_id: `h${hand}`,
-    table_seq: sequence + 1,
-    cards: ['Ah', 'Kd'],
-  });
-  const value = {
-    type: 'your_turn',
-    table_id: 't1',
-    hand_id: `h${hand}`,
-    table_seq: sequence + 4,
-    turn_token: `token-${hand}`,
-    pot: 40,
-    valid_actions: [{ action: 'check' }, { action: 'fold' }],
-  };
-  send(ws, value);
-  return value;
-}
-function resync(ws: WebSocket, hand: string, token: string, sequence = 110) {
-  send(ws, {
-    type: 'resync_response',
-    table_id: 't1',
-    hand_id: hand,
-    to_table_seq: sequence,
-    role: 'player',
-    replayed_events: [],
-    snapshot: {
-      type: 'table_state',
-      table_id: 't1',
-      hand_id: hand,
-      actor_seat: 0,
-      street: 'preflop',
-      pot: 40,
-      hero: {
-        seat: 0,
-        turn_token: token,
-        hole_cards: ['Ah', 'Kd'],
-        valid_actions: [{ action: 'check' }, { action: 'fold' }],
-      },
-      seats: [{ seat: 0, name: 'hero', stack: 2000, bet: 0, status: 'active' }],
-    },
-  });
-}
-function createRuntime(
-  urls: { wsUrl: string; restUrl: string },
-  store = new MemoryStore(),
-  policy: Policy = new BaselinePolicy(),
-) {
-  const runtime = new PokerRuntime({ ...urls, apiKey: 'test-secret', store, policy });
-  cleanups.unshift(async () => {
-    runtime.stop(false);
-    await vi.waitFor(() => expect(['stopped', 'idle', 'failed']).toContain(runtime.status().phase));
-  });
-  return { runtime, store };
-}
+import {
+  arena,
+  createRuntime,
+  joined,
+  MemoryStore,
+  resync,
+  send,
+  turn,
+} from './helpers/runtime-arena.js';
 
 describe('OpenPoker runtime against an actual local WebSocket server', () => {
   it('automatically completes multiple hands, persists before send, ignores duplicate turns and stops at its hand limit', async () => {
@@ -202,7 +42,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       }
     });
     const { runtime } = createRuntime(urls, store);
-    await runtime.start({ maxHands: 3 });
+    await runtime.start({ strategy: 'baseline', maxHands: 3 });
     await vi.waitFor(() => expect(runtime.status().phase).toBe('stopped'));
     expect(count).toBe(3);
     expect(store.decisions).toHaveLength(3);
@@ -233,7 +73,12 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       if (message.type === 'resync_request') resync(ws, 'h1', 'token-1');
     });
     const { runtime, store } = createRuntime(urls, undefined, policy);
-    await runtime.start({ maxHands: 1, reconnectMinMs: 1, reconnectMaxMs: 2 });
+    await runtime.start({
+      strategy: 'baseline',
+      maxHands: 1,
+      reconnectMinMs: 1,
+      reconnectMaxMs: 2,
+    });
     await vi.waitFor(() => expect(runtime.status().phase).toBe('stopped'));
     expect(submitted).toHaveLength(2);
     expect(submitted[1]).toEqual(submitted[0]);
@@ -259,7 +104,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       { playing: true, table_id: 't1', seat: 0 } as { playing: boolean },
     );
     const { runtime, store } = createRuntime(urls, undefined, policy);
-    await runtime.start({ maxHands: 1 });
+    await runtime.start({ strategy: 'baseline', maxHands: 1 });
     await vi.waitFor(() => expect(runtime.status().phase).toBe('stopped'));
     expect(policy.decide).not.toHaveBeenCalled();
     expect(store.decisions[0]?.fallbackReason).toBe('recovered_turn_unknown_remaining_time');
@@ -297,7 +142,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       }
     });
     const { runtime, store } = createRuntime(urls, undefined, policy);
-    await runtime.start({ maxHands: 1, decisionTimeoutMs: 15 });
+    await runtime.start({ strategy: 'baseline', maxHands: 1, decisionTimeoutMs: 15 });
     await vi.waitFor(() => expect(runtime.status().phase).toBe('stopped'));
     expect(store.decisions).toHaveLength(1);
     expect(store.decisions[0]?.proposal.source).toBe('fallback');
@@ -316,7 +161,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       throw new Error('disk full');
     };
     const { runtime } = createRuntime(urls, store);
-    await runtime.start();
+    await runtime.start({ strategy: 'baseline' });
     await vi.waitFor(() => expect(runtime.status().phase).toBe('failed'));
     expect(runtime.status().lastError).toBe('disk full');
     expect(urls.messages.filter((m) => m.type === 'action')).toHaveLength(0);
@@ -338,7 +183,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       }
     });
     const { runtime } = createRuntime(urls, undefined, policy);
-    await runtime.start();
+    await runtime.start({ strategy: 'baseline' });
     await vi.waitFor(() => expect(runtime.status().state.handId).toBe('h1'));
     runtime.stop(false);
     expect(policy.decide).not.toHaveBeenCalled();
@@ -387,7 +232,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       }
     });
     const { runtime, store } = createRuntime(urls, undefined, policy);
-    await runtime.start({ maxHands: 1 });
+    await runtime.start({ strategy: 'baseline', maxHands: 1 });
     await vi.waitFor(() => expect(runtime.status().phase).toBe('stopped'));
     expect(store.decisions[0]?.fallbackReason).toBe('provider unavailable');
     expect(policy.decide).toHaveBeenCalledTimes(1);
@@ -404,7 +249,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       if (message.type === 'resync_request') resync(ws, 'h1', 'token-1');
     });
     const { runtime } = createRuntime(urls);
-    await runtime.start();
+    await runtime.start({ strategy: 'baseline' });
     await vi.waitFor(() => expect(runtime.status().state.lastTableSeq).toBe(110));
     expect(urls.messages.filter((message) => message.type === 'action')).toHaveLength(1);
     runtime.stop(false);
@@ -436,7 +281,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       }
     });
     const { runtime, store } = createRuntime(urls, undefined, policy);
-    await runtime.start({ maxHands: 1 });
+    await runtime.start({ strategy: 'baseline', maxHands: 1 });
     await vi.waitFor(() => expect(runtime.status().phase).toBe('stopped'));
     await runtime.settleDecisions();
     expect(urls.messages.filter((message) => message.type === 'action')).toHaveLength(1);
@@ -458,7 +303,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       }
     });
     const { runtime } = createRuntime(urls);
-    await runtime.start({ autoRebuy: false });
+    await runtime.start({ strategy: 'baseline', autoRebuy: false });
     await vi.waitFor(() => expect(runtime.status().phase).toBe('stopped'));
     expect(joins).toBe(3);
     expect(urls.messages.filter((message) => message.type === 'rebuy')).toHaveLength(0);
@@ -516,7 +361,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       { playing: true, table_id: 't1', seat: 0 } as { playing: boolean },
     );
     const { runtime, store } = createRuntime(urls);
-    await runtime.start({ maxHands: 1 });
+    await runtime.start({ strategy: 'baseline', maxHands: 1 });
     await vi.waitFor(() => expect(runtime.status().state.lastTableSeq).toBe(50));
     expect(
       store.events.filter(
@@ -548,7 +393,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       }
     });
     const { runtime } = createRuntime(urls, store, policy);
-    await runtime.start();
+    await runtime.start({ strategy: 'baseline' });
     await vi.waitFor(() => expect(runtime.status().phase).toBe('failed'));
     expect(runtime.status().lastError).toBe('Runtime lease lost');
     expect(urls.messages.filter((message) => message.type === 'action')).toHaveLength(0);
@@ -567,7 +412,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       }
     });
     const { runtime } = createRuntime(urls, store, policy);
-    await runtime.start();
+    await runtime.start({ strategy: 'baseline' });
     await vi.waitFor(() => expect(runtime.status().phase).toBe('failed'));
     expect(policy.decide).not.toHaveBeenCalled();
   });
@@ -596,7 +441,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       false,
     );
     const { runtime } = createRuntime(urls);
-    await runtime.start();
+    await runtime.start({ strategy: 'baseline' });
     await vi.waitFor(() =>
       expect(runtime.status().state.waitingReason).toBe('between_hands_delay'),
     );
@@ -626,7 +471,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       }
     });
     const { runtime } = createRuntime(urls);
-    await runtime.start({ maxHands: 1 });
+    await runtime.start({ strategy: 'baseline', maxHands: 1 });
     await vi.waitFor(() => expect(runtime.status().phase).toBe('stopped'), { timeout: 2500 });
     expect(joins).toBe(2);
     expect(runtime.status().hands).toBe(1);
@@ -650,7 +495,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       }
     });
     const { runtime } = createRuntime(urls);
-    await runtime.start({ maxHands: 1 });
+    await runtime.start({ strategy: 'baseline', maxHands: 1 });
     await vi.waitFor(() => expect(runtime.status().phase).toBe('stopped'), { timeout: 2500 });
     expect(urls.messages.filter((message) => message.type === 'join_lobby')).toHaveLength(1);
     expect(urls.messages.filter((message) => message.type === 'resync_request')).toHaveLength(1);
@@ -661,7 +506,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       if (message.type === 'join_lobby') send(ws, { type: 'error', code: 'rate_limited' });
     });
     const { runtime } = createRuntime(urls);
-    await runtime.start();
+    await runtime.start({ strategy: 'baseline' });
     await vi.waitFor(() => expect(runtime.status().lastError).toBe('rate_limited'));
     runtime.stop(true);
     await vi.waitFor(() => expect(runtime.status().phase).toBe('stopped'));
@@ -687,7 +532,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
           });
       });
       const { runtime } = createRuntime(urls);
-      await runtime.start(options);
+      await runtime.start({ strategy: 'baseline', ...options });
       await vi.waitFor(() =>
         expect(urls.messages.filter((message) => message.type === 'action')).toHaveLength(1),
       );
@@ -721,7 +566,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
         });
     });
     const { runtime } = createRuntime(urls);
-    await runtime.start({ gracefulStopTimeoutMs: 30 });
+    await runtime.start({ strategy: 'baseline', gracefulStopTimeoutMs: 30 });
     await vi.waitFor(() =>
       expect(urls.messages.filter((message) => message.type === 'action')).toHaveLength(1),
     );
@@ -745,7 +590,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
         });
     });
     const { runtime } = createRuntime(urls);
-    await runtime.start({ gracefulStopTimeoutMs: 0 });
+    await runtime.start({ strategy: 'baseline', gracefulStopTimeoutMs: 0 });
     await vi.waitFor(() =>
       expect(urls.messages.filter((message) => message.type === 'action')).toHaveLength(1),
     );
@@ -803,7 +648,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       () => ({ chip_balance: balance, chips_at_table: 0, pro_tier: false, auto_rebuy: true }),
     );
     const { runtime } = createRuntime(urls);
-    await runtime.start({ maxHands: 2, buyIn: 2000, autoRebuy: true });
+    await runtime.start({ strategy: 'baseline', maxHands: 2, buyIn: 2000, autoRebuy: true });
     await vi.waitFor(() => expect(runtime.status().phase).toBe('stopped'));
     expect(runtime.status().hands).toBe(2);
     expect(joins).toBe(2);
@@ -831,7 +676,7 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
       () => ({ chip_balance: available, chips_at_table: 0, auto_rebuy: true }),
     );
     const { runtime } = createRuntime(urls);
-    await runtime.start();
+    await runtime.start({ strategy: 'baseline' });
     await vi.waitFor(() => expect(runtime.state.lastTableSeq).toBe(100));
     send(socket!, {
       type: 'auto_rebuy_scheduled',

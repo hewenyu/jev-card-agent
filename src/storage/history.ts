@@ -4,7 +4,7 @@ import {
   type HistoricalDecision,
   type HistoricalOutcome,
 } from '../core/history.js';
-import type { Candidate, DecisionContext } from '../core/types.js';
+import type { Candidate, DecisionContext, DecisionSource } from '../core/types.js';
 import { json } from './database.js';
 import type { Store } from './store.js';
 
@@ -50,6 +50,10 @@ function outcomeDecisions(
       board: context.board,
       holeCards: context.holeCards,
       action: selected.action,
+      source: ['jev', 'baseline', 'fallback', 'unavailable'].includes(String(row.source))
+        ? (row.source as DecisionSource)
+        : 'unknown',
+      fallbackReason: typeof row.fallback_reason === 'string' ? row.fallback_reason : null,
       ...(selected.amount === undefined ? {} : { amount: selected.amount }),
     });
     // Match core ordering even when multiple turns share a clock timestamp.

@@ -140,7 +140,7 @@ export interface LiveDecisionProgress {
   sessionId: string;
   tableId: string;
   handId: string;
-  phase: 'reasoning' | 'jev' | 'completed' | 'fallback' | 'submitted';
+  phase: 'reasoning' | 'jev' | 'completed' | 'fallback' | 'failed' | 'submitted';
   startedAt: string;
   updatedAt: string;
 }

@@ -41,7 +41,7 @@ TypeSafe [API](https://docs.typesafe.ai/api)、[文档索引](https://docs.types
 
 OpenPoker 公开场当前行动窗口为 45 秒，重连不延长。TypeSafe SDK 的单次 timeout 默认 10 秒、默认重试 2 次，Retry-After 等待可到 60 秒；不能直接当作实时决策总预算。
 
-Runtime 使用覆盖完整请求、响应读取和重试的 AbortSignal，保留 fallback 与提交余量。迟到结果不能用于新回合。
+Runtime 使用覆盖完整请求、响应读取和重试的 AbortSignal，保留提交余量；Jev 最终失败不提交本地行动并持久停牌。迟到结果不能用于新回合。
 
 依据：[RequestOptions](https://docs.typesafe.ai/sdk/javascript/api/interfaces/RequestOptions)、[RetryPolicy](https://docs.typesafe.ai/sdk/javascript/api/interfaces/RetryPolicy)、[OpenPoker Reconnection](https://docs.openpoker.ai/building-bots/reconnection-idempotency/)。
 

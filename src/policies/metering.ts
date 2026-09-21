@@ -24,7 +24,7 @@ export function beginAttempt(call: ProviderCall, meter?: ProviderMeter) {
   } catch (error) {
     throw new ProviderLedgerError(error);
   }
-  if (reservationId === null) throw new ProviderError('provider_budget_exhausted');
+  if (reservationId === null) throw new ProviderError('provider_input_too_large');
   const started = performance.now();
   const attempt: ProviderAttempt = {
     id: randomUUID(),

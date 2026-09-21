@@ -51,7 +51,7 @@ async function fixture(page: Page) {
       : route.fulfill({ json: state.value });
   });
   const focus = () => page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  return { state, runId, otherRunId, focus };
+  return { state, runId, otherRunId, focus, runs };
 }
 
 test('Overview shows only complete-run outcome statistics and independent score/profit curves', async ({
@@ -92,6 +92,24 @@ test('Overview shows only complete-run outcome statistics and independent score/
   await expect(page.getByTestId('overview-win-rate')).toHaveText('40%');
   await page.getByRole('button', { name: 'Net profit', exact: true }).click();
   await expect(page.getByRole('img', { name: /Cumulative net profit.*1,250/ })).toBeVisible();
+});
+
+test('historical fallback runs disclose mixed outcomes beside the statistical win-rate definition', async ({
+  page,
+}) => {
+  const { runs, otherRunId } = await fixture(page);
+  runs[0]!.fallbackCount = 125;
+  runs[1]!.fallbackCount = 0;
+  await page.goto('/');
+  const warning = page.getByText('This run includes 125 historical runtime fallback decisions.', {
+    exact: false,
+  });
+  await expect(warning).toBeVisible();
+  await expect(warning).toContainText('not a pure Jev comparison');
+  await expect(page.getByTestId('overview-win-rate')).toHaveText('40%');
+  await expect(page.getByText('Profitable hands / verified hands', { exact: true })).toBeVisible();
+  await page.getByLabel('Selected run').selectOption(otherRunId);
+  await expect(warning).toHaveCount(0);
 });
 
 test('statistics refresh automatically, preserve same-run data on failure, and recover on focus', async ({

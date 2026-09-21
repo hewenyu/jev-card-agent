@@ -61,6 +61,30 @@ export class Store implements RuntimeStore {
       .prepare('UPDATE runs SET status=?, ended_at=?, reason=? WHERE id=?')
       .run(status, endedAt, error, id);
   }
+  saveDecisionBlock(block: {
+    runId: string;
+    decisionId: string;
+    reason: string;
+    createdAt: string;
+  }): void {
+    this.db
+      .prepare("INSERT OR REPLACE INTO meta(key,value) VALUES('decision_block',?)")
+      .run(JSON.stringify(block));
+  }
+  loadDecisionBlock(): {
+    runId: string;
+    decisionId: string;
+    reason: string;
+    createdAt: string;
+  } | null {
+    return json(
+      this.db.prepare("SELECT value FROM meta WHERE key='decision_block'").get()?.value,
+      null,
+    );
+  }
+  clearDecisionBlock(): void {
+    this.db.prepare("DELETE FROM meta WHERE key='decision_block'").run();
+  }
   recentOutcomes(asOf: string, excludeHandId: string) {
     return recentOutcomes(this, asOf, excludeHandId);
   }
@@ -109,29 +133,45 @@ export class Store implements RuntimeStore {
 
   saveDecision(decision: DecisionRecord): void {
     const cost = proposalCost(this, decision.proposal);
-    this.db
-      .prepare(
-        `INSERT OR IGNORE INTO decisions
-      (id,run_id,hand_id,street,created_at,context,candidates,proposal,source,selected,status,
-       latency_ms,cost_usd,fallback_reason,model) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      )
-      .run(
-        decision.id,
-        decision.runId,
-        decision.handId,
-        decision.context.street,
-        decision.createdAt,
-        JSON.stringify(decision.context),
-        JSON.stringify(decision.candidates),
-        JSON.stringify(decision.proposal),
-        decision.proposal.source,
-        decision.proposal.candidateId,
-        decision.status ?? 'proposed',
-        decision.proposal.latencyMs,
-        cost,
-        decision.fallbackReason,
-        decision.proposal.model ?? null,
-      );
+    const failed = decision.status === 'failed';
+    if (failed) this.db.exec('SAVEPOINT failed_decision');
+    try {
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO decisions
+        (id,run_id,hand_id,street,created_at,context,candidates,proposal,source,selected,status,
+         latency_ms,cost_usd,fallback_reason,model) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          decision.id,
+          decision.runId,
+          decision.handId,
+          decision.context.street,
+          decision.createdAt,
+          JSON.stringify(decision.context),
+          JSON.stringify(decision.candidates),
+          JSON.stringify(decision.proposal),
+          decision.proposal.source,
+          decision.proposal.candidateId,
+          decision.status ?? 'proposed',
+          decision.proposal.latencyMs,
+          cost,
+          decision.fallbackReason,
+          decision.proposal.model ?? null,
+        );
+      if (failed) {
+        this.saveDecisionBlock({
+          runId: decision.runId,
+          decisionId: decision.id,
+          reason: decision.fallbackReason ?? 'model_decision_unavailable',
+          createdAt: decision.createdAt,
+        });
+        this.db.exec('RELEASE failed_decision');
+      }
+    } catch (error) {
+      if (failed) this.db.exec('ROLLBACK TO failed_decision; RELEASE failed_decision');
+      throw error;
+    }
   }
 
   prepareAction(action: StoredAction): void {
@@ -179,12 +219,16 @@ export class Store implements RuntimeStore {
 
   pendingActions(): StoredAction[] {
     return this.db
-      .prepare("SELECT * FROM actions WHERE status IN ('prepared','sent','unresolved')")
+      .prepare(
+        `SELECT a.*,d.source AS decision_source FROM actions a LEFT JOIN decisions d
+        ON d.id=a.decision_id WHERE a.status IN ('prepared','sent','unresolved')`,
+      )
       .all()
       .map((row) => ({
         id: String(row.id),
         runId: String(row.run_id),
         decisionId: String(row.decision_id),
+        decisionSource: row.decision_source as StoredAction['decisionSource'],
         tableId: String(row.table_id),
         payload: json<StoredAction['payload']>(row.payload, {} as StoredAction['payload']),
         status: row.status as ActionStatus,

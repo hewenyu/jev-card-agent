@@ -1,6 +1,22 @@
 import type { Proposal } from '../core/types.js';
 import type { Store } from './store.js';
 
+/** Usage is an accounting record, never a permission to make another model request. */
+export function usageSummary(store: Pick<Store, 'db'>) {
+  const row = store.db
+    .prepare(
+      `SELECT COALESCE(SUM(charged_nanos),0) AS charged,
+    COALESCE(SUM(CASE WHEN charged_nanos IS NULL THEN reserved_nanos ELSE 0 END),0) AS reserved,
+    SUM(CASE WHEN status='unknown' THEN 1 ELSE 0 END) AS unknown FROM usage`,
+    )
+    .get();
+  return {
+    estimatedUsd: Number(row?.charged ?? 0) / 1e9,
+    reservedUsd: Number(row?.reserved ?? 0) / 1e9,
+    unknownRequests: Number(row?.unknown ?? 0),
+  };
+}
+
 export function proposalCost(store: Store, proposal: Proposal): number {
   if (
     proposal.attempts?.length &&

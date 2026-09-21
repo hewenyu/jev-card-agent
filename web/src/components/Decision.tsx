@@ -6,6 +6,7 @@ import { DecisionAnalysis } from './DecisionAnalysis';
 export function Decision({ decision }: { decision: DecisionView }) {
   const selected = decision.candidates.find((item) => item.id === decision.selectedCandidateId);
   const cancelled = decision.status === 'cancelled';
+  const failed = decision.status === 'failed' || decision.source === 'unavailable';
   return (
     <div className="decision-detail">
       <div className="decision-heading">
@@ -14,26 +15,30 @@ export function Decision({ decision }: { decision: DecisionView }) {
             {decision.street} · {decision.source}
           </p>
           <h3>
-            {cancelled
-              ? 'Cancelled · no action submitted'
-              : (selected?.label ?? 'No action recorded')}
+            {failed
+              ? 'Model decision failed · no action submitted'
+              : cancelled
+                ? 'Cancelled · no action submitted'
+                : (selected?.label ?? 'No action recorded')}
           </h3>
         </div>
         <Status>{decision.status}</Status>
       </div>
       <p className="subtle">
-        {time(decision.createdAt)} · {decision.model ?? 'Rule-based policy'}
+        {time(decision.createdAt)} ·{' '}
+        {decision.model ?? (failed ? 'Model unavailable' : 'Rule-based policy')}
       </p>
       {decision.fallbackReason && (
         <div className="warning-notice">
-          {cancelled ? 'Cancellation reason' : 'Fallback'}: {decision.fallbackReason}
+          {failed ? 'Failure reason' : cancelled ? 'Cancellation reason' : 'Historical fallback'}:{' '}
+          {decision.fallbackReason}
         </div>
       )}
       <DecisionAnalysis decision={decision} />
       <div className="candidate-list">
         {decision.candidates.map((candidate) => {
           const probability = decision.probabilities[candidate.id];
-          const chosen = !cancelled && candidate.id === decision.selectedCandidateId;
+          const chosen = !cancelled && !failed && candidate.id === decision.selectedCandidateId;
           return (
             <div className={`candidate ${chosen ? 'chosen' : ''}`} key={candidate.id}>
               <div className="candidate-label">

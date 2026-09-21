@@ -260,7 +260,7 @@ describe('reasoning HTTP protocols', () => {
         context,
         candidates,
       ),
-    ).rejects.toThrow('provider_budget_exhausted');
+    ).rejects.toThrow('provider_input_too_large');
     expect(fetcher).not.toHaveBeenCalled();
   });
   it('rejects a late response even if a custom transport ignores cancellation', async () => {

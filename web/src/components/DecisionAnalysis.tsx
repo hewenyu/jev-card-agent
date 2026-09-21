@@ -35,6 +35,7 @@ export function DecisionAnalysis({ decision }: { decision: DecisionView }) {
   const model = text(routing.actualModel);
   const errorCode = text(routing.errorCode);
   const cancelled = decision.status === 'cancelled';
+  const failed = decision.status === 'failed' || decision.source === 'unavailable';
   const analysisConfiguration = [...(decision.attempts ?? [])]
     .reverse()
     .find((attempt) => attempt.purpose === 'analysis' && attempt.configuration)?.configuration;
@@ -90,7 +91,7 @@ export function DecisionAnalysis({ decision }: { decision: DecisionView }) {
         )}
         <div>
           <span>
-            {cancelled
+            {cancelled || failed
               ? 'Submission outcome'
               : decision.source === 'jev'
                 ? 'Final Jev choice'
@@ -99,13 +100,15 @@ export function DecisionAnalysis({ decision }: { decision: DecisionView }) {
                   : 'Recorded policy choice'}
           </span>
           <strong>
-            {cancelled ? 'No action submitted' : (final?.label ?? 'No selected candidate recorded')}
+            {cancelled || failed
+              ? 'No action submitted'
+              : (final?.label ?? 'No selected candidate recorded')}
           </strong>
           {cancelled && final && (
             <p className="annotation">Unsubmitted recommendation: {final.label}</p>
           )}
         </div>
-        {initialId && !cancelled && (
+        {initialId && !cancelled && !failed && (
           <p className="annotation">
             {initialId === decision.selectedCandidateId
               ? 'The initial Jev choice was retained.'
@@ -118,7 +121,9 @@ export function DecisionAnalysis({ decision }: { decision: DecisionView }) {
       <DecisionEvidence context={decision.context} />
       <section className="provider-trace analysis-call-trace" aria-label="Provider trace">
         <p className="eyebrow">RECORDED CALLS</p>
-        {cancelled ? (
+        {failed ? (
+          <h4>Model decision failed · bot paused</h4>
+        ) : cancelled ? (
           <h4>Decision cancelled before submission</h4>
         ) : (
           outcome && <h4>{outcomes[outcome] ?? outcome.replaceAll('_', ' ')}</h4>
