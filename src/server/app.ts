@@ -115,6 +115,9 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
       .send({ error: error instanceof Error ? error.message : 'Request failed' });
   });
   app.get('/health', () => ({ status: 'ok', service: 'jev-card-agent' }));
+  app.get('/api/funding/events', (request) =>
+    store.recentFundingEvents(pageSchema.parse(request.query)),
+  );
   app.get('/api/live', (_request, reply) => {
     const close = openSpectatorStream(reply, controller.spectator);
     if (!reply.raw.destroyed) {

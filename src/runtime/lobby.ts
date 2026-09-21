@@ -1,4 +1,4 @@
-import type { ActiveGame, OpenPokerClient } from '../openpoker/client.js';
+import type { ActiveGame, OpenPokerClient, RebuyResult } from '../openpoker/client.js';
 import { record, type ServerEvent } from '../openpoker/protocol.js';
 
 interface LobbyHooks {
@@ -11,6 +11,7 @@ interface LobbyHooks {
   recover(active: ActiveGame): void;
   cooldown(): void;
   fail(error: unknown): void;
+  fundingRebuy?(result: RebuyResult): void;
 }
 class FatalLobbyError extends Error {}
 
@@ -179,6 +180,7 @@ export class LobbyLifecycle {
       this.assertLease();
       const result = await this.client.rebuy(operation.signal);
       if (!current()) return;
+      this.hooks.fundingRebuy?.(result);
       if (result.status === 'cooldown') {
         this.rebuyNotBefore =
           Date.now() + Math.max(10_000, result.retryAfterMs ?? (latest.pro ? 120_000 : 300_000));

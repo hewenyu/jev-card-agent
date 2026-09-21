@@ -141,6 +141,31 @@ npm run bot -- --strategy jev-reasoning --max-hands 10 --max-minutes 30 --budget
 
 需要由进程管理器自动重启的本地无界面服务，可在构建后使用 `node --env-file-if-exists=.env dist/cli/bot.js --strategy jev-reasoning --budget-usd 1` 作为启动命令。该命令启动即参赛，默认不限手数/时长。Docker 部署使用下文的 Compose 管理入口和 `AUTO_START_BOT`，保留控制台及管理 API。模型累计预算随持久数据库保留；同一账号只运行一个实例。
 
+## 账户筹码、牌桌筹码与自动补筹
+
+网站分别展示官方账户余额、当前座位筹码和历史净收益；它们来自不同的数据源，不能互相推算：
+
+| 展示值            | 数据来源与含义                                                                                     |
+| ----------------- | -------------------------------------------------------------------------------------------------- |
+| Account available | OpenPoker `GET /api/season/me` 的 `chip_balance`，离桌可用虚拟筹码，用于下一次买入                 |
+| Account at table  | 同接口的 `chips_at_table`，官方赛季账户的在桌筹码快照；公开合同未保证与每次 WebSocket 更新同时生效 |
+| Seat stack        | 当前 WebSocket 牌桌中 Bot 座位的 `stack`，与当前街已下注的 `bet` 分开展示                          |
+| Net result        | 本地已核实手牌的起始/最终筹码差额，不含补筹，不代表账户余额或官方赛季 score                        |
+
+官方赛季 score 按 `chip_balance + chips_at_table` 计算；本地不拿它替代历史净收益，也不把 REST 在桌字段直接当成当前可下注筹码。官方文档没有承诺 `chips_at_table` 恒等于本次买入金额或 `stack + bet`，因此界面保留两种来源及其更新时间。支付账户的美元/USDC `balance` 与这里的虚拟筹码无关。
+
+账户快照在 Runtime 启动时读取，运行期间由后端每 15 秒统一刷新，并在补筹、冷却、入桌、离桌、手牌结算等关键事件后重新核对，经只读 API 和 SSE 更新页面。Runtime 停止后暂停轮询，保留最后快照并标记过期；再次启动先恢复持久记录，再读取官方状态。浏览器不直接访问 OpenPoker、不因刷新页面触发 rebuy。请求失败时同样保留最后成功值并标记过期；未知余额显示未知，不当作 0。判断是否同步应同时查看账户快照更新时间、连接状态和牌桌事件，不能只比较两个不同时间的数值。
+
+公开赛季每次 rebuy 固定增加 **1,500** 虚拟筹码。要求已离桌、`chips_at_table == 0`、`chip_balance < 1000`，且邮箱已验证；首次立即可用，此后 Free 冷却 5 分钟、Pro 冷却 2 分钟。实际等待遵守 `auto_rebuy_scheduled` 的 `rebuy_at` / `cooldown_seconds` 或 REST `Retry-After`。规则冷却长度不是当前剩余时间；没有权威截止信息时不生成假倒计时。
+
+`rebuy_confirmed` 表示离桌余额已补充，**不表示已经入座**。Runtime 重新读取官方余额后再入队，不在前端简单加 1,500，也不改写历史净收益。默认目标买入为 2,000；补筹后仅有 1,500 时按实际可用筹码买入 1,500，不能反复请求不足的 2,000。
+
+补筹确认与冷却安排作为资金事件保存到 SQLite，页面可查看已记录历史，服务重启后恢复最后已知状态。记录包含服务观察时间、来源和已取得的官方余额；账户快照另外显示最近核对时间。缺失的补筹前余额保留为空，不用“当前余额减 1,500”反推。规则额度、确认消息观察和后续 REST 对账按来源区分，避免快速重新买入掩盖补筹。已有记录不代表平台完整账户流水；无法核实的时间或金额仍显示未知。
+
+确认时间是本服务观察到 WebSocket 或 REST 确认的时间，不冒充平台交易时间。旧事件按原始记录 ID 回填；平台未提供唯一事件身份时不按相同余额合并，也不将观察记录条数当作精确补筹次数。
+
+依据：[官方 REST API](https://docs.openpoker.ai/api-reference/rest-api/)、[消息合同](https://docs.openpoker.ai/api-reference/message-types/)、[赛季与补筹](https://docs.openpoker.ai/compete/rebuys/)。补筹事件文档中的 2,000 余额示例不是补筹额度。
+
 ## Jev 与推理模型组合
 
 正式组合策略默认使用 `REASONING_MODE=always` 和 `REASONING_EFFORT=high`。每次有效行动都先请求分析，再由 Jev 从合法候选中选择。纯 Jev 与 baseline 是独立对照策略，切换策略产生不同 Run。

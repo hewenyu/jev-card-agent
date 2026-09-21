@@ -15,6 +15,13 @@ import { proposalCost } from './cost.js';
 import { recentOutcomes } from './history.js';
 import { sessionTurns } from './session.js';
 import { STRATEGY_VERSIONS } from '../core/index.js';
+import type { FundingEventView } from '../shared/api.js';
+import {
+  initializeFunding,
+  loadFundingState,
+  recentFundingEvents,
+  saveFundingEvent,
+} from './funding.js';
 
 export class Store implements RuntimeStore {
   readonly db: DatabaseSync;
@@ -24,6 +31,7 @@ export class Store implements RuntimeStore {
     readonly model = 'jev-1.13.0',
   ) {
     this.db = openDatabase(filename);
+    initializeFunding(this.db);
   }
 
   beginRun(run: Parameters<RuntimeStore['beginRun']>[0]): void {
@@ -61,8 +69,24 @@ export class Store implements RuntimeStore {
     return sessionTurns(this, tableId, handId, asOf, beforeSeq);
   }
 
-  appendEvent(runId: string, event: ServerEvent, receivedAt: string): void {
-    this.db
+  saveFundingEvent(event: FundingEventView, dedupeKey?: string): void {
+    saveFundingEvent(this.db, event, dedupeKey);
+  }
+  loadFundingState() {
+    return loadFundingState(this.db);
+  }
+  recentFundingEvents(options: { limit?: number; before?: string } = {}): FundingEventView[] {
+    return recentFundingEvents(this.db, options);
+  }
+  appendEvent(runId: string, event: ServerEvent, receivedAt: string): number | void {
+    const accountEvent =
+      ['rebuy_confirmed', 'auto_rebuy_scheduled'].includes(event.type) ||
+      (event.type === 'error' && event.code === 'rebuy_cooldown');
+    const sequence =
+      !accountEvent && event.type !== 'resync_response' && typeof event.table_seq === 'number'
+        ? event.table_seq
+        : null;
+    const result = this.db
       .prepare(
         `INSERT OR IGNORE INTO events(run_id,hand_id,table_id,seq,type,received_at,payload)
       VALUES(?,?,?,?,?,?,?)`,
@@ -71,13 +95,16 @@ export class Store implements RuntimeStore {
         runId,
         typeof event.hand_id === 'string' ? event.hand_id : null,
         typeof event.table_id === 'string' ? event.table_id : null,
-        event.type !== 'resync_response' && typeof event.table_seq === 'number'
-          ? event.table_seq
-          : null,
+        sequence,
         String(event.type),
         receivedAt,
         serializeEvent(event),
       );
+    if (Number(result.changes) > 0) return Number(result.lastInsertRowid);
+    const prior = this.db
+      .prepare('SELECT id FROM events WHERE run_id=? AND table_id IS ? AND seq IS ?')
+      .get(runId, event.table_id ?? null, sequence);
+    if (prior) return Number(prior.id);
   }
 
   saveDecision(decision: DecisionRecord): void {

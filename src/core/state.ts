@@ -86,12 +86,15 @@ function newHand(state: PokerState, handId: string, knownStart: boolean): PokerS
 }
 function parseSeats(value: unknown, previous: Seat[], authoritative: boolean): Seat[] | undefined {
   if (!Array.isArray(value)) return undefined;
-  return value.flatMap((item) => {
+  const updates = value.flatMap((item) => {
     const s = record(item);
     const seat = chips(s.seat);
     if (seat === undefined) return [];
-    const name = string(s.name) ?? null;
-    const old = previous.find((p) => p.seat === seat && p.name === name);
+    const previousSeat = previous.find((p) => p.seat === seat);
+    const name =
+      string(s.name) ??
+      (!authoritative && s.name === undefined ? (previousSeat?.name ?? null) : null);
+    const old = previousSeat?.name === name ? previousSeat : undefined;
     return [
       {
         seat,
@@ -110,6 +113,11 @@ function parseSeats(value: unknown, previous: Seat[], authoritative: boolean): S
       },
     ];
   });
+  if (authoritative) return updates;
+  // your_turn contains a player summary, not an authoritative occupancy snapshot.
+  const seats = new Map(previous.map((seat) => [seat.seat, seat]));
+  for (const seat of updates) seats.set(seat.seat, seat);
+  return [...seats.values()].sort((a, b) => a.seat - b.seat);
 }
 function snapshot(state: PokerState, message: RawMessage, authority: boolean): PokerState {
   const hero = record(message.hero);

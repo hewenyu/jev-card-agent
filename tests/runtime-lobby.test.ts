@@ -34,6 +34,7 @@ function fixture(balance = 1500) {
     recover: vi.fn(),
     cooldown: vi.fn(),
     fail: vi.fn(),
+    fundingRebuy: vi.fn(),
   };
   const lobby = new LobbyLifecycle(client, hooks);
   return {
@@ -73,6 +74,7 @@ describe('free-chip continuous lobby lifecycle', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(rebuy).toHaveBeenCalledTimes(1);
     expect(active.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(hooks.fundingRebuy).toHaveBeenCalledExactlyOnceWith({ status: 'confirmed' });
     await vi.advanceTimersByTimeAsync(1000);
     expect(hooks.join).toHaveBeenCalledExactlyOnceWith(1500);
     expect(read.mock.calls.length).toBeGreaterThanOrEqual(4);
@@ -85,6 +87,10 @@ describe('free-chip continuous lobby lifecycle', () => {
     await vi.advanceTimersByTimeAsync(30_000);
     expect(rebuy).toHaveBeenCalledTimes(1);
     lobby.cancel();
+    expect(hooks.fundingRebuy).toHaveBeenCalledExactlyOnceWith({
+      status: 'cooldown',
+      retryAfterMs: 120_000,
+    });
     lobby.requestJoin();
     await vi.advanceTimersByTimeAsync(119_999);
     expect(rebuy).toHaveBeenCalledTimes(1);

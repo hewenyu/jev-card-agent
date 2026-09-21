@@ -1,6 +1,8 @@
-import type { HandSummary, RunSummary } from '../../../src/shared/api';
+import type { HandSummary, RunSummary, RuntimeView } from '../../../src/shared/api';
 import { dollars, number, policyLabel, signed, time } from '../api';
 import { Cards, Empty, ErrorNotice, Icon, Panel, SourceBadge, Status } from '../components/UI';
+import { AccountFunding } from '../components/AccountFunding';
+import type { FundingHistoryState } from '../funding-history';
 
 function Performance({ hands }: { hands: HandSummary[] }) {
   let running = 0;
@@ -86,6 +88,8 @@ function Performance({ hands }: { hands: HandSummary[] }) {
 }
 
 export function Overview({
+  runtime,
+  fundingHistory,
   run,
   hands,
   openHand,
@@ -94,6 +98,8 @@ export function Overview({
   historyError,
   retryHistory,
 }: {
+  runtime: RuntimeView;
+  fundingHistory: FundingHistoryState;
   run: RunSummary | undefined;
   hands: HandSummary[];
   openHand: (id: string) => void;
@@ -117,6 +123,7 @@ export function Overview({
           Open live table <Icon name="arrow" size={16} />
         </button>
       </div>
+      <AccountFunding runtime={runtime} history={fundingHistory} />
       <div className="metrics-grid">
         <article className="metric">
           <span>
@@ -129,7 +136,7 @@ export function Overview({
           >
             {run?.settledHands ? signed(run.netChips) : '—'}
           </strong>
-          <p>Verified settlements · selected run</p>
+          <p>Historical settlements · selected run</p>
         </article>
         <article className="metric">
           <span>

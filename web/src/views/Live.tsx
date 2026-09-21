@@ -3,6 +3,8 @@ import { number, policyLabel, time } from '../api';
 import type { LiveSpectator } from '../live';
 import { PokerTable } from '../components/PokerTable';
 import { HandSession } from '../components/HandSession';
+import { AccountFunding } from '../components/AccountFunding';
+import type { FundingHistoryState } from '../funding-history';
 import { Empty, Panel, SourceBadge, Status } from '../components/UI';
 import './live.css';
 
@@ -15,10 +17,12 @@ function actionLabel(event: SpectatorEvent, runtime: RuntimeView): string {
 
 export function Live({
   runtime,
+  fundingHistory,
   runs,
   live,
 }: {
   runtime: RuntimeView;
+  fundingHistory: FundingHistoryState;
   runs: RunSummary[];
   live: LiveSpectator;
 }) {
@@ -49,6 +53,7 @@ export function Live({
               : 'Reconnecting live updates…'}
         </span>
       </div>
+      <AccountFunding runtime={runtime} history={fundingHistory} />
       <div className="spectator-layout">
         <Panel
           title="Live table"

@@ -307,3 +307,148 @@ test('390px reduced-motion live table shows fold/check and numbers without chip 
     await source.close();
   }
 });
+
+test('all six seat balances follow server snapshots through actions, settlement and seat replacement', async ({
+  page,
+}) => {
+  // Observe actual frame receipt so the stale-frame assertion cannot pass before delivery.
+  await page.addInitScript(() => {
+    const state = window as typeof window & { seatBalanceFrames: number[] };
+    state.seatBalanceFrames = [];
+    const Original = window.EventSource;
+    window.EventSource = class extends Original {
+      constructor(url: string | URL, options?: EventSourceInit) {
+        super(url, options);
+        this.addEventListener('snapshot', (message) => {
+          state.seatBalanceFrames.push(JSON.parse(message.data).sequence);
+        });
+      }
+    };
+  });
+  const source = await stream(page);
+  const stacks = async (expected: (number | null)[]) => {
+    for (const [seat, value] of expected.entries()) {
+      await expect(page.locator(`[data-seat="${seat}"] .seat-info strong`)).toHaveText(
+        value === null ? '—' : value.toLocaleString('en-US'),
+      );
+    }
+  };
+  source.send({
+    ...source.current,
+    runtime: {
+      ...source.current.runtime,
+      table: {
+        ...source.current.runtime.table!,
+        seats: source.current.runtime.table!.seats.map((seat) => ({
+          ...seat,
+          stack: 2100 + seat.seat * 100,
+        })),
+      },
+    },
+  });
+  try {
+    await page.goto('/#live');
+    await stacks([2100, 2200, 2300, 2400, 2500, 2600]);
+    const initial = structuredClone(source.current);
+    await captureMovements(page);
+    source.send({
+      ...source.current,
+      sequence: 2,
+      runtime: {
+        ...source.current.runtime,
+        table: {
+          ...source.current.runtime.table!,
+          stateSeq: 2,
+          pot: 275,
+          actorSeat: 1,
+          seats: source.current.runtime.table!.seats.map((seat) => ({
+            ...seat,
+            stack: seat.seat === 3 ? 2175 : seat.stack,
+            bet: seat.seat === 3 ? 225 : seat.bet,
+          })),
+        },
+      },
+      // Deliberately inconsistent: animation is presentation, never the chip ledger.
+      recentEvents: [
+        event('opponent-call', [movement('visual-call-7', 3, 7, 'to-pot')], 'call', 3),
+      ],
+    });
+    await expect(page.locator('[data-movement-id="visual-call-7"]')).toBeVisible();
+    await stacks([2100, 2200, 2300, 2175, 2500, 2600]);
+    await expect(page.locator('.seat-3 .seat-bet')).toHaveText('225');
+    const finalStacks = [2050, 2150, 2270, 2125, 2850, 2505];
+    source.send({
+      ...source.current,
+      sequence: 3,
+      runtime: {
+        ...source.current.runtime,
+        table: {
+          ...source.current.runtime.table!,
+          stateSeq: 3,
+          complete: true,
+          actorSeat: null,
+          pot: 0,
+          seats: source.current.runtime.table!.seats.map((seat) => ({
+            ...seat,
+            stack: finalStacks[seat.seat]!,
+            bet: 0,
+          })),
+        },
+      },
+      recentEvents: [
+        ...source.current.recentEvents,
+        event('settlement', [movement('visual-award-11', 4, 11, 'from-pot')], '', 4),
+      ],
+    });
+    await expect(page.locator('[data-movement-id="visual-award-11"]')).toBeVisible();
+    await stacks(finalStacks);
+    await expect(page.locator('.seat-bet')).toHaveCount(0);
+    await expect(page.locator('.chip-flight')).toHaveCount(0);
+    await stacks(finalStacks);
+    source.send({
+      ...source.current,
+      sequence: 4,
+      runtime: {
+        ...source.current.runtime,
+        table: {
+          ...source.current.runtime.table!,
+          stateSeq: 4,
+          seats: source.current.runtime.table!.seats.filter((seat) => seat.seat !== 4),
+        },
+      },
+    });
+    await stacks([2050, 2150, 2270, 2125, null, 2505]);
+    await expect(page.locator('.seat-4 .seat-info')).not.toContainText('Bot 5');
+    source.send({
+      ...source.current,
+      sequence: 5,
+      runtime: {
+        ...source.current.runtime,
+        table: {
+          ...source.current.runtime.table!,
+          stateSeq: 5,
+          seats: [
+            ...source.current.runtime.table!.seats,
+            { seat: 4, name: 'New opponent', stack: 1750, bet: 0, folded: false, status: 'active' },
+          ],
+        },
+      },
+    });
+    await expect(page.locator('.seat-4 .seat-info')).toContainText('New opponent');
+    await stacks([2050, 2150, 2270, 2125, 1750, 2505]);
+    source.send(initial);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as typeof window & { seatBalanceFrames: number[] }).seatBalanceFrames.at(-1),
+        ),
+      )
+      .toBe(1);
+    await stacks([2050, 2150, 2270, 2125, 1750, 2505]);
+    await expect(page.locator('.seat-4 .seat-info')).toContainText('New opponent');
+    expect(await recorded(page)).toEqual(['visual-call-7', 'visual-award-11']);
+  } finally {
+    await page.close();
+    await source.close();
+  }
+});

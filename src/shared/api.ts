@@ -140,7 +140,32 @@ export interface LiveDecisions {
   } | null;
   decisions: DecisionView[];
 }
+export interface FundingView {
+  availableChips: number | null;
+  chipsAtTable: number | null;
+  autoRebuy: boolean;
+  rebuyAmount: 1500;
+  rebuyCooldownSeconds: 120 | 300;
+  rebuyAvailableAt: string | null;
+  lastRebuyAt: string | null;
+  updatedAt: string | null;
+  observedAt: string;
+  status: 'loading' | 'current' | 'stale';
+}
+export interface FundingEventView {
+  id: string;
+  runId: string;
+  createdAt: string;
+  kind: 'rebuy_confirmed' | 'rebuy_scheduled' | 'balance_sync';
+  source: 'ws' | 'rest' | 'reconciliation';
+  amount: number | null;
+  availableBefore: number | null;
+  availableAfter: number | null;
+  chipsAtTable: number | null;
+  rebuyAvailableAt: string | null;
+}
 export interface RuntimeView {
+  funding?: FundingView;
   decision?: LiveDecisionProgress | null;
   running: boolean;
   status: string;

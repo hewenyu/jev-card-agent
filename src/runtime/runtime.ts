@@ -17,6 +17,7 @@ import {
   type ServerEvent,
 } from '../openpoker/protocol.js';
 import { LobbyLifecycle } from './lobby.js';
+import { FundingMonitor } from './funding.js';
 import { authorityKey, decide, type DecisionTask } from './decision.js';
 import type { RuntimeDependencies, RuntimeStatus, StartOptions, StoredAction } from './types.js';
 
@@ -36,6 +37,7 @@ const defaults = {
 export class PokerRuntime extends EventEmitter {
   private readonly client: OpenPokerClient;
   private readonly lobby: LobbyLifecycle;
+  private readonly funding: FundingMonitor;
   private socket: WebSocket | null = null;
   private options = { ...defaults };
   private snapshot: RuntimeStatus = {
@@ -78,6 +80,14 @@ export class PokerRuntime extends EventEmitter {
   constructor(private readonly dependencies: RuntimeDependencies) {
     super();
     this.client = new OpenPokerClient(dependencies);
+    this.funding = new FundingMonitor(
+      this.client,
+      (value) => {
+        this.snapshot.funding = value;
+        if (this.running) this.publish();
+      },
+      (event, dedupeKey) => this.dependencies.store.saveFundingEvent?.(event, dedupeKey),
+    );
     this.lobby = new LobbyLifecycle(this.client, {
       ready: () => this.running && this.snapshot.connected && !this.stopRequested && !this.leaving,
       buyIn: () => this.options.buyIn,
@@ -103,6 +113,7 @@ export class PokerRuntime extends EventEmitter {
         this.publish();
       },
       fail: (error) => this.fail(error),
+      fundingRebuy: (result) => this.funding.restRebuy(result),
     });
   }
   async settleDecisions(): Promise<void> {
@@ -181,6 +192,11 @@ export class PokerRuntime extends EventEmitter {
     for (const action of this.dependencies.store.pendingActions())
       this.pending.set(action.id, action);
     this.running = true;
+    this.funding.start(
+      this.options.autoRebuy,
+      this.snapshot.runId!,
+      this.dependencies.store.loadFundingState?.(),
+    );
     if (this.options.maxDurationMs > 0) {
       this.durationTimer = setTimeout(() => this.stop(true), this.options.maxDurationMs);
     }
@@ -348,8 +364,20 @@ export class PokerRuntime extends EventEmitter {
 
   private receive(event: ServerEvent): void {
     const runId = this.snapshot.runId!;
-    this.dependencies.store.appendEvent(runId, event, new Date().toISOString());
+    const sourceId = this.dependencies.store.appendEvent(runId, event, new Date().toISOString());
     this.emit('event', event);
+    this.funding.observe(
+      event,
+      this.snapshot.state.heroSeat,
+      sourceId === undefined ? undefined : String(sourceId),
+    );
+    // Account events are independent of table sequence and can refer to a departed table.
+    if (event.type === 'auto_rebuy_scheduled' || event.type === 'rebuy_confirmed') {
+      if (event.type === 'auto_rebuy_scheduled') this.lobby.scheduled(event);
+      else this.lobby.confirmed();
+      this.publish();
+      return;
+    }
     if (event.type === 'connected') {
       if (this.leaving) this.leave();
       else if (this.snapshot.state.tableId) {
@@ -432,10 +460,7 @@ export class PokerRuntime extends EventEmitter {
       this.cancelTask();
       if (!this.options.autoRebuy || this.stopRequested) this.leave();
       else this.lobby.busted();
-    } else if (event.type === 'auto_rebuy_scheduled') {
-      this.lobby.scheduled(event);
-    } else if (event.type === 'rebuy_confirmed') this.lobby.confirmed();
-    else if (event.type === 'player_left' && event.seat === this.snapshot.state.heroSeat) {
+    } else if (event.type === 'player_left' && event.seat === this.snapshot.state.heroSeat) {
       this.cancelTask();
       this.snapshot.state = createInitialState();
       this.lobby.departed();
@@ -808,6 +833,7 @@ export class PokerRuntime extends EventEmitter {
   private finish(phase: 'stopped' | 'failed'): void {
     if (!this.running) return;
     this.running = false;
+    this.funding.stop();
     this.lobby.cancel();
     this.cancelTask();
     this.lifetime.abort();

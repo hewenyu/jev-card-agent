@@ -196,6 +196,7 @@ export class Controller {
       : null;
     return {
       running,
+      ...(status?.funding ? { funding: status.funding } : {}),
       decision: status?.decision ?? null,
       status: this.starting
         ? 'connecting'

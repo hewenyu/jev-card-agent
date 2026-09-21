@@ -809,4 +809,57 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
     expect(joins).toBe(2);
     expect(urls.messages.filter((message) => message.type === 'rebuy')).toHaveLength(0);
   });
+  it('reconciles account events from a departed table before table sequence filtering', async () => {
+    let socket: WebSocket | undefined;
+    let available = 2000;
+    const urls = await arena(
+      (ws, message) => {
+        if (message.type === 'join_lobby') {
+          socket = ws;
+          joined(ws);
+          send(ws, {
+            type: 'hand_start',
+            table_id: 't1',
+            hand_id: 'funding-hand',
+            table_seq: 100,
+            seat: 0,
+          });
+        }
+      },
+      { playing: false },
+      true,
+      () => ({ chip_balance: available, chips_at_table: 0, auto_rebuy: true }),
+    );
+    const { runtime } = createRuntime(urls);
+    await runtime.start();
+    await vi.waitFor(() => expect(runtime.state.lastTableSeq).toBe(100));
+    send(socket!, {
+      type: 'auto_rebuy_scheduled',
+      table_id: 'departed-table',
+      table_seq: 1,
+      cooldown_seconds: 300,
+    });
+    await vi.waitFor(() => {
+      expect(runtime.status().phase).toBe('cooldown');
+      expect(runtime.status().funding?.rebuyAvailableAt).not.toBeNull();
+    });
+    available = 1500;
+    send(socket!, {
+      type: 'rebuy_confirmed',
+      table_id: 'departed-table',
+      table_seq: 1,
+      chip_balance: 99999,
+    });
+    await vi.waitFor(() => {
+      expect(runtime.status().funding).toMatchObject({
+        availableChips: 1500,
+        status: 'current',
+        rebuyAvailableAt: null,
+      });
+      expect(urls.messages.filter((message) => message.type === 'join_lobby')).toHaveLength(2);
+    });
+    runtime.stop(false);
+    await vi.waitFor(() => expect(runtime.status().phase).toBe('stopped'));
+    expect(runtime.status().funding?.status).toBe('stale');
+  });
 });

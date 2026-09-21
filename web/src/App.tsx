@@ -13,6 +13,8 @@ import { Live } from './views/Live';
 import { Replay } from './views/Replay';
 import { Experiments } from './views/Experiments';
 import { mergeHistory, useHistoryPages } from './history';
+import { latestFunding } from './funding';
+import { useFundingHistory } from './funding-history';
 
 const views = [
   { id: 'overview', label: 'Overview' },
@@ -35,12 +37,19 @@ export function App() {
   const refreshing = useRef(false);
   const [overviewStartedAt, setOverviewStartedAt] = useState(0);
   const live = useLiveSpectator();
+  const fundingHistory = useFundingHistory();
   const displayData = data && {
     ...data,
-    runtime:
-      live.snapshot && (live.status === 'live' || live.receivedAt >= overviewStartedAt)
+    runtime: {
+      ...(live.snapshot && (live.status === 'live' || live.receivedAt >= overviewStartedAt)
         ? live.snapshot.runtime
-        : data.runtime,
+        : data.runtime),
+      funding: latestFunding(
+        data.runtime.funding,
+        live.snapshot?.runtime.funding,
+        live.receivedAt >= overviewStartedAt,
+      ),
+    },
   };
   const runPages = useHistoryPages<RunSummary>(data ? '/runs' : null, revision);
   const runs = mergeHistory(runPages.items, data?.runs ?? []);
@@ -219,6 +228,8 @@ export function App() {
             <>
               {view === 'overview' && (
                 <Overview
+                  runtime={displayData.runtime}
+                  fundingHistory={fundingHistory}
                   run={run}
                   hands={hands}
                   openHand={openHand}
@@ -228,7 +239,14 @@ export function App() {
                   retryHistory={() => void handPages.loadMore()}
                 />
               )}
-              {view === 'live' && <Live runtime={displayData.runtime} runs={runs} live={live} />}
+              {view === 'live' && (
+                <Live
+                  runtime={displayData.runtime}
+                  fundingHistory={fundingHistory}
+                  runs={runs}
+                  live={live}
+                />
+              )}
               {view === 'replay' && (
                 <Replay
                   run={run}

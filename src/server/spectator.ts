@@ -11,6 +11,22 @@ export function publicRuntime(view: RuntimeView): RuntimeView {
     runId: view.runId,
     strategy: view.strategy,
     error: null,
+    ...(view.funding
+      ? {
+          funding: {
+            availableChips: view.funding.availableChips,
+            chipsAtTable: view.funding.chipsAtTable,
+            autoRebuy: view.funding.autoRebuy,
+            rebuyAmount: view.funding.rebuyAmount,
+            rebuyCooldownSeconds: view.funding.rebuyCooldownSeconds,
+            rebuyAvailableAt: view.funding.rebuyAvailableAt,
+            lastRebuyAt: view.funding.lastRebuyAt,
+            updatedAt: view.funding.updatedAt,
+            observedAt: view.funding.observedAt,
+            status: view.funding.status,
+          },
+        }
+      : {}),
     decision:
       view.decision &&
       view.decision.handId === table?.handId &&
