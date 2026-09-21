@@ -1,105 +1,141 @@
 # jev-card-agent
 
-An autonomous poker agent and decision-model evaluation platform powered by Jev, competing against real bots on OpenPoker.ai.
+[English](README.md) · [简体中文](README.zh-CN.md)
 
-基于 **Node.js 24 + TypeScript** 的自主扑克 Agent 与决策评估控制台。通过 OpenPoker.ai WebSocket V2 参加 6-max No-Limit Texas Hold’em，记录每次决策的输入快照、候选行动、模型结果和执行确认。
+**An autonomous poker agent and decision-model evaluation platform powered by Jev, competing against real bots on OpenPoker.ai.**
 
-OpenPoker 提供游戏服务器、匹配和结算；本项目负责 Agent 的持续运行、决策、恢复和评估。最终接入方式为自托管 WebSocket Bot。
+[Watch the live arena and decision replay →](https://openpoker.zve.ccwu.cc)
 
-公开观战与决策回放：**https://openpoker.zve.ccwu.cc**。访客无需登录即可实时查看 Bot 自己的手牌、本手已保存分析和行动，以及已结束的真实牌局回放。网站只读，Agent 在后台自主参赛。
+Built with **Node.js 24, TypeScript, Fastify, React/Vite and SQLite**. OpenPoker provides six-max No-Limit Texas Hold’em, matchmaking, legal-action constraints and settlement. This project runs the self-hosted WebSocket V2 agent, records its decisions and evaluates its behavior.
 
-## 本地演示
+## What you can inspect
+
+| View               | What it shows                                                                                                              |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Overview           | Run results, verified net chips, bb/100, decision latency, fallbacks and estimated model cost                              |
+| Live table         | Community cards, the Bot’s own hole cards, all reported seat stacks, dealer button, chip animations and decision progress  |
+| Replay & decisions | Events at each replay step, frozen inputs, legal candidates, model outputs, selected actions and execution acknowledgments |
+| Evaluations        | Saved comparisons between Jev, the combined policy and baselines, with individual disagreements                            |
+| Account funding    | Official account snapshots, freshness, auto-rebuy status, known cooldowns and persistent funding-event history             |
+
+The public website is **anonymous and read-only**. It exposes the Bot’s own current hand and saved decisions for that hand, plus recorded completed hands. It has no Bot controls, strategy editing, key entry or paid-evaluation triggers. Visitors cannot change decision logic. Unrevealed opponent cards, action tokens and credentials remain private.
+
+Live SSE updates and reconnects automatically. Every player’s displayed stack and the dealer button follow server state; sparse player summaries preserve seats they do not mention. Animations illustrate events without calculating authoritative balances. Older runs and hands load in pages of 100.
+
+## How decisions work
+
+```mermaid
+flowchart LR
+  O[OpenPoker WebSocket V2] --> R[Node.js runtime]
+  R --> C[Visible state, opponents and hand session]
+  C --> A[Reasoning analysis · high]
+  A --> J[Jev final legal choice]
+  J --> V[Validate and submit]
+  V --> O
+  R --> T[Decision traces · SQLite]
+  T --> E[Replay, evaluation and analytics]
+```
+
+The deployment policy is `jev-reasoning` with `REASONING_MODE=always` and `REASONING_EFFORT=high`: request analysis for each valid decision, then let Jev choose the final legal candidate. The reasoning model cannot submit actions. Pure `jev`, a rule-based `baseline`, and explicitly configured `adaptive` reasoning remain available for comparison.
+
+Each hand has a persistent session. Inputs include visible action history, opponent statistics with sample counts, recent verified results and earlier decisions from that same hand, bounded by the current decision’s cutoff. Replay preserves the saved input rather than adding later information.
+
+Each provider gets an initial attempt and **at most three retries**, sharing the action deadline and persistent cost budget. Attempts, failures, known usage and unknown-cost reservations are recorded separately. Analysis failure lets Jev decide within the remaining time; if no valid model result arrives in time, the runtime records a legal fallback. Model identity mismatches, authentication failures and budget or ledger failures are not blindly retried.
+
+Decision views show saved analysis, the thinking text or summary actually returned by the provider, Jev probabilities and the final choice. Missing thinking is marked unavailable; the application does not invent it. Jev probabilities are not poker equity or expected profit.
+
+## Account chips and rebuys
+
+The backend reads OpenPoker `season/me` when the runtime starts, every **15 seconds** while running, and after relevant events. The UI distinguishes off-table account chips, the REST account-at-table snapshot, live WebSocket seat stacks and historical net results. Failed refreshes retain the last value with a stale marker; unknown values are not displayed as zero.
+
+A public-season rebuy credits **1,500 virtual chips** off table. Eligibility requires being off table, no chips at a table and fewer than 1,000 available chips; the first rebuy is immediate, with later cooldowns of 5 minutes on Free or 2 minutes on Pro. After confirmation, the runtime reloads the official balance before joining again. It does not add chips locally or count rebuys as poker profit.
+
+Rebuy confirmations, scheduled cooldowns and balance reconciliations are stored in SQLite and shown in the public funding history. Restarting restores recorded history. Missing prior balances remain unknown, and observation counts are not presented as an exact count of platform transactions. See the [funding contract](docs/running.md#账户筹码牌桌筹码与自动补筹).
+
+## Try the local demo
+
+Requires **Node.js 24.x** and npm.
 
 ```sh
 npm ci
 npm run demo
 ```
 
-需要 Node.js `24.x`。打开 **http://127.0.0.1:8787**。演示无需 API Key，不加入真实比赛，也不调用付费模型；它构建前后端并以合成数据启动完整应用，默认使用 `data/demo.sqlite`。
+Open **http://127.0.0.1:8787**. This builds the application and uses synthetic data in `data/demo.sqlite`, without API keys, real matchmaking or paid model calls. Demo, recorded history and live Arena data are labeled separately.
 
-- **Overview**：按 Run 查看已结算收益、bb/100、决策数和费用估算。
-- **Live table**：实时查看公共牌、Bot 自己手牌、筹码与行动动画，以及本手已保存的分析和决策阶段。
-- **Replay & decisions**：逐事件回放，检查当时输入、候选分布、动作及执行确认。
-- **Evaluations**：浏览已保存且允许公开的策略比较结果，追溯具体差异。
-
-界面区分 **Demo / Recorded / Live Arena**。合成战绩不进入真实收益，历史结果不能代表替代动作的收益，Jev 选项概率也不是扑克胜率。
-
-历史按每页 100 条增量读取。通过 **Load older runs** 选择早期运行，在 Replay 中使用 **Load older hands** 继续查看较早牌局；不会一次下载全部长期历史。结果筛选作用于已加载牌局，Overview 曲线明确标注已加载样本，顶部收益指标覆盖整个 Run。设置 `PUBLIC_HISTORY=true` 后，按所有者要求公开 Bot 自己的当前手牌、决策阶段和本手已保存分析，完整已结束历史也可匿名读取。未公开的对手底牌、行动授权和鉴权凭据不公开。
-
-## 真实 Bot
+## Run a real agent
 
 ```sh
 cp -n .env.example .env
 chmod 600 .env
 ```
 
-在本地 `.env` 填写 `OPEN_POKER_API_KEY` 和 `JEV_API_KEY`，不要提交该文件。`API_TOKEN` 是后台内部管理凭证，也放在 `.env`；网页不提供令牌输入，也不保存或发送该凭证。
+Fill in `OPEN_POKER_API_KEY`, `JEV_API_KEY` and the reasoning provider settings in your private `.env`. Configure an independent `API_TOKEN` for internal administration; the browser never receives it. See the [configuration guide](docs/running.md) for protocols, models, timeouts and budgets.
 
 ```sh
-# 检查平台鉴权，不加入匹配队列
+# Check platform authentication without joining a table.
 npm run diagnose
 
-# 正式入队并自动打牌；先推理分析，再由 Jev 选择行动
+# Join real matches with bounded runtime and model spending.
 npm run bot -- --strategy jev-reasoning --max-hands 10 --max-minutes 30 --budget-usd 1
 ```
 
-展示网站执行 `npm run build` 和 `npm run start`；在 `.env` 配置 `PUBLIC_HISTORY=true`、`AUTO_START_BOT=true`、`BOT_STRATEGY=jev-reasoning`，即可在服务启动后自动参赛并开放匿名观战。未启用自动启动时仅提供展示页面和读取服务。`npm run bot` 是独立无界面入口，同一个数据库和 Bot 选择一种运行入口。
+To serve the website and agent together, configure:
 
-真实 Jev 请求产生费用。手数、时长和费用限制分别生效；这些停止上限不保证在指定时间内完成指定手数。
+```dotenv
+PUBLIC_HISTORY=true
+AUTO_START_BOT=true
+BOT_STRATEGY=jev-reasoning
+REASONING_MODE=always
+REASONING_EFFORT=high
+```
 
-正式运行使用 `BOT_STRATEGY=jev-reasoning`、`REASONING_MODE=always` 和 `REASONING_EFFORT=high`：每次有效行动先请求推理分析，再由 Jev 从合法候选中作最终选择。需要配置独立推理服务凭据；纯 Jev `jev` 与规则 `baseline` 保留用于对照，旧按需分析模式通过后台 `REASONING_MODE=adaptive` 显式启用。每手保留独立 session，同手各次决策共享截止当时的已保存历史。配置、超时降级与模型身份校验见[运行手册](docs/running.md#jev-与推理模型组合)。
+Then run `npm run build` and `npm run start`. Without auto-start, the server only serves the console. The standalone `bot` command is a separate entry point; use one runtime per Bot and database. Real model calls cost money, and hand/time limits do not guarantee that many hands will finish.
 
-网站不提供 Bot 启停、策略配置、模型密钥输入或实验触发。Jev 与推理模型的分析、选择和调用都在后端完成；管理通过服务器 Compose、CLI 或受保护的内部 API 执行。
+## Deploy and operate
 
-## 开发与检查
+Docker Compose runs the application with a persistent SQLite volume. From the deployment directory:
+
+```sh
+sh scripts/manage.sh start
+sh scripts/manage.sh status
+sh scripts/manage.sh logs
+sh scripts/manage.sh backup
+sh scripts/manage.sh stop
+sh scripts/manage.sh restart
+sh scripts/manage.sh update
+```
+
+`stop`, `restart` and `update` wait for the current hand to finish and confirm departure before replacing the process. `restart` uses the existing image; `update` pulls the configured image. Existing containers are left running by `start`.
+
+GitHub Actions checks the project and automatically publishes **uncached `linux/amd64` and `linux/arm64` images**, pulling a fresh base image. **Server updates remain manual.** Normal updates preserve history and the model-cost ledger. See [deployment](docs/deployment.md) and [image releases](docs/docker-release.md).
+
+A deliberately fresh run follows the [documented reset procedure](docs/deployment.md#经明确要求开始全新运行): validate and publish the new image, drain and stop the old runtime, take a private consistent backup, then clear old public run/hand/decision data and recovery checkpoints offline. Preserve the cost ledger and unknown reservations. This does not reset model spending or erase OpenPoker’s records; it is not a website control.
+
+## Development and verification
 
 ```sh
 npm run dev
-```
-
-Vite 默认界面地址为 `http://127.0.0.1:5173`，以终端输出为准；API 默认监听 `127.0.0.1:8787`。生产构建由单个 Node.js 应用提供界面、API 和单 Bot Runtime，SQLite WAL 保留运行数据。
-
-```sh
 npm run check
 npx playwright install chromium
 npm run test:e2e
 ```
 
-`check` 包括 ESLint、格式、类型、单元/集成测试、生产构建和仓库行数/凭据检查。浏览器测试使用独立合成数据库，验证概览、实时观战、历史回放、已有实验结果和移动端交互；默认检查无需真实凭据，不消费模型额度。
+Development uses Vite at `http://127.0.0.1:5173` and the API at `http://127.0.0.1:8787`. Production serves the UI, API and runtime from one Node.js process. Checks cover formatting, lint, types, unit/integration tests, build output, file-size limits and credential hygiene. Browser tests use synthetic data and do not spend model credits. Maintained text files stay below 1,000 lines.
 
-每个维护文本文件不超过 **1,000 行**。`package-lock.json` 保持标准 lockfile 数据的紧凑 JSON 格式，`npm ci` 可直接使用；`npm run format` 会恢复紧凑形式。
+Real Arena runs and provider calls are documented, but they do not establish long-term profitability or a strategy advantage. Recent Opus 5 and Sonnet 5 probes using `high` timed out during analysis; they verified legal Jev continuation, **not successful high-effort analysis**. Saved provider thinking may be absent. Current evidence and limitations are in the [verification report](docs/verification.md).
 
-## 部署与证据
+## Documentation
 
-[运行手册](docs/running.md) 包含生产启动、只读公开 Demo、访问控制、Docker、SQLite 一致备份与恢复。密钥、数据库、WAL 文件与私有对局数据不进入公开源码。
+- [Architecture and scope](docs/architecture.md)
+- [Evaluation methodology and budgets](docs/evaluation.md)
+- [OpenPoker and model contracts](docs/transports.md)
+- [Running, configuration and backups](docs/running.md)
+- [Server deployment and manual updates](docs/deployment.md)
+- [Docker image publishing](docs/docker-release.md)
+- [Actual verification and limitations](docs/verification.md)
+- [Contributing](CONTRIBUTING.md)
 
-生产构建、真实本地 API/SQLite 浏览器测试、Docker 构建、非 root 容器运行与持久卷重启均已验证。真实 Arena、模型接口和服务器部署的具体证据及限制以[验证报告](docs/verification.md)和[服务器部署手册](docs/deployment.md)为准。镜像发布可以通过 CI 自动完成，运行中的服务器只在手动执行更新流程后替换镜像。
+Detailed project documents are currently in Chinese. `.env`, credentials, raw databases and private deployment records stay outside public source and images.
 
-服务器统一使用 Docker Compose。进入包含 `compose.yaml`、私有 `.env` 和 `scripts/` 的部署目录：
-
-```sh
-sh scripts/manage.sh start   # 已运行时保持原容器；首次自动获取镜像
-sh scripts/manage.sh status
-sh scripts/manage.sh logs
-sh scripts/manage.sh backup
-sh scripts/manage.sh stop    # 等当前手牌结束并确认离桌
-sh scripts/manage.sh restart # 排空后重建，使用已有镜像
-sh scripts/manage.sh update  # 排空后拉取 latest，再重建
-```
-
-GitHub Actions 自动检查并**无缓存**发布镜像；运行服务器只在手动执行管理命令后更新。SQLite 持久卷和历史预算账本在容器更新时保留。
-
-## 文档
-
-- [完整架构与验收范围](docs/architecture.md)
-- [评估、测试与费用控制](docs/evaluation.md)
-- [接入调研与决定](docs/transports.md)
-- [运行、配置、备份与部署](docs/running.md)
-- [服务器部署与手动更新](docs/deployment.md)
-- [Docker 镜像自动发布](docs/docker-release.md)
-- [实际验证与限制](docs/verification.md)
-- [参与开发](CONTRIBUTING.md)
-
-以上设计、协议、运行和验证文档随公开仓库提交。真实 `.env`、SSH 凭据、服务器地址清单、原始牌局与部署操作记录保存在忽略的 `data/` 或其他私有存储中；公开文档只使用通用步骤和脱敏结论。
-
-协议来源：[OpenPoker Docs](https://docs.openpoker.ai/)、[TypeSafe API](https://docs.typesafe.ai/api)。
+Protocol sources: [OpenPoker Docs](https://docs.openpoker.ai/) · [TypeSafe API](https://docs.typesafe.ai/api).

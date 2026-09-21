@@ -23,6 +23,9 @@ export function replayTable(detail: HandDetail, cursor: number): TableView & { p
     dealerSeat: null,
     seats: [],
   };
+  let observedHandId: string | null = null;
+  let observedTableId = detail.hand.tableId;
+  let dealerSequence = -1;
   for (const event of detail.events.slice(0, cursor + 1)) {
     const payload = event.payload;
     const snapshot = record(payload.snapshot);
@@ -39,8 +42,37 @@ export function replayTable(detail: HandDetail, cursor: number): TableView & { p
     }
     if (typeof data.heroSeat === 'number') table.heroSeat = data.heroSeat;
     if (typeof hero.seat === 'number') table.heroSeat = hero.seat;
-    if (typeof data.dealer_seat === 'number') table.dealerSeat = data.dealer_seat;
-    if (typeof data.dealerSeat === 'number') table.dealerSeat = data.dealerSeat;
+    if (typeof data.table_id === 'string' && data.table_id !== observedTableId) {
+      observedTableId = data.table_id;
+      observedHandId = null;
+      dealerSequence = -1;
+      table.dealerSeat = null;
+    }
+    const sequence =
+      event.type === 'resync_response'
+        ? (payload.to_table_seq ?? payload.table_seq)
+        : payload.table_seq;
+    const freshDealer =
+      typeof sequence !== 'number' ||
+      sequence > dealerSequence ||
+      (event.type === 'resync_response' && sequence === dealerSequence);
+    if (freshDealer) {
+      if (typeof sequence === 'number') dealerSequence = sequence;
+      if (
+        event.type === 'hand_start' ||
+        (typeof data.hand_id === 'string' && data.hand_id !== observedHandId) ||
+        event.type === 'table_closed'
+      )
+        table.dealerSeat = null;
+      if (typeof data.hand_id === 'string') observedHandId = data.hand_id;
+      if ('dealer_seat' in data || 'dealerSeat' in data) {
+        const dealer = 'dealer_seat' in data ? data.dealer_seat : data.dealerSeat;
+        table.dealerSeat =
+          typeof dealer === 'number' && Number.isInteger(dealer) && dealer >= 0 && dealer < 6
+            ? dealer
+            : null;
+      }
+    }
     if (
       ['hand_start', 'table_joined', 'your_turn'].includes(event.type) &&
       typeof data.seat === 'number'

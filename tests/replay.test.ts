@@ -28,6 +28,47 @@ function handWith(events: { type: string; payload: Record<string, unknown> }[]):
 }
 
 describe('recorded replay information boundaries', () => {
+  it('shows only the dealer known at the cursor and clears explicit unknown or new-hand positions', () => {
+    const detail = handWith([
+      { type: 'hand_start', payload: { hand_id: 'first', table_seq: 1 } },
+      { type: 'table_state', payload: { hand_id: 'first', table_seq: 2, dealer_seat: 0 } },
+      { type: 'your_turn', payload: { table_seq: 3 } },
+      { type: 'table_state', payload: { table_seq: 4, dealer_seat: null } },
+      { type: 'table_state', payload: { table_seq: 3, dealer_seat: 5 } },
+      {
+        type: 'resync_response',
+        payload: { to_table_seq: 5, snapshot: { hand_id: 'first', dealer_seat: 3 } },
+      },
+      { type: 'hand_start', payload: { hand_id: 'next', table_seq: 6 } },
+      { type: 'table_state', payload: { hand_id: 'next', table_seq: 7, dealer_seat: 2 } },
+    ]);
+    expect(replayTable(detail, 0).dealerSeat).toBeNull();
+    expect(replayTable(detail, 1).dealerSeat).toBe(0);
+    expect(replayTable(detail, 2).dealerSeat).toBe(0);
+    expect(replayTable(detail, 3).dealerSeat).toBeNull();
+    expect(replayTable(detail, 4).dealerSeat).toBeNull();
+    expect(replayTable(detail, 5).dealerSeat).toBe(3);
+    expect(replayTable(detail, 6).dealerSeat).toBeNull();
+    expect(replayTable(detail, 7).dealerSeat).toBe(2);
+    expect(replayTable(detail, 0).dealerSeat).toBeNull();
+  });
+
+  it('accepts an authoritative resync at the current watermark and rejects older ones', () => {
+    const detail = handWith([
+      { type: 'table_state', payload: { hand_id: 'hand', table_seq: 5, dealer_seat: 1 } },
+      {
+        type: 'resync_response',
+        payload: { to_table_seq: 5, snapshot: { hand_id: 'hand', dealer_seat: 0 } },
+      },
+      {
+        type: 'resync_response',
+        payload: { to_table_seq: 4, snapshot: { hand_id: 'hand', dealer_seat: 3 } },
+      },
+    ]);
+    expect(replayTable(detail, 1).dealerSeat).toBe(0);
+    expect(replayTable(detail, 2).dealerSeat).toBe(0);
+  });
+
   it('merges your_turn player summaries without reviving folded seats or erasing bets', () => {
     const detail = handWith([
       {

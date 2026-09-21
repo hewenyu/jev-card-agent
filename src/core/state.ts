@@ -18,6 +18,11 @@ export function chips(value: unknown): number | undefined {
 }
 const string = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined;
+const dealerSeat = (message: RawMessage, previous: number | null): number | null => {
+  if (!('dealer_seat' in message)) return previous;
+  const seat = chips(message.dealer_seat);
+  return seat !== undefined && seat < 6 ? seat : null;
+};
 const cards = (value: unknown): string[] | undefined =>
   Array.isArray(value) && value.every((c) => typeof c === 'string' && /^[2-9TJQKA][hdcs]$/.test(c))
     ? (value as string[])
@@ -69,6 +74,7 @@ function newHand(state: PokerState, handId: string, knownStart: boolean): PokerS
   return {
     ...state,
     handId,
+    dealerSeat: null,
     street: 'preflop',
     board: [],
     holeCards: [],
@@ -138,7 +144,7 @@ function snapshot(state: PokerState, message: RawMessage, authority: boolean): P
     heroSeat,
     actorSeat: token ? heroSeat : actorSeat,
     street: street(message.street) ?? state.street,
-    dealerSeat: chips(message.dealer_seat) ?? state.dealerSeat,
+    dealerSeat: dealerSeat(message, state.dealerSeat),
     smallBlind: chips(message.small_blind) ?? state.smallBlind,
     bigBlind: chips(message.big_blind) ?? state.bigBlind,
     pot: chips(message.pot) ?? state.pot,
@@ -228,6 +234,7 @@ export function reduceMessage(previous: PokerState, message: RawMessage): PokerS
         ...state,
         tableId: tableId ?? state.tableId,
         heroSeat: chips(message.seat) ?? state.heroSeat,
+        dealerSeat: dealerSeat(message, state.dealerSeat),
         seats: parseSeats(message.players, state.seats, true) ?? state.seats,
       };
     case 'hand_start': {
@@ -235,7 +242,7 @@ export function reduceMessage(previous: PokerState, message: RawMessage): PokerS
       return {
         ...state,
         heroSeat: chips(message.seat) ?? state.heroSeat,
-        dealerSeat: chips(message.dealer_seat) ?? state.dealerSeat,
+        dealerSeat: dealerSeat(message, state.dealerSeat),
         complete: false,
         smallBlind: chips(blinds.small_blind) ?? state.smallBlind,
         bigBlind: chips(blinds.big_blind) ?? state.bigBlind,
@@ -257,6 +264,7 @@ export function reduceMessage(previous: PokerState, message: RawMessage): PokerS
       return {
         ...state,
         actorSeat: state.heroSeat,
+        dealerSeat: dealerSeat(message, state.dealerSeat),
         validActions,
         turnToken: validActions.length > 0 ? (string(message.turn_token) ?? null) : null,
         pot: chips(message.pot) ?? state.pot,
