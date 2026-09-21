@@ -1,0 +1,182 @@
+# jev-card-agent：完整产品设计
+
+状态：完整实现已进入发布与服务器验证。本文定义完整目标，不以分期或阶段性原型作为交付。实际证据与验收见 [evaluation.md](evaluation.md)。
+
+## 产品目标
+
+> An autonomous poker agent and decision-model evaluation platform powered by Jev, competing against real bots on OpenPoker.ai.
+
+交付一个可以公开发布、用于个人演示、正式进入 OpenPoker 牌桌并全自动完成对局的项目。完成本地验证后，由 GitHub Actions 自动发布镜像，再手动部署到服务器。代码、文档、运行命令、测试及展示界面共同构成交付。
+
+OpenPoker 提供 6-max No-Limit Texas Hold'em 游戏、匹配、合法动作、结算、赛季和公开观战。本项目负责自主运行、Jev 决策、规则 baseline、对手统计、决策留痕、回放和评估，不实现扑克游戏服务器。接入固定为 WebSocket 自托管 Bot；不建设 HTTP webhook 或异步回调服务。
+
+## 技术选择
+
+| 部分     | 决定                                                               |
+| -------- | ------------------------------------------------------------------ |
+| Runtime  | Node.js 24 LTS、TypeScript strict、ES modules                      |
+| 协议     | ws + Zod；OpenPoker WebSocket V2                                   |
+| Jev      | Node fetch 调用官方 HTTPS API；Choice 选择具体合法行动             |
+| 数据     | Node 内置 node:sqlite，SQLite WAL，数据库文件位于被忽略的数据目录  |
+| 服务端   | Fastify，同进程管理 Bot Runtime 和查询 API                         |
+| 页面     | React + Vite，REST 查询与定时更新，不依赖页面维持 Bot              |
+| 工具链   | npm、ESLint、Prettier、TypeScript、Vitest、Playwright              |
+| 发布运行 | 构建后的 Node 服务提供 API 与静态页面；Docker 配置及持久卷部署说明 |
+
+选择 SQLite 是为了让公开项目能在本机直接运行，并在单 Bot 的持久化服务器上部署，无需先安装数据库服务。数据库迁移、存储查询和 Runtime 分层；它不承担多租户或多主并发写平台。演示模式与真实运行使用明确不同的 Run 类型和数据标记。
+
+## 代码结构与强制质量约束
+
+```text
+src/
+  core/          # 领域类型、状态 reducer、合法候选、特征与对手统计
+  policies/      # Jev、规则 baseline、fallback
+  openpoker/     # 协议、REST、WS 传输与恢复
+  runtime/       # 生命周期、决策任务、预算、提交确认
+  storage/       # SQLite schema、迁移、记录、统计与回放查询
+  server/        # 配置、鉴权、控制/查询 API、静态资源
+  cli/           # 演示、真实运行、连接诊断与离线评估入口
+web/
+  src/           # 页面、组件、样式及 API client
+scripts/         # 构建检查、文件长度、凭据泄漏检查
+ tests/          # 单元、协议集成、存储/API与浏览器测试
+ docs/           # 架构、评估、接入及运行/部署说明
+```
+
+目录示意中的 tests/docs 均位于仓库根目录。采用单 package 的模块化结构，避免为内部类型共享引入额外发布包。
+
+- 每个纳入版本控制的文本文件不得超过 **1000 行**，包括源码、测试和文档；自动检查计入空行与注释。
+- 依赖锁文件也保持在上限内，使用机器可读的紧凑格式；不通过拆分业务语义或压缩手写代码规避限制。
+- 模块按职责拆分，禁止把协议、策略、数据库和页面堆入一个文件。
+- lint、格式检查、类型检查、单元/集成测试、浏览器测试、构建及仓库检查必须有可重复命令，并纳入 CI。
+- 默认测试不调用收费 API、不加入公开 Arena；真实验证使用单独命令及有界配置。
+- .env、数据库、日志、原始私有牌局、浏览器报告与构建产物不提交；示例配置只包含占位值。
+- 公开代码提供许可证、贡献说明、配置说明、清晰的错误诊断与部署文档。
+
+## 系统关系
+
+```mermaid
+flowchart TD
+    O[OpenPoker WS V2] --> R[Poker Runtime]
+    R --> S[State Reducer]
+    S --> C[Context + Opponent Stats]
+    C --> A[Legal Candidates]
+    A --> J[Jev Choice]
+    A --> B[Baseline]
+    J --> G[Action Guard]
+    B --> G
+    G --> R
+    R --> O
+    R --> T[Decision Trace]
+    J --> T
+    T --> D[(SQLite)]
+    D --> API[Control / Query API]
+    API --> UI[Product Console]
+    D --> E[Replay / Evaluation]
+```
+
+Runtime 不依赖网页保持打开。模型响应和页面查询均不能阻塞协议事件处理。每个 Bot 在同一持久数据目录中只允许一个活动运行者，启动前取得独占租约，丢失租约即停止提交。
+
+## Runtime 合同
+
+连接、牌局和决策任务分别维护状态。冷启动先调用 `/api/me/active-game`，已坐下则恢复；未坐下再 join_lobby。热重连使用保留的 table ID 和最高已应用 watermark。退避有上限和抖动；鉴权失败等不可恢复错误不无限重试。
+
+普通 table_seq 前跳是合法现象，重复和回退按协议去重；不能因不连续就 resync。table_state 对已有字段具权威性，动作历史单独维护。status 是座位连接状态，in_hand/folded 是牌局状态。
+
+resync 先消费排序去重的 replayed_events，用于历史与标记，再原子安装最终 snapshot；不得把已包含在快照中的筹码变化累加第二次。hand_id 改变时清理旧手临时状态。恢复流不包含所有私有历史，缺口必须展示，不虚构完整记录。
+
+只接受 your_turn 或带有有效 hero.turn_token 的 player resync 作为行动授权。普通 table_state 不能启动新的逻辑动作。回合任务绑定 hand、token 与本地决策 ID；新授权使旧任务失效，迟到结果只记录不提交。
+
+每次行动必须：
+
+1. 冻结当前可见信息、对手统计和合法候选。
+2. 在总预算内调用策略，并为降级与提交保留余量。
+3. 再次验证回合、合法集和整数金额。
+4. 持久化精确 payload 与 client_action_id，再通过 WS 提交。
+5. 独立记录 sent、accepted、rejected 或 unresolved；已发送不等于已执行。
+
+相同动作重试使用相同 ID 和完全相同 payload。新的替代提交必须使用新的 ID，并保留原决策关联。确认未知时先恢复核对，不能随意再下注。action_ack 和 player_action 按标识关联，不假定相邻。
+
+公共场当前行动窗口为 45 秒；重连不重置它。冷恢复剩余时间未知时不重新给予完整模型预算，选择当前合法集中的快速 fallback。默认模型预算从 3 秒起配置，以实际延迟验证调整。
+
+模型失败、预算耗尽和输出不合法时，在有效授权内优先合法 check，其次合法 fold。无授权先恢复，不能猜动作。模型结果和 fallback 通过唯一决策任务争夺一次提交权。
+
+自动处理桌关闭、busted、rebuy/cooldown、赛季变化和重新入队。auto-rebuy、buy-in、最大手数/运行时长/调用费用均为明确配置。正常停止在手牌边界离桌；故障退出保留未决记录，重启后恢复核对。连续运行模式与有界测试共用同一实现。
+
+关键持久化失败时停止新付费调用和未记录提交，记录可获得的诊断信息并进入降级停止；不能声称数据库故障时仍保持完整可追溯运行。
+
+## Jev 与策略合同
+
+官方 API 为 `POST https://api.typesafe.ai/v1/systemone`，使用独立 Bearer key。请求包括 state、model、questions；Choice 返回 choice、probabilities、confidence，响应包含实际模型与 token usage。
+
+Jev 不生成自由文本推理。输入是局面、必要历史、对手统计及具体合法候选；解释展示可核对特征、模型分布及程序规则，并标明来源。confidence 和概率不能展示为扑克胜率、EV、盈利概率或经过验证的混合策略频率。
+
+正式可比实验固定 `jev-1.13.0`，保存请求模型、实际模型和问题模板版本。凭据配置支持当前已有的 JEV_API_KEY；OpenPoker 密钥不传入模型。
+
+候选由程序生成：保留合法 fold/check/call，按版本化规则生成少量 raise-to 档位，必要时保留 all_in并去重。以 valid_actions[].min/max 为准；call/all_in 不发送 amount。候选生成时合法化，不能模型选完后静默修改下注金额。报告注明只比较提供的候选集合。
+
+策略接口接受冻结 context、候选和 AbortSignal，返回 candidate ID 及诊断信息。提供 Jev、可解释启发式 baseline，以及协议故障 fallback。baseline 强度不称为 GTO；Jev 与 baseline 使用一致的信息边界。
+
+对手统计从实际观察事件计算 VPIP、PFR、面对下注弃牌比例等，保存机会分母、样本数及时间截止点。未知与样本不足不当作零。不能将后来摊牌信息放入过去决策；相同座位换 Bot 时不能混用身份。
+
+## 可选的推理模型组合
+
+默认配置与首先执行的真实验证为纯 Jev。另提供可选策略扩展：Jev 先判断当前局面是否需要更深入分析；需要时调用用户配置的推理模型，将分析作为有来源的辅助输入，再由 Jev 在当前合法候选中作最终选择。无需调用时使用 Jev 的直接选择。
+
+推理模型并不直接控制 OpenPoker 行动；最终守卫、回合授权、单次提交与持久化规则不变。全链路共享原行动预算。推理超时、接口缺失或余额限制时保留纯 Jev 的合法选择/本地 fallback，不增加回合时间。
+
+推理服务采用独立配置，支持 Responses 与 Messages 两种适配。用户已提供代理 endpoint 和凭据：Responses 请求模型为 gpt-6-astra，Messages 测试模型为 claude-opus-5。配置只保存在本地环境文件，公开样例使用占位值。必须验证返回模型与请求一致，不静默接受代理替换模型。Trace 区分 Jev 路由判断、推理分析、最终 Jev 选择与各次调用用量。
+
+验证顺序是纯 Jev 本地/真实结果先行，再根据非法输出、超时、固定局面表现等明确证据判断是否启用组合比较；短期牌局输赢不构成充分决策质量证据。实际推理服务未配置前，只能测试组合逻辑的本地 mock，不能伪造真实组合调用结果。
+
+## 持久化与评估
+
+### 私有历史反馈与策略迭代
+
+每次决策冻结 `lastTableSeq` 与本地 `asOf` 信息截止。当前牌局状态及对手统计之外，Jev 和 baseline 可以读取最多最近 10 手的已完成、hero 收益可核对的历史摘要；每手最多保留最后 8 次已记录决策，包括各自当时的街道、可见公共牌、hero 手牌、所选行动及该手最终 `profitBb`。动作快照使用该动作发生时的信息，不能将该手后续公共牌或对手摊牌附加到早期动作。当前手、未核对收益、未完成手及截止时刻之后完成的手不进入摘要。旧决策缺少序号时，仅从同 Run、同 hand 且接收时间不晚于决策时间的最近 `your_turn` 恢复序号；没有证据的旧动作跳过，不伪造顺序。
+
+完整原始事件、行动、结果和模型请求保存在私有 SQLite，摘要只是受限的模型输入，不替代长期历史保存。真实历史可通过 PUBLIC_HISTORY 开放已结束牌局的脱敏回放；实时底牌与管理操作需独立令牌。公开 Demo 继续使用合成数据，原始数据库不提交到仓库。
+
+Run 和 Decision 保存上下文、历史摘要、候选生成、启发式与问题模板版本。更改规则或提示后产生可区分的新版本与 Run，便于在固定历史信息边界下重跑比较。历史收益仅作为过去结果反馈，不是行动质量标签；本模块不自动修改代码、提示或下注规则，也不将短期盈利解释为学习成功。策略改进通过可审计版本、离线差异、可靠性指标及有足够样本的真实结果验证。
+
+至少持久化 Run、Hand、ReceivedEvent、Decision、ModelAttempt、ActionSubmission、OpponentSnapshot、Evaluation 和预算账本。记录原始事件与规范化快照，以及策略、候选、上下文、模型版本。
+
+Run 固定策略和配置；配置变化产生新 Run。真实运行、合成演示、离线重跑明确标识。导出不包含鉴权头或 turn token 等控制凭据，公开演示数据为可检查的合成样本。
+
+Replay 分为实际牌局回放和历史决策重跑。重跑产出新的建议与性能记录，不能将原结算结果算作替代动作收益。实验报告区分工程可靠性、策略输出差异和真实牌局收益。
+
+收益按每手权威结果核对，区分买入、rebuy、返还与主池/边池结算。bb/100 使用每手对应大盲，报告样本数与缺失覆盖率；官方排名通过 OpenPoker 外链查看，本地收益不充当官方 score。不能以短期盈利或单手输赢宣称策略质量。
+
+预算按模型公开价格、输入长度、实际 usage 和未决费用预留核算；失败/取消不默认免费。累计费用上限、Run 费用上限、手数和运行时长均可配置。推理代理成本使用可配置估算费率，不代替供应商账单。默认测试使用本地 fixture，真实调用必须有显式入口。
+
+## 产品体验
+
+| 页面              | 功能                                                           |
+| ----------------- | -------------------------------------------------------------- |
+| Overview          | 当前连接、运行策略、有效手数、收益/成本曲线、延迟及异常        |
+| Live              | 真实可见牌局、最近行动、模型状态、观战入口及启动/停止控制      |
+| Replay / Decision | 街道与行动时间线、当时状态、对手样本、候选分布、执行确认及结算 |
+| Experiments       | Run 比较、历史决策重跑报告、版本与样本覆盖率                   |
+
+启动提供明确的 demo 与 live 选择。无凭据也能运行完整合成演示，不伪装成实时平台对局。有凭据时能使用同一界面启动真实 Bot；长期运行通过服务进程持续，不靠浏览器。
+
+默认服务仅监听 loopback。公开服务器的控制和私有查询必须配置独立访问令牌；可提供只读的合成演示模式。密钥仅在服务端使用，不进入前端 bundle、URL 或请求日志。
+
+## 完整交付验收
+
+- 一条安装/开发流程可以在 Node.js 24 上启动演示及控制台；构建产物可通过正式服务启动。
+- 凭据配置后 Bot 可自动入队、打完整牌局、结算、继续下一手，并处理正常生命周期及故障恢复。
+- 每次提交能追溯到原始状态、候选、模型或 fallback、确认与结算。
+- 回放和评估功能真实可用，数据来源及反事实限制清楚展示。
+- 单文件行数、lint、格式、typecheck、测试、UI 检查和构建通过；真实 API 与真实牌局证据单独列出。
+- README、示例配置、LICENSE、贡献说明、运行/部署和验证记录适合公开仓库，不包含用户凭据和私有账户资料。
+- 本地验收充分后通过已授权的 CI 发布构建产物，完成服务器部署并提供可复现的手动更新说明。
+
+## 官方依据
+
+- [TypeSafe API](https://docs.typesafe.ai/api) 与 [Models](https://docs.typesafe.ai/models)。
+- [OpenPoker Message Types](https://docs.openpoker.ai/api-reference/message-types/)。
+- [State Consistency](https://docs.openpoker.ai/building-bots/state-consistency/) 与 [Reconnection](https://docs.openpoker.ai/building-bots/reconnection-idempotency/)。
+- [REST API](https://docs.openpoker.ai/api-reference/rest-api/) 与 [Scoring](https://docs.openpoker.ai/compete/scoring/)。
+
+以官方当前消息目录、有效合法动作和真实协议验证为准；文档中的示例不替代协议校验。

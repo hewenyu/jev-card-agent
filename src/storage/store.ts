@@ -1,0 +1,264 @@
+import { randomUUID } from 'node:crypto';
+import type { DatabaseSync } from 'node:sqlite';
+import type { PokerState } from '../core/types.js';
+import type { ServerEvent } from '../openpoker/protocol.js';
+import type {
+  ActionStatus,
+  DecisionRecord,
+  RuntimeCheckpoint,
+  RuntimePhase,
+  RuntimeStore,
+  StoredAction,
+} from '../runtime/types.js';
+import { json, openDatabase } from './database.js';
+import { proposalCost } from './cost.js';
+import { recentOutcomes } from './history.js';
+import { STRATEGY_VERSIONS } from '../core/index.js';
+
+export class Store implements RuntimeStore {
+  readonly db: DatabaseSync;
+  readonly owner = randomUUID();
+  constructor(
+    filename: string,
+    readonly model = 'jev-1.13.0',
+  ) {
+    this.db = openDatabase(filename);
+  }
+
+  beginRun(run: Parameters<RuntimeStore['beginRun']>[0]): void {
+    this.db
+      .prepare(
+        `INSERT INTO runs(id,mode,strategy,model,status,started_at,config)
+      VALUES(?,?,?,?,?,?,?)`,
+      )
+      .run(
+        run.id,
+        run.kind,
+        run.strategy,
+        run.strategy === 'baseline' ? 'heuristic-v1' : this.model,
+        'running',
+        run.startedAt,
+        JSON.stringify({
+          ...run.config,
+          strategyVersions: STRATEGY_VERSIONS,
+          codeRevision: process.env.APP_REVISION || 'local-uncommitted',
+        }),
+      );
+    this.db.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES('active_run',?)").run(run.id);
+  }
+
+  finishRun(id: string, status: RuntimePhase, endedAt: string, error: string | null): void {
+    this.db
+      .prepare('UPDATE runs SET status=?, ended_at=?, reason=? WHERE id=?')
+      .run(status, endedAt, error, id);
+  }
+  recentOutcomes(asOf: string, excludeHandId: string) {
+    return recentOutcomes(this, asOf, excludeHandId);
+  }
+
+  appendEvent(runId: string, event: ServerEvent, receivedAt: string): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO events(run_id,hand_id,table_id,seq,type,received_at,payload)
+      VALUES(?,?,?,?,?,?,?)`,
+      )
+      .run(
+        runId,
+        typeof event.hand_id === 'string' ? event.hand_id : null,
+        typeof event.table_id === 'string' ? event.table_id : null,
+        event.type !== 'resync_response' && typeof event.table_seq === 'number'
+          ? event.table_seq
+          : null,
+        String(event.type),
+        receivedAt,
+        JSON.stringify(event),
+      );
+  }
+
+  saveDecision(decision: DecisionRecord): void {
+    const cost = proposalCost(this, decision.proposal);
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO decisions
+      (id,run_id,hand_id,street,created_at,context,candidates,proposal,source,selected,status,
+       latency_ms,cost_usd,fallback_reason,model) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        decision.id,
+        decision.runId,
+        decision.handId,
+        decision.context.street,
+        decision.createdAt,
+        JSON.stringify(decision.context),
+        JSON.stringify(decision.candidates),
+        JSON.stringify(decision.proposal),
+        decision.proposal.source,
+        decision.proposal.candidateId,
+        'proposed',
+        decision.proposal.latencyMs,
+        cost,
+        decision.fallbackReason,
+        decision.proposal.model ?? null,
+      );
+  }
+
+  prepareAction(action: StoredAction): void {
+    const previous = this.db.prepare('SELECT payload FROM actions WHERE id=?').get(action.id);
+    const payload = JSON.stringify(action.payload);
+    if (previous && previous.payload !== payload) throw new Error('Action ID payload conflict');
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO actions
+      (id,run_id,decision_id,table_id,payload,status,created_at,deadline_at)
+      VALUES(?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        action.id,
+        action.runId,
+        action.decisionId,
+        action.tableId,
+        payload,
+        action.status,
+        action.createdAt,
+        action.deadlineAt,
+      );
+  }
+
+  updateAction(id: string, status: ActionStatus, details?: Record<string, unknown>): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db
+        .prepare(
+          "UPDATE actions SET status=?,details=? WHERE id=? AND status NOT IN ('accepted','rejected')",
+        )
+        .run(status, JSON.stringify(details ?? {}), id);
+      this.db
+        .prepare(
+          `UPDATE decisions SET status=(SELECT status FROM actions WHERE id=?)
+        WHERE id=(SELECT decision_id FROM actions WHERE id=?)`,
+        )
+        .run(id, id);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  pendingActions(): StoredAction[] {
+    return this.db
+      .prepare("SELECT * FROM actions WHERE status IN ('prepared','sent','unresolved')")
+      .all()
+      .map((row) => ({
+        id: String(row.id),
+        runId: String(row.run_id),
+        decisionId: String(row.decision_id),
+        tableId: String(row.table_id),
+        payload: json<StoredAction['payload']>(row.payload, {} as StoredAction['payload']),
+        status: row.status as ActionStatus,
+        createdAt: String(row.created_at),
+        deadlineAt: Number(row.deadline_at),
+      }));
+  }
+
+  saveCheckpoint(checkpoint: RuntimeCheckpoint): void {
+    this.db
+      .prepare("INSERT OR REPLACE INTO meta(key,value) VALUES('checkpoint',?)")
+      .run(JSON.stringify(checkpoint));
+  }
+  loadCheckpoint(): RuntimeCheckpoint | null {
+    return json<RuntimeCheckpoint | null>(
+      this.db.prepare("SELECT value FROM meta WHERE key='checkpoint'").get()?.value,
+      null,
+    );
+  }
+
+  saveHand(runId: string, state: PokerState, event: ServerEvent): void {
+    if (!state.handId || !state.tableId) return;
+    const existing = this.db.prepare('SELECT * FROM hands WHERE id=?').get(state.handId);
+    const start =
+      state.heroSeat === null ? null : (state.handStartStacks[String(state.heroSeat)] ?? null);
+    const isResult = event.type === 'hand_result';
+    const finalStacks =
+      event.final_stacks && typeof event.final_stacks === 'object'
+        ? (event.final_stacks as Record<string, unknown>)
+        : {};
+    const finalValue = state.heroSeat === null ? null : finalStacks[String(state.heroSeat)];
+    const end =
+      typeof finalValue === 'number' && Number.isSafeInteger(finalValue) && finalValue >= 0
+        ? finalValue
+        : null;
+    const initial = typeof existing?.initial_stack === 'number' ? existing.initial_stack : start;
+    const complete =
+      isResult &&
+      initial !== null &&
+      end !== null &&
+      !state.historyIncomplete &&
+      (!existing || existing.run_id === runId);
+    const profit = complete ? end - initial : null;
+    const now = typeof event.ts === 'string' ? event.ts : new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO hands
+      (id,run_id,table_id,hand_number,board,hero_cards,profit,big_blind,status,started_at,ended_at,complete,initial_stack,final_stack)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET
+        board=CASE WHEN json_array_length(excluded.board)>=json_array_length(hands.board) THEN excluded.board ELSE hands.board END,
+        hero_cards=CASE WHEN json_array_length(excluded.hero_cards)>=json_array_length(hands.hero_cards) THEN excluded.hero_cards ELSE hands.hero_cards END,
+        initial_stack=COALESCE(hands.initial_stack,excluded.initial_stack),
+        profit=CASE WHEN excluded.complete=1 THEN excluded.profit ELSE hands.profit END,
+        final_stack=CASE WHEN excluded.complete=1 OR hands.complete=0 THEN excluded.final_stack ELSE hands.final_stack END,
+        ended_at=COALESCE(hands.ended_at,excluded.ended_at),
+        status=CASE WHEN hands.status='complete' THEN hands.status ELSE excluded.status END,
+        complete=MAX(hands.complete,excluded.complete)`,
+      )
+      .run(
+        state.handId,
+        runId,
+        state.tableId,
+        typeof event.hand_number === 'number'
+          ? event.hand_number
+          : Number(
+              existing?.hand_number ??
+                Number(
+                  this.db.prepare('SELECT COUNT(*) AS n FROM hands WHERE run_id=?').get(runId)?.n ??
+                    0,
+                ) + 1,
+            ),
+        JSON.stringify(state.board),
+        JSON.stringify(state.holeCards),
+        profit,
+        state.bigBlind,
+        isResult ? 'complete' : 'playing',
+        now,
+        isResult ? now : null,
+        Number(complete),
+        initial,
+        isResult ? end : null,
+      );
+  }
+
+  acquireLease(name = 'runtime', ttlMs = 15_000): boolean {
+    const now = Date.now();
+    const result = this.db
+      .prepare(
+        `INSERT INTO leases(name,owner,expires_at) VALUES(?,?,?)
+      ON CONFLICT(name) DO UPDATE SET owner=excluded.owner,expires_at=excluded.expires_at
+      WHERE leases.expires_at < ? OR leases.owner = ?`,
+      )
+      .run(name, this.owner, now + ttlMs, now, this.owner);
+    return Number(result.changes) === 1;
+  }
+  assertRuntimeLease(): void {
+    const lease = this.db.prepare("SELECT owner,expires_at FROM leases WHERE name='runtime'").get();
+    if (lease?.owner !== this.owner || Number(lease.expires_at) <= Date.now())
+      throw new Error('Runtime database lease is not owned or has expired');
+  }
+  releaseLease(name = 'runtime'): void {
+    this.db.prepare('DELETE FROM leases WHERE name=? AND owner=?').run(name, this.owner);
+  }
+  close(): void {
+    this.releaseLease();
+    this.db.close();
+  }
+}

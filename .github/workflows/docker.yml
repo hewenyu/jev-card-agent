@@ -1,0 +1,78 @@
+name: Publish Docker image
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run check
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: docker-browser-test-results
+          path: test-results/
+
+  publish:
+    needs: check
+    runs-on: ubuntu-latest
+    environment: DOCKER
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.USER }}
+          password: ${{ secrets.TOKEN }}
+      - name: Image tags and labels
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: hewenyulucky/jev-card-agent
+          flavor: latest=auto
+          tags: |
+            type=sha,format=long,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+      - name: Build and push both architectures
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: APP_REVISION=${{ github.sha }}
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          no-cache: true
+          pull: true
+      - name: Record published image
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_TAGS: ${{ steps.metadata.outputs.tags }}
+        run: |
+          {
+            echo 'Published image: hewenyulucky/jev-card-agent'
+            printf '\nDigest: %s\n\n' "$IMAGE_DIGEST"
+            printf '%s\n' "$IMAGE_TAGS"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,36 @@
+name: jev-card-agent
+
+services:
+  app:
+    image: ${JEV_IMAGE:-hewenyulucky/jev-card-agent:latest}
+    init: true
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: '8787'
+      DATABASE_PATH: /app/data/jev.sqlite
+    ports:
+      - '${BIND_ADDRESS:-127.0.0.1}:${CONSOLE_PORT:-8787}:8787'
+    volumes:
+      - data:/app/data
+    stop_grace_period: 150s
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+volumes:
+  data:
+    name: jev-card-agent-data

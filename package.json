@@ -1,0 +1,57 @@
+{
+  "name": "jev-card-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Autonomous Jev poker agent and evaluation console for OpenPoker.ai",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web \"node --env-file-if-exists=.env --import tsx --watch src/cli/serve.ts\" \"vite\"",
+    "build": "tsc -p tsconfig.build.json && vite build",
+    "start": "node --env-file-if-exists=.env dist/cli/serve.js",
+    "demo": "npm run build && node dist/cli/serve.js --demo",
+    "bot": "node --env-file-if-exists=.env --import tsx src/cli/bot.ts",
+    "diagnose": "node --env-file-if-exists=.env --import tsx src/cli/diagnose.ts",
+    "evaluate": "node --env-file-if-exists=.env --import tsx src/cli/evaluate.ts",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write . && node scripts/compact-lock.mjs",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "check:repo": "node scripts/check-repo.mjs",
+    "check": "npm run lint && npm run format:check && npm run typecheck && npm test && npm run build && npm run check:repo"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.4",
+    "fastify": "^5.6.2",
+    "pino": "^9.13.1",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "ws": "^8.18.3",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.36.0",
+    "@playwright/test": "^1.55.1",
+    "@types/node": "^24.5.2",
+    "@types/react": "^19.1.14",
+    "@types/react-dom": "^19.1.9",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^5.0.3",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.36.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^16.4.0",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.44.1",
+    "vite": "^7.1.7",
+    "vitest": "^4.1.11"
+  }
+}

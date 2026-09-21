@@ -1,0 +1,105 @@
+import type { Candidate, DecisionContext, PokerState, Policy, Proposal } from '../core/types.js';
+import type { OpponentCheckpoint } from '../core/opponents.js';
+import type { ActionPayload, ServerEvent } from '../openpoker/protocol.js';
+import type { HistoricalOutcome } from '../core/index.js';
+
+export type RuntimePhase =
+  | 'idle'
+  | 'connecting'
+  | 'recovering'
+  | 'queued'
+  | 'playing'
+  | 'cooldown'
+  | 'stopping'
+  | 'stopped'
+  | 'failed';
+export interface RuntimeStatus {
+  runId: string | null;
+  phase: RuntimePhase;
+  connected: boolean;
+  hands: number;
+  decisions: number;
+  reconnects: number;
+  startedAt: string | null;
+  stoppedAt: string | null;
+  lastError: string | null;
+  state: PokerState;
+}
+export interface StartOptions {
+  runId?: string;
+  kind?: 'live' | 'demo';
+  strategy?: string;
+  buyIn?: number;
+  autoRebuy?: boolean;
+  maxHands?: number;
+  maxDurationMs?: number;
+  decisionTimeoutMs?: number;
+  turnTimeoutMs?: number;
+  submissionReserveMs?: number;
+  reconnectMinMs?: number;
+  reconnectMaxMs?: number;
+  maxReconnectAttempts?: number;
+  gracefulStopTimeoutMs?: number;
+}
+export interface DecisionRecord {
+  id: string;
+  runId: string;
+  handId: string;
+  createdAt: string;
+  context: DecisionContext;
+  candidates: Candidate[];
+  proposal: Proposal;
+  fallbackReason: string | null;
+}
+export type ActionStatus = 'prepared' | 'sent' | 'accepted' | 'rejected' | 'unresolved';
+export interface StoredAction {
+  id: string;
+  runId: string;
+  decisionId: string;
+  tableId: string;
+  payload: ActionPayload;
+  status: ActionStatus;
+  createdAt: string;
+  deadlineAt: number;
+}
+export interface RuntimeCheckpoint {
+  opponents?: OpponentCheckpoint;
+  tableId: string | null;
+  lastTableSeq: number;
+  state: PokerState;
+}
+/** Synchronous methods are SQLite transactions. Throw on failure: no unrecorded action is sent. */
+export interface RuntimeStore {
+  recentOutcomes?(asOf: string, excludeHandId: string): HistoricalOutcome[];
+  /** Fence every paid call and submission against lease expiry or ownership transfer. */
+  assertRuntimeLease?(): void;
+  beginRun(run: {
+    id: string;
+    kind: 'live' | 'demo';
+    strategy: string;
+    startedAt: string;
+    config: StartOptions;
+  }): void;
+  finishRun(id: string, status: RuntimePhase, endedAt: string, error: string | null): void;
+  appendEvent(runId: string, event: ServerEvent, receivedAt: string): void;
+  saveDecision(decision: DecisionRecord): void;
+  prepareAction(action: StoredAction): void;
+  updateAction(id: string, status: ActionStatus, details?: Record<string, unknown>): void;
+  pendingActions(): StoredAction[];
+  saveCheckpoint(checkpoint: RuntimeCheckpoint): void;
+  loadCheckpoint(): RuntimeCheckpoint | null;
+  saveHand(runId: string, state: PokerState, event: ServerEvent): void;
+}
+export interface BudgetPort {
+  /** Atomically reserve a worst-case request cost; null prevents a paid call. */
+  reserve(runId: string, context: DecisionContext, candidates: Candidate[]): string | null;
+  settle(reservationId: string, proposal: Proposal | null): void;
+}
+export interface RuntimeDependencies {
+  apiKey: string;
+  policy: Policy;
+  store: RuntimeStore;
+  budget?: BudgetPort;
+  wsUrl?: string;
+  restUrl?: string;
+}

@@ -1,0 +1,801 @@
+import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import WebSocket from 'ws';
+import {
+  createInitialState,
+  reduceMessage,
+  validateCandidate,
+  OpponentTracker,
+} from '../core/index.js';
+import type { PokerState } from '../core/types.js';
+import { OpenPokerClient } from '../openpoker/client.js';
+import {
+  parseEvent,
+  record,
+  string,
+  verifyStateHash,
+  type ServerEvent,
+} from '../openpoker/protocol.js';
+import { LobbyLifecycle } from './lobby.js';
+import { authorityKey, decide, type DecisionTask } from './decision.js';
+import type { RuntimeDependencies, RuntimeStatus, StartOptions, StoredAction } from './types.js';
+
+const defaults = {
+  buyIn: 2000,
+  autoRebuy: true,
+  maxHands: 0,
+  maxDurationMs: 0,
+  decisionTimeoutMs: 3000,
+  turnTimeoutMs: 45_000,
+  submissionReserveMs: 1500,
+  reconnectMinMs: 500,
+  reconnectMaxMs: 15_000,
+  maxReconnectAttempts: 20,
+  gracefulStopTimeoutMs: 0,
+};
+export class PokerRuntime extends EventEmitter {
+  private readonly client: OpenPokerClient;
+  private readonly lobby: LobbyLifecycle;
+  private socket: WebSocket | null = null;
+  private options = { ...defaults };
+  private snapshot: RuntimeStatus = {
+    runId: null,
+    phase: 'idle',
+    connected: false,
+    hands: 0,
+    decisions: 0,
+    reconnects: 0,
+    startedAt: null,
+    stoppedAt: null,
+    lastError: null,
+    state: createInitialState(),
+  };
+  private running = false;
+  private leaving = false;
+  private leaveAttempts = 0;
+  private leaveVerification = false;
+  private stopRequested = false;
+  private activeTask: DecisionTask | null = null;
+  private knownTurns = new Set<string>();
+  private completedHands = new Set<string>();
+  private observedHands = new Set<string>();
+  private pending = new Map<string, StoredAction>();
+  private retryCount = 0;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private durationTimer?: ReturnType<typeof setTimeout>;
+  private stopTimer?: ReturnType<typeof setTimeout>;
+  private heartbeat?: ReturnType<typeof setInterval>;
+  private pongAlive = true;
+  private ackTimer?: ReturnType<typeof setTimeout>;
+  private resyncTimer?: ReturnType<typeof setTimeout>;
+  private lifetime = new AbortController();
+  private resyncPending = false;
+  private opponents = new OpponentTracker();
+  private attempts = new Map<string, number>();
+  private blockedAuthorities = new Set<string>();
+
+  constructor(private readonly dependencies: RuntimeDependencies) {
+    super();
+    this.client = new OpenPokerClient(dependencies);
+    this.lobby = new LobbyLifecycle(this.client, {
+      ready: () => this.running && this.snapshot.connected && !this.stopRequested && !this.leaving,
+      buyIn: () => this.options.buyIn,
+      autoRebuy: () => this.options.autoRebuy,
+      assertLease: () => this.dependencies.store.assertRuntimeLease?.(),
+      send: (value) => {
+        this.send(value);
+      },
+      join: (buyIn) => {
+        this.snapshot.state = createInitialState();
+        this.snapshot.phase = 'queued';
+        this.send({ type: 'join_lobby', buy_in: buyIn });
+        this.send({ type: 'set_auto_rebuy', enabled: this.options.autoRebuy });
+        this.publish();
+      },
+      recover: (active) => {
+        this.snapshot.state.tableId = active.table_id ?? null;
+        this.snapshot.state.heroSeat = active.seat ?? this.snapshot.state.heroSeat;
+        this.resync();
+      },
+      cooldown: () => {
+        this.snapshot.phase = 'cooldown';
+        this.publish();
+      },
+      fail: (error) => this.fail(error),
+    });
+  }
+  status(): RuntimeStatus {
+    return structuredClone(this.snapshot);
+  }
+  get state(): PokerState {
+    return structuredClone(this.snapshot.state);
+  }
+
+  async start(options: StartOptions = {}): Promise<void> {
+    if (this.running) throw new Error('Runtime is already running');
+    this.options = { ...defaults, ...options };
+    if (
+      !Number.isInteger(this.options.buyIn) ||
+      this.options.buyIn < 1000 ||
+      this.options.buyIn > 5000
+    ) {
+      throw new Error('Public buyIn must be an integer from 1000 to 5000');
+    }
+    for (const key of [
+      'maxHands',
+      'maxDurationMs',
+      'decisionTimeoutMs',
+      'reconnectMinMs',
+      'reconnectMaxMs',
+      'maxReconnectAttempts',
+    ] as const) {
+      if (!Number.isFinite(this.options[key]) || this.options[key] < 0)
+        throw new Error(`Invalid ${key}`);
+    }
+    this.lifetime = new AbortController();
+    this.lobby.resetSeason();
+    this.stopRequested = false;
+    this.leaving = false;
+    this.leaveAttempts = 0;
+    this.leaveVerification = false;
+    this.retryCount = 0;
+    this.knownTurns.clear();
+    this.completedHands.clear();
+    this.observedHands.clear();
+    this.pending.clear();
+    this.attempts.clear();
+    this.blockedAuthorities.clear();
+    this.opponents = new OpponentTracker();
+    const checkpoint = this.dependencies.store.loadCheckpoint();
+    this.opponents = new OpponentTracker(checkpoint?.opponents);
+    this.snapshot = {
+      runId: options.runId ?? randomUUID(),
+      phase: 'connecting',
+      connected: false,
+      hands: 0,
+      decisions: 0,
+      reconnects: 0,
+      startedAt: new Date().toISOString(),
+      stoppedAt: null,
+      lastError: null,
+      state: checkpoint?.state ?? createInitialState(),
+    };
+    this.dependencies.store.beginRun({
+      id: this.snapshot.runId!,
+      kind: options.kind ?? 'live',
+      strategy: options.strategy ?? 'jev',
+      startedAt: this.snapshot.startedAt!,
+      config: options,
+    });
+    for (const action of this.dependencies.store.pendingActions())
+      this.pending.set(action.id, action);
+    this.running = true;
+    if (this.options.maxDurationMs > 0) {
+      this.durationTimer = setTimeout(() => this.stop(true), this.options.maxDurationMs);
+    }
+    this.publish();
+    try {
+      const active = await this.client.activeGame(this.lifetime.signal);
+      if (!this.running) return;
+      if (active.playing) {
+        if (this.snapshot.state.tableId !== active.table_id)
+          this.snapshot.state = createInitialState();
+        this.snapshot.state.tableId = active.table_id ?? null;
+        this.snapshot.state.heroSeat = active.seat ?? this.snapshot.state.heroSeat;
+      } else {
+        this.snapshot.state = createInitialState();
+        this.markAllUnresolved('not_seated_on_start');
+      }
+      this.connect();
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  /** Graceful mode waits for the current hand boundary; zero means no drain timeout. */
+  stop(graceful = true): void {
+    if (!this.running) return;
+    this.stopRequested = true;
+    this.lobby.cancel();
+    this.snapshot.phase = 'stopping';
+    this.publish();
+    const idleBoundary = this.atHandBoundary();
+    if (!graceful || !this.snapshot.state.handId || this.snapshot.state.complete || idleBoundary) {
+      this.leave();
+      return;
+    }
+    if (this.options.gracefulStopTimeoutMs > 0) {
+      this.stopTimer ??= setTimeout(() => this.leave(), this.options.gracefulStopTimeoutMs);
+    }
+  }
+
+  private atHandBoundary(): boolean {
+    const state = this.snapshot.state;
+    return (
+      state.complete ||
+      state.street === 'idle' ||
+      [
+        'between_hands_delay',
+        'awaiting_hand_start',
+        'insufficient_players',
+        'table_closing',
+      ].includes(state.waitingReason ?? '')
+    );
+  }
+
+  private publish(): void {
+    this.emit('status', this.status());
+  }
+  private connect(): void {
+    if (!this.running) return;
+    this.snapshot.phase = this.stopRequested ? 'stopping' : 'connecting';
+    this.publish();
+    const socket = this.client.connect();
+    this.socket = socket;
+    socket.on('open', () => {
+      if (socket !== this.socket) return;
+      this.snapshot.connected = true;
+      this.pongAlive = true;
+      this.heartbeat = setInterval(() => {
+        if (!this.pongAlive) {
+          socket.terminate();
+          return;
+        }
+        this.pongAlive = false;
+        socket.ping();
+      }, 20_000);
+      this.publish();
+    });
+    socket.on('pong', () => {
+      this.pongAlive = true;
+    });
+    socket.on('message', (raw) => {
+      if (socket !== this.socket || !this.running) return;
+      try {
+        this.receive(parseEvent(raw.toString()));
+      } catch (error) {
+        this.fail(error);
+      }
+    });
+    socket.on('error', (error) => {
+      this.snapshot.lastError = error.message;
+      this.publish();
+    });
+    socket.on('unexpected-response', (_request, response) => {
+      response.resume();
+      if (response.statusCode === 401 || response.statusCode === 403)
+        this.fail(new Error('OpenPoker authentication failed'));
+      else socket.terminate();
+    });
+    socket.on('close', (code) => {
+      if (socket !== this.socket) return;
+      this.socket = null;
+      this.lobby.cancel();
+      this.snapshot.connected = false;
+      if (this.heartbeat) clearInterval(this.heartbeat);
+      this.cancelTask();
+      this.resyncPending = false;
+      if (this.resyncTimer) clearTimeout(this.resyncTimer);
+      if (!this.running) return;
+      if (code === 4001) {
+        this.fail(new Error('OpenPoker authentication failed'));
+        return;
+      }
+      if (this.leaving) {
+        void this.verifyLeave();
+        return;
+      }
+      this.reconnect();
+    });
+  }
+
+  private reconnect(): void {
+    if (++this.retryCount > this.options.maxReconnectAttempts) {
+      this.fail(new Error('Reconnect attempts exhausted'));
+      return;
+    }
+    this.snapshot.reconnects++;
+    this.snapshot.phase = 'recovering';
+    this.publish();
+    const cap = Math.min(
+      this.options.reconnectMaxMs,
+      this.options.reconnectMinMs * 2 ** Math.min(this.retryCount - 1, 16),
+    );
+    this.reconnectTimer = setTimeout(
+      () => this.connect(),
+      Math.floor(cap * (0.5 + Math.random() * 0.5)),
+    );
+  }
+
+  private send(payload: Record<string, unknown>): boolean {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false;
+    this.socket.send(JSON.stringify(payload));
+    return true;
+  }
+  private join(): void {
+    if (this.stopRequested) {
+      this.leave();
+      return;
+    }
+    this.lobby.requestJoin();
+  }
+
+  private resync(): void {
+    if (this.resyncPending || !this.snapshot.state.tableId) return;
+    this.resyncPending = this.send({
+      type: 'resync_request',
+      table_id: this.snapshot.state.tableId,
+      last_table_seq: Math.max(0, this.snapshot.state.lastTableSeq),
+    });
+    if (this.resyncPending) {
+      if (this.resyncTimer) clearTimeout(this.resyncTimer);
+      this.resyncTimer = setTimeout(() => this.socket?.terminate(), 10_000);
+    }
+    this.snapshot.phase = this.stopRequested ? 'stopping' : 'recovering';
+    this.publish();
+  }
+
+  private receive(event: ServerEvent): void {
+    const runId = this.snapshot.runId!;
+    this.dependencies.store.appendEvent(runId, event, new Date().toISOString());
+    this.emit('event', event);
+    if (event.type === 'connected') {
+      if (this.leaving) this.leave();
+      else if (this.snapshot.state.tableId) {
+        this.send({ type: 'set_auto_rebuy', enabled: this.options.autoRebuy });
+        this.resync();
+      } else this.join();
+      return;
+    }
+    if (event.type === 'error') {
+      this.handleError(event);
+      return;
+    }
+    if (event.type === 'action_ack' || event.type === 'action_rejected') {
+      this.acknowledge(event);
+      // Acknowledgements may arrive below the state watermark and still matter.
+      if (event.type === 'action_rejected') {
+        this.cancelTask();
+        this.blockedAuthorities.add(authorityKey(this.snapshot.state));
+        this.resync();
+      }
+      return;
+    }
+    if (event.type === 'player_action') this.acknowledge(event);
+    if (event.type === 'resync_response') {
+      this.applyResync(event);
+      return;
+    }
+    const previous = this.snapshot.state;
+    if (
+      event.table_id &&
+      previous.tableId &&
+      event.table_id !== previous.tableId &&
+      event.type !== 'table_joined'
+    )
+      return;
+    if (
+      event.table_seq != null &&
+      event.table_seq <= previous.lastTableSeq &&
+      event.type !== 'table_joined'
+    )
+      return;
+    if (event.type === 'table_state' && !verifyStateHash(event)) {
+      this.cancelTask();
+      this.resync();
+      return;
+    }
+    this.snapshot.state = reduceMessage(previous, event);
+    if (this.activeTask && authorityKey(this.snapshot.state) !== this.activeTask.key)
+      this.cancelTask();
+    if (event.type === 'lobby_joined' || event.type === 'table_joined') this.retryCount = 0;
+    if (event.type === 'table_joined') {
+      this.lobby.seated();
+      this.snapshot.phase = 'playing';
+      this.resyncPending = false;
+    }
+    if (previous.handId !== this.snapshot.state.handId) {
+      this.cancelTask();
+      this.knownTurns.clear();
+      this.blockedAuthorities.clear();
+    }
+    if ((event.type === 'hand_start' || event.type === 'your_turn') && this.snapshot.state.handId) {
+      this.observedHands.add(this.snapshot.state.handId);
+    }
+    this.persist(event);
+    if (this.stopRequested && event.type === 'table_state' && this.atHandBoundary()) {
+      this.leave();
+      return;
+    }
+    if (event.type === 'your_turn') this.authorize(false, event);
+    else if (event.type === 'hand_result') this.completeHand(event);
+    else if (event.type === 'table_closed' || event.type === 'season_ended') {
+      this.cancelTask();
+      this.markAllUnresolved(event.type);
+      this.resyncPending = false;
+      if (event.type === 'season_ended') this.lobby.resetSeason();
+      else this.lobby.departed();
+      if (this.stopRequested) this.leave();
+      else this.join();
+    } else if (event.type === 'busted') {
+      this.cancelTask();
+      if (!this.options.autoRebuy || this.stopRequested) this.leave();
+      else this.lobby.busted();
+    } else if (event.type === 'auto_rebuy_scheduled') {
+      this.lobby.scheduled(event);
+    } else if (event.type === 'rebuy_confirmed') this.lobby.confirmed();
+    else if (event.type === 'player_left' && event.seat === this.snapshot.state.heroSeat) {
+      this.cancelTask();
+      this.snapshot.state = createInitialState();
+      this.lobby.departed();
+      if (this.stopRequested) this.finish('stopped');
+      else this.join();
+    }
+    this.publish();
+  }
+
+  private persist(event: ServerEvent): void {
+    this.opponents.observe(this.snapshot.state);
+    this.dependencies.store.saveCheckpoint({
+      opponents: this.opponents.exportState(),
+      tableId: this.snapshot.state.tableId,
+      lastTableSeq: this.snapshot.state.lastTableSeq,
+      state: this.snapshot.state,
+    });
+    if (this.snapshot.state.handId)
+      this.dependencies.store.saveHand(this.snapshot.runId!, this.snapshot.state, event);
+  }
+
+  private applyResync(event: ServerEvent): void {
+    this.resyncPending = false;
+    if (this.resyncTimer) clearTimeout(this.resyncTimer);
+    if (
+      event.table_id &&
+      this.snapshot.state.tableId &&
+      event.table_id !== this.snapshot.state.tableId
+    )
+      return;
+    const snapshot = record(event.snapshot);
+    const snapshotEvent = { ...snapshot, type: 'table_state' } as ServerEvent;
+    if (snapshot.state_hash && !verifyStateHash(snapshot as ServerEvent)) {
+      this.fail(new Error('Resync snapshot hash mismatch'));
+      return;
+    }
+    const replayed = Array.isArray(event.replayed_events) ? event.replayed_events : [];
+    replayed
+      .map((value) => record(value) as ServerEvent)
+      .sort((a, b) => (a.table_seq ?? 0) - (b.table_seq ?? 0))
+      .forEach((item) => {
+        if (item.table_seq != null && item.table_seq <= this.snapshot.state.lastTableSeq) return;
+        this.dependencies.store.appendEvent(this.snapshot.runId!, item, new Date().toISOString());
+        if (item.type === 'player_action') this.acknowledge(item);
+        this.snapshot.state = reduceMessage(this.snapshot.state, item);
+        this.persist(item);
+        if (item.type === 'hand_result') this.completeHand(item);
+      });
+    if (!this.running || this.leaving) return;
+    // Core installs resync snapshot after replay and grants authority only through hero.turn_token.
+    this.snapshot.state = reduceMessage(this.snapshot.state, {
+      ...event,
+      replayed_events: [],
+      snapshot: snapshotEvent,
+    });
+    this.retryCount = 0;
+    this.lobby.seated();
+    this.snapshot.phase = this.stopRequested ? 'stopping' : 'playing';
+    if (this.snapshot.state.handId && !this.snapshot.state.complete) {
+      this.observedHands.add(this.snapshot.state.handId);
+    }
+    this.persist(event);
+    if (this.stopRequested && this.atHandBoundary()) {
+      this.leave();
+      return;
+    }
+    const key = authorityKey(this.snapshot.state);
+    for (const action of this.pending.values()) {
+      if (`${action.payload.hand_id}:${action.payload.turn_token}` !== key) {
+        this.dependencies.store.updateAction(action.id, 'unresolved', {
+          reason: 'authority_changed_without_confirmation',
+        });
+        this.pending.delete(action.id);
+      }
+    }
+    this.authorize(true, event);
+    this.publish();
+  }
+
+  private authorize(recovered: boolean, event: ServerEvent): void {
+    const state = this.snapshot.state;
+    if (!state.turnToken || !state.handId || !state.tableId || this.leaving) return;
+    const key = authorityKey(state);
+    if (this.activeTask?.key === key || this.blockedAuthorities.has(key)) return;
+    this.dependencies.store.assertRuntimeLease?.();
+    this.cancelTask();
+    const pending = [...this.pending.values()].find(
+      (action) => `${action.payload.hand_id}:${action.payload.turn_token}` === key,
+    );
+    if (pending) {
+      if (Date.now() < pending.deadlineAt) this.submit(pending);
+      else {
+        this.dependencies.store.updateAction(pending.id, 'unresolved', {
+          reason: 'deadline_elapsed',
+        });
+        this.pending.delete(pending.id);
+      }
+      return;
+    }
+    if (this.knownTurns.has(key)) return;
+    this.knownTurns.add(key);
+    const eventTime = typeof event.ts === 'string' ? Date.parse(event.ts) : NaN;
+    const startedAt = Number.isFinite(eventTime) ? Math.min(Date.now(), eventTime) : Date.now();
+    const deadlineAt =
+      startedAt +
+      (recovered ? Math.min(3000, this.options.turnTimeoutMs) : this.options.turnTimeoutMs);
+    const task: DecisionTask = {
+      key,
+      controller: new AbortController(),
+      state: structuredClone(state),
+      deadlineAt,
+      recovered,
+      opponents: this.opponents.snapshot(),
+    };
+    this.activeTask = task;
+    this.emit('deciding', {
+      runId: this.snapshot.runId,
+      handId: state.handId,
+      startedAt: new Date().toISOString(),
+    });
+    const budget = Math.max(
+      0,
+      Math.min(
+        this.options.decisionTimeoutMs,
+        deadlineAt - Date.now() - this.options.submissionReserveMs,
+      ),
+    );
+    void decide(task, this.dependencies, this.snapshot.runId!, budget)
+      .then((result) => {
+        if (
+          !result ||
+          this.activeTask !== task ||
+          task.controller.signal.aborted ||
+          !this.running ||
+          !this.snapshot.connected ||
+          authorityKey(this.snapshot.state) !== task.key
+        )
+          return;
+        const selected = result.decision.candidates.find(
+          (candidate) => candidate.id === result.decision.proposal.candidateId,
+        );
+        if (!selected || !validateCandidate(selected, this.snapshot.state)) {
+          this.resync();
+          return;
+        }
+        this.dependencies.store.saveDecision(result.decision);
+        this.dependencies.store.prepareAction(result.action);
+        this.pending.set(result.action.id, result.action);
+        this.snapshot.decisions++;
+        this.emit('decision', result.decision);
+        this.submit(result.action);
+        this.activeTask = null;
+        this.publish();
+      })
+      .catch((error) => this.fail(error));
+  }
+
+  private submit(action: StoredAction): void {
+    if (Date.now() >= action.deadlineAt || this.leaving) return;
+    this.dependencies.store.assertRuntimeLease?.();
+    const attempts = this.attempts.get(action.id) ?? 0;
+    if (attempts >= 3) {
+      this.dependencies.store.updateAction(action.id, 'unresolved', {
+        reason: 'submission_retry_limit',
+      });
+      this.blockedAuthorities.add(`${action.payload.hand_id}:${action.payload.turn_token}`);
+      return;
+    }
+    if (this.send(action.payload)) {
+      this.attempts.set(action.id, attempts + 1);
+      action.status = 'sent';
+      this.dependencies.store.updateAction(action.id, 'sent');
+      if (this.ackTimer) clearTimeout(this.ackTimer);
+      this.ackTimer = setTimeout(() => {
+        if (this.pending.has(action.id)) this.resync();
+      }, 3000);
+    }
+  }
+
+  private acknowledge(event: ServerEvent): void {
+    const id = string(event.client_action_id) ?? string(event.action_id);
+    // Uncorrelated rejections never mark an arbitrary neighboring action as rejected.
+    if (!id || !this.pending.has(id)) return;
+    const action = this.pending.get(id)!;
+    if (event.hand_id && event.hand_id !== action.payload.hand_id) return;
+    const status =
+      event.type === 'action_rejected' ||
+      (event.type === 'action_ack' && event.status !== 'accepted')
+        ? 'rejected'
+        : 'accepted';
+    this.dependencies.store.updateAction(id, status, { code: event.code ?? null });
+    this.pending.delete(id);
+    this.attempts.delete(id);
+    if (this.ackTimer) clearTimeout(this.ackTimer);
+  }
+
+  private completeHand(event: ServerEvent): void {
+    const id = event.hand_id ?? this.snapshot.state.handId;
+    if (id && this.observedHands.has(id) && !this.completedHands.has(id)) {
+      this.completedHands.add(id);
+      this.observedHands.delete(id);
+      this.snapshot.hands++;
+      // Bound process memory; these IDs only suppress near-term replay duplication.
+      if (this.completedHands.size > 10_000)
+        this.completedHands.delete(this.completedHands.values().next().value!);
+    }
+    this.cancelTask();
+    if (
+      this.stopRequested ||
+      (this.options.maxHands > 0 && this.snapshot.hands >= this.options.maxHands)
+    ) {
+      this.stopRequested = true;
+      this.leave();
+    }
+  }
+
+  private handleError(event: ServerEvent): void {
+    const code = string(event.code) ?? 'unknown';
+    if (this.leaving && code === 'not_at_table') {
+      this.finish('stopped');
+      return;
+    }
+    if (code === 'already_in_lobby') return;
+    if (code === 'already_seated') {
+      const tableId = string(event.table_id) ?? string(record(event.details).table_id);
+      if (tableId) {
+        this.snapshot.state.tableId = tableId;
+        this.resync();
+      } else
+        void this.client
+          .activeGame(this.lifetime.signal)
+          .then((active) => {
+            if (!this.running) return;
+            if (active.table_id) {
+              this.snapshot.state.tableId = active.table_id;
+              this.resync();
+            } else this.fail(new Error('Already seated but active-game has no table'));
+          })
+          .catch((error) => this.fail(error));
+      return;
+    }
+    if (code === 'rate_limited') {
+      this.snapshot.lastError = code;
+      const limitedSocket = this.socket;
+      if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = setTimeout(() => {
+        if (
+          !this.running ||
+          this.leaving ||
+          !this.snapshot.connected ||
+          this.socket !== limitedSocket
+        )
+          return;
+        this.resyncPending = false;
+        if (this.snapshot.state.tableId) this.resync();
+        else {
+          this.lobby.departed();
+          this.join();
+        }
+      }, 1500);
+      return;
+    }
+    if (code === 'table_not_found' || code === 'not_at_table') {
+      this.markAllUnresolved(code);
+      this.resyncPending = false;
+      this.snapshot.state = createInitialState();
+      this.lobby.departed();
+      this.join();
+      return;
+    }
+    if (code === 'insufficient_funds' && !this.stopRequested) {
+      this.lobby.insufficientFunds();
+      return;
+    }
+    if (code === 'rebuy_cooldown') {
+      this.lobby.scheduled(event);
+      return;
+    }
+    this.fail(new Error(`OpenPoker protocol error: ${code}`));
+  }
+
+  private cancelTask(): void {
+    if (!this.activeTask) return;
+    this.activeTask.controller.abort();
+    // An interrupted call has no submission; recovery may choose its legal fallback.
+    this.knownTurns.delete(this.activeTask.key);
+    this.activeTask = null;
+  }
+  private markAllUnresolved(reason: string): void {
+    for (const action of this.pending.values())
+      this.dependencies.store.updateAction(action.id, 'unresolved', { reason });
+    this.pending.clear();
+  }
+  private leave(): void {
+    if (!this.running) return;
+    this.leaving = true;
+    this.lobby.cancel();
+    this.stopRequested = true;
+    this.cancelTask();
+    this.snapshot.phase = 'stopping';
+    this.publish();
+    if (!this.snapshot.connected) {
+      void this.verifyLeave();
+      return;
+    }
+    this.leaveAttempts++;
+    this.send({ type: 'leave_table' });
+    if (this.stopTimer) clearTimeout(this.stopTimer);
+    this.stopTimer = setTimeout(() => {
+      void this.verifyLeave();
+    }, 1500);
+  }
+  private async verifyLeave(): Promise<void> {
+    if (!this.running || !this.leaving || this.leaveVerification) return;
+    this.leaveVerification = true;
+    try {
+      const active = await this.client.activeGame(this.lifetime.signal);
+      if (!this.running) return;
+      if (!active.playing) this.finish('stopped');
+      else if (this.snapshot.connected && this.leaveAttempts < 3) this.leave();
+      else this.fail(new Error('Leave is unconfirmed: the server still reports an active seat'));
+    } catch (error) {
+      if (this.running)
+        this.fail(
+          new Error(
+            `Unable to confirm leaving: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+    } finally {
+      this.leaveVerification = false;
+    }
+  }
+
+  private fail(error: unknown): void {
+    if (!this.running) return;
+    this.snapshot.lastError = error instanceof Error ? error.message : String(error);
+    this.finish('failed');
+  }
+  private finish(phase: 'stopped' | 'failed'): void {
+    if (!this.running) return;
+    this.running = false;
+    this.lobby.cancel();
+    this.cancelTask();
+    this.lifetime.abort();
+    for (const timer of [
+      this.reconnectTimer,
+      this.durationTimer,
+      this.stopTimer,
+      this.ackTimer,
+      this.resyncTimer,
+    ])
+      if (timer) clearTimeout(timer);
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.socket?.close();
+    this.socket = null;
+    this.snapshot.phase = phase;
+    this.snapshot.connected = false;
+    this.snapshot.stoppedAt = new Date().toISOString();
+    try {
+      this.markAllUnresolved('runtime_stopped');
+      this.dependencies.store.finishRun(
+        this.snapshot.runId!,
+        phase,
+        this.snapshot.stoppedAt,
+        this.snapshot.lastError,
+      );
+    } catch (error) {
+      this.snapshot.phase = 'failed';
+      this.snapshot.lastError = `Persistence failure: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    this.publish();
+    this.emit('stopped', this.status());
+  }
+}
