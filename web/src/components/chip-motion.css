@@ -1,0 +1,103 @@
+.chip-flight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  animation: chip-travel 950ms cubic-bezier(0.2, 0.65, 0.35, 1) both;
+}
+.flying-chips {
+  position: relative;
+  width: 20px;
+  height: 23px;
+}
+.flying-chips i {
+  position: absolute;
+  width: 17px;
+  height: 17px;
+  border: 3px dashed #e8e6bd;
+  border-radius: 50%;
+  background: #6f9250;
+  box-shadow: 0 2px 4px #07100699;
+}
+.flying-chips i:nth-child(2) {
+  top: 4px;
+  left: 2px;
+}
+.flying-chips i:nth-child(3) {
+  top: 8px;
+  left: 4px;
+}
+.chip-flight-from-pot .flying-chips i {
+  background: #b89b45;
+}
+.chip-flight-amount {
+  background: #102317ee;
+  border: 1px solid #789960;
+  border-radius: 10px;
+  padding: 3px 6px;
+  color: #e7f1cc;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.seat-current .seat-info {
+  border-color: #cbef9a;
+  box-shadow:
+    0 0 0 2px #b7f78a22,
+    0 0 20px #b7f78a25;
+}
+.seat-current .seat-avatar {
+  border-color: #cbef9a;
+}
+.seat-action {
+  margin-top: 5px;
+  color: #c5ddb0;
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.amount-updated {
+  animation: amount-flash 700ms ease-out;
+}
+@keyframes amount-flash {
+  from {
+    color: #e5ffae;
+    text-shadow: 0 0 9px #b7f78a88;
+  }
+  to {
+    text-shadow: none;
+  }
+}
+@keyframes chip-travel {
+  0% {
+    transform: translate(var(--from-x), var(--from-y)) translate(-50%, -50%) scale(0.7);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  50% {
+    transform: translate(var(--mid-x), var(--mid-y)) translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  88% {
+    transform: translate(var(--to-x), var(--to-y)) translate(-50%, -50%) scale(0.85);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--to-x), var(--to-y)) translate(-50%, -50%) scale(0.6);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chip-flight {
+    display: none;
+    animation: none;
+  }
+  .amount-updated {
+    animation: none;
+  }
+}

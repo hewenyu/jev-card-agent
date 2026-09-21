@@ -1,4 +1,4 @@
-import type { HandSummary, Overview as OverviewData, RunSummary } from '../../../src/shared/api';
+import type { HandSummary, RunSummary } from '../../../src/shared/api';
 import { dollars, number, policyLabel, signed, time } from '../api';
 import { Cards, Empty, ErrorNotice, Icon, Panel, SourceBadge, Status } from '../components/UI';
 
@@ -86,7 +86,6 @@ function Performance({ hands }: { hands: HandSummary[] }) {
 }
 
 export function Overview({
-  data,
   run,
   hands,
   openHand,
@@ -95,7 +94,6 @@ export function Overview({
   historyError,
   retryHistory,
 }: {
-  data: OverviewData;
   run: RunSummary | undefined;
   hands: HandSummary[];
   openHand: (id: string) => void;
@@ -223,7 +221,7 @@ export function Overview({
           <p role="status">Loading hand history…</p>
         ) : !hands.length ? (
           <Empty title="No hands recorded">
-            Select another run or open the demo from the sidebar.
+            Select another run or watch the live table while new hands are recorded.
           </Empty>
         ) : (
           <div className="table-scroll">
@@ -289,10 +287,7 @@ export function Overview({
       <div className="integrity-note">
         <Icon name="lock" size={14} />
         <span>
-          {data.capabilities.liveConfigured
-            ? 'Arena credentials configured on the server.'
-            : 'Demo is ready to explore. Configure server credentials to compete.'}{' '}
-          Private credentials stay on the server.
+          Watch live play and explore completed hands. Decisions run autonomously on the server.
         </span>
       </div>
     </>

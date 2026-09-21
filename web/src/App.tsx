@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   DecisionView,
   HandSummary,
   Overview as OverviewData,
   RunSummary,
 } from '../../src/shared/api';
-import { api, getToken, message, saveToken } from './api';
+import { api, message } from './api';
+import { useLiveSpectator } from './live';
 import { Empty, ErrorNotice, Icon, SourceBadge } from './components/UI';
 import { Overview } from './views/Overview';
 import { Live } from './views/Live';
@@ -17,7 +18,7 @@ const views = [
   { id: 'overview', label: 'Overview' },
   { id: 'live', label: 'Live table' },
   { id: 'replay', label: 'Replay & decisions' },
-  { id: 'experiments', label: 'Experiments' },
+  { id: 'experiments', label: 'Evaluations' },
 ];
 const initialView = () =>
   views.some((view) => view.id === location.hash.slice(1)) ? location.hash.slice(1) : 'overview';
@@ -30,27 +31,46 @@ export function App() {
   const [decisionId, setDecisionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [accessOpen, setAccessOpen] = useState(false);
-  const [token, setToken] = useState(getToken);
-  const [demoBusy, setDemoBusy] = useState(false);
-  const runPages = useHistoryPages<RunSummary>(data ? '/runs' : null, data?.runs[0]?.id);
+  const [revision, setRevision] = useState(0);
+  const refreshing = useRef(false);
+  const [overviewStartedAt, setOverviewStartedAt] = useState(0);
+  const live = useLiveSpectator();
+  const displayData = data && {
+    ...data,
+    runtime:
+      live.snapshot && (live.status === 'live' || live.receivedAt >= overviewStartedAt)
+        ? live.snapshot.runtime
+        : data.runtime,
+  };
+  const runPages = useHistoryPages<RunSummary>(data ? '/runs' : null, revision);
   const runs = mergeHistory(runPages.items, data?.runs ?? []);
   const refresh = useCallback(async () => {
+    if (refreshing.current) return;
+    refreshing.current = true;
+    const startedAt = performance.now();
     try {
       const value = await api<OverviewData>('/overview');
       setData(value);
+      setOverviewStartedAt(startedAt);
+      setRevision((current) => current + 1);
       setRunId((current) => current || value.runs[0]?.id || '');
       setError(null);
     } catch (reason) {
       setError(message(reason));
     } finally {
+      refreshing.current = false;
       setLoading(false);
     }
   }, []);
   useEffect(() => {
     void refresh();
     const timer = setInterval(() => void refresh(), 3000);
-    return () => clearInterval(timer);
+    const onFocus = () => void refresh();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+    };
   }, [refresh]);
   useEffect(() => {
     const handler = () => setView(initialView());
@@ -58,10 +78,9 @@ export function App() {
     return () => window.removeEventListener('hashchange', handler);
   }, []);
   const run = runs.find((item) => item.id === runId);
-  const handCount = run?.hands;
   const handPages = useHistoryPages<HandSummary>(
     runId ? `/hands?runId=${encodeURIComponent(runId)}` : null,
-    handCount,
+    revision,
   );
   const hands = handPages.items;
   const navigate = (next: string) => {
@@ -84,24 +103,6 @@ export function App() {
       setError(message(reason));
     }
   }
-  async function loadDemo() {
-    const existing = data?.runs.find((item) => item.mode === 'demo');
-    if (existing) {
-      setRunId(existing.id);
-      navigate('overview');
-      return;
-    }
-    setDemoBusy(true);
-    try {
-      await api('/demo/reset', {});
-      await refresh();
-      navigate('overview');
-    } catch (reason) {
-      setError(message(reason));
-    } finally {
-      setDemoBusy(false);
-    }
-  }
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -109,10 +110,10 @@ export function App() {
           <span className="brand-symbol">♠</span>
           <span>
             jev<span className="brand-period">.</span>
-            <small>DECISION CONSOLE</small>
+            <small>PUBLIC OBSERVATORY</small>
           </span>
         </a>
-        <div className="sidebar-section-label">WORKSPACE</div>
+        <div className="sidebar-section-label">OBSERVATORY</div>
         <nav aria-label="Main navigation">
           {views.map((item) => (
             <a
@@ -123,7 +124,7 @@ export function App() {
             >
               <Icon name={item.id} />
               <span>{item.label}</span>
-              {item.id === 'live' && data?.runtime.running && <i className="dot pulse" />}
+              {item.id === 'live' && displayData?.runtime.running && <i className="dot pulse" />}
             </a>
           ))}
         </nav>
@@ -135,16 +136,11 @@ export function App() {
               <br />
               The evidence.
             </h3>
-            <p>Explore a recorded demonstration without connecting to the Arena.</p>
-            <button className="text-link" onClick={() => void loadDemo()} disabled={demoBusy}>
-              {demoBusy ? 'Loading…' : 'Explore demo'}
-              <Icon name="arrow" size={16} />
-            </button>
+            <p>Watch the agent play. Explore every recorded hand and decision.</p>
+            <a className="text-link" href="#replay">
+              Explore the history <Icon name="arrow" size={16} />
+            </a>
           </div>
-          <button className="access-button" onClick={() => setAccessOpen(true)}>
-            <Icon name="lock" size={17} />
-            Access settings<span>{getToken() ? 'Connected' : 'Local / public'}</span>
-          </button>
           <div className="sidebar-foot">
             Built with Jev <span>↗</span> Played on OpenPoker
           </div>
@@ -153,7 +149,7 @@ export function App() {
       <div className="main-shell">
         <header className="topbar">
           <div className="breadcrumb">
-            Workspace <span>/</span>
+            Observatory <span>/</span>
             <strong>{views.find((item) => item.id === view)?.label}</strong>
           </div>
           <div className="topbar-controls">
@@ -161,7 +157,9 @@ export function App() {
               <SourceBadge
                 mode={run.mode}
                 active={
-                  run.mode === 'live' && data?.runtime.running && data.runtime.runId === run.id
+                  run.mode === 'live' &&
+                  displayData?.runtime.running &&
+                  displayData.runtime.runId === run.id
                 }
               />
             )}
@@ -202,13 +200,6 @@ export function App() {
                     : 'Load older runs'}
               </button>
             )}
-            <button
-              className="icon-button mobile-access"
-              aria-label="Access settings"
-              onClick={() => setAccessOpen(true)}
-            >
-              <Icon name="lock" size={16} />
-            </button>
           </div>
         </header>
         <main>
@@ -216,10 +207,10 @@ export function App() {
           <ErrorNotice error={runPages.error} />
           {loading ? (
             <div className="loading-state" role="status">
-              Connecting to the decision console…
+              Loading the observatory…
             </div>
-          ) : !data ? (
-            <Empty title="The console is unavailable">
+          ) : !displayData ? (
+            <Empty title="The observatory is unavailable">
               <button className="button secondary" onClick={() => void refresh()}>
                 Retry connection
               </button>
@@ -228,7 +219,6 @@ export function App() {
             <>
               {view === 'overview' && (
                 <Overview
-                  data={data}
                   run={run}
                   hands={hands}
                   openHand={openHand}
@@ -238,7 +228,7 @@ export function App() {
                   retryHistory={() => void handPages.loadMore()}
                 />
               )}
-              {view === 'live' && <Live data={data} refresh={refresh} />}
+              {view === 'live' && <Live runtime={displayData.runtime} runs={runs} live={live} />}
               {view === 'replay' && (
                 <Replay
                   run={run}
@@ -253,14 +243,7 @@ export function App() {
                 />
               )}
               {view === 'experiments' && (
-                <Experiments
-                  runs={runs}
-                  selectedRunId={runId}
-                  canControl={data.capabilities.canControl}
-                  jevConfigured={data.capabilities.jevConfigured}
-                  reasoningConfigured={data.capabilities.reasoningConfigured === true}
-                  openDecision={(id) => void openDecision(id)}
-                />
+                <Experiments openDecision={(id) => void openDecision(id)} />
               )}
             </>
           )}
@@ -272,56 +255,6 @@ export function App() {
           </footer>
         </main>
       </div>
-      {accessOpen && (
-        <div className="modal-backdrop">
-          <section
-            className="access-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="access-title"
-          >
-            <button
-              className="modal-close icon-button"
-              aria-label="Close access settings"
-              onClick={() => setAccessOpen(false)}
-            >
-              <Icon name="close" />
-            </button>
-            <p className="eyebrow">SERVER ACCESS</p>
-            <h2 id="access-title">Connect your console.</h2>
-            <p className="subtle">
-              Use the console access token configured on your server. This is separate from your Jev
-              and OpenPoker API keys.
-            </p>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                saveToken(token);
-                // Rebuild all history caches when changing between private and public access.
-                window.location.reload();
-              }}
-            >
-              <label className="field">
-                Console access token
-                <input
-                  autoFocus
-                  type="password"
-                  autoComplete="off"
-                  value={token}
-                  onChange={(event) => setToken(event.target.value)}
-                  placeholder="Optional on local connections"
-                />
-              </label>
-              <p className="annotation">
-                Stored only for this browser session. Never enter a provider API key here.
-              </p>
-              <button className="button primary full-width" type="submit">
-                Save access settings
-              </button>
-            </form>
-          </section>
-        </div>
-      )}
     </div>
   );
 }

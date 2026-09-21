@@ -21,7 +21,7 @@ npm run demo
 
 打开 **http://127.0.0.1:8787**。命令执行生产构建，再以 `--demo` 启动完整应用，默认使用 `data/demo.sqlite`。它不加载 `.env`，而且 Demo 模式会清空运行配置中的平台和模型凭据，禁止启动真实 Runtime。
 
-本地 Demo 支持四个视图、逐事件回放及免费的 baseline 比较。牌局、模型概率和收益均是明确标记的合成数据。
+本地 Demo 提供四个只读视图、逐事件回放和已保存实验结果展示；baseline 比较通过下文 CLI 生成。牌局、模型概率和收益均是明确标记的合成数据。
 
 更换端口或演示数据库：
 
@@ -48,7 +48,7 @@ npm run build
 npm run start
 ```
 
-`start` 使用构建产物并读取 `.env`，单个 Node.js 服务提供 React 静态页面、HTTP API 和 Bot Runtime。默认不会自动入队，需在 Live table 中显式启动 Run；服务器可通过下面的 `AUTO_START_BOT` 明确启用启动后参赛。
+`start` 使用构建产物并读取 `.env`，单个 Node.js 服务提供 React 静态页面、HTTP API 和 Bot Runtime。网页只读；服务器通过 `AUTO_START_BOT=true` 启用启动后自主参赛，通过 `PUBLIC_HISTORY=true` 开放匿名实时观战与历史。未启用自动启动时不入队。
 
 ```sh
 curl --fail http://127.0.0.1:8787/health
@@ -76,9 +76,9 @@ curl --fail http://127.0.0.1:8787/health
 | `HOST`、`PORT`             | `127.0.0.1`、`8787`                                           |
 | `DATABASE_PATH`            | `data/jev.sqlite`；生产持久化路径                             |
 | `DEMO_DATABASE_PATH`       | `data/demo.sqlite`；演示路径                                  |
-| `API_TOKEN`                | 独立控制台 token；非只读 Demo 的公开监听必需，至少 24 个字符  |
+| `API_TOKEN`                | 内部管理 API 凭证；非只读 Demo 的公开监听必需，至少 24 个字符 |
 | `READ_ONLY_DEMO`           | `false`；设为 `true` 后使用合成数据，禁止写请求和真实运行     |
-| `PUBLIC_HISTORY`           | `false`；设为 `true` 后匿名开放已结束牌局历史，管理仍需 token |
+| `PUBLIC_HISTORY`           | `false`；设为 `true` 后匿名开放实时公共观战和已结束历史       |
 | `AUTO_START_BOT`           | `false`；设为 `true` 后，HTTP 监听成功时自动启动一次 Bot      |
 | `BOT_STRATEGY`             | `jev`；自动启动策略，允许 `baseline`、`jev-reasoning`         |
 
@@ -110,7 +110,7 @@ npm run diagnose -- --reasoning --skip-openpoker
 
 ## 正式自动参赛
 
-填写 `OPEN_POKER_API_KEY` 与 `JEV_API_KEY`，执行 `npm run build`、`npm run start`，在 Live table 设置限制并点击 **Start live run**。
+填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY` 与内部 `API_TOKEN`，设置 `AUTO_START_BOT=true`、`BOT_STRATEGY=jev`、`PUBLIC_HISTORY=true`，执行 `npm run build`、`npm run start`。服务启动后自动参赛，网页仅展示状态。策略、模型、预算和自动启动配置保存在后台。
 
 无界面入口：
 
@@ -131,11 +131,11 @@ npm run bot -- --strategy jev --max-hands 10 --max-minutes 30 --budget-usd 1 --b
 
 手数、时长分别是停止条件，不保证指定时间内匹配并完成足够手数。两者均 `0` 时持续参赛，仍受模型预算、平台状态和明确停止影响。
 
-首次 `SIGINT`/`SIGTERM` 请求在手牌边界优雅停止，默认不设等待上限；第二次信号请求强制离桌。控制台使用 **Stop live run**。更新代码或迁移数据前先停止 Bot，并确认 Runtime 已停止且平台已离桌，再关闭服务；单手可能超过容器的停止宽限期，不应以强杀容器代替正常排空。
+首次 `SIGINT`/`SIGTERM` 请求在手牌边界优雅停止，默认不设等待上限；第二次信号请求强制离桌。Compose 部署使用 `sh scripts/manage.sh stop` 等待手牌完成并确认离桌后停止服务。更新代码或迁移数据前先停止 Bot，并确认 Runtime 已停止且平台已离桌，再关闭服务；单手可能超过容器的停止宽限期，不应以强杀容器代替正常排空。
 
 默认重启控制台服务不会自动开始新 Run。重新执行 Bot 命令或启用自动启动时会检查实际牌桌并恢复状态，不把旧回合建议直接提交到新回合。baseline 无 Jev 费用，但仍参加真实 OpenPoker 对局。
 
-服务器需要在容器重启后恢复自主参赛时，设置 `AUTO_START_BOT=true`、`BOT_STRATEGY=jev`，保留同一持久数据库。HTTP 监听成功后会调用一次正常的 Bot 启动流程：买入 `2000`、启用 auto-rebuy、不限制手数和时长，单 Run 模型预算使用 `RUN_BUDGET_USD`，累计预算仍使用持久账本。启动失败会输出错误、关闭 HTTP 服务并以失败状态退出，由容器重启策略处理。Demo 和只读 Demo 即使设置此开关也不会自动参赛。运行中的 UI/CLI 有界启动参数保持原有语义。
+服务器需要在容器重启后恢复自主参赛时，设置 `AUTO_START_BOT=true`、`BOT_STRATEGY=jev`，保留同一持久数据库。HTTP 监听成功后会调用一次正常的 Bot 启动流程：买入 `2000`、启用 auto-rebuy、不限制手数和时长，单 Run 模型预算使用 `RUN_BUDGET_USD`，累计预算仍使用持久账本。启动失败会输出错误、关闭 HTTP 服务并以失败状态退出，由容器重启策略处理。Demo 和只读 Demo 即使设置此开关也不会自动参赛。CLI 的手数、时长和费用限制仍按指定启动参数生效。
 
 此开关只控制进程启动后的参赛，不下载或更新镜像。服务器镜像更新由部署者手动执行 `sh scripts/manage.sh update`，脚本先等待当前手牌结束并确认离桌，再通过 Compose 拉取和重建；不要安装自动更新镜像的服务。
 
@@ -175,7 +175,7 @@ npm run bot -- --strategy jev-reasoning --max-hands 10 --max-minutes 30 --budget
 
 Recorded replay 重现实际事件、当时可见信息和执行结果。Decision replay 让另一个策略处理同一冻结快照，不把原收益赋给新行动。
 
-控制台 Experiments 可以执行免费 baseline 比较。CLI 示例：
+网站 Experiments 只展示已保存且允许公开的结果。创建免费 baseline 比较使用服务器 CLI：
 
 ```sh
 npm run evaluate -- --demo --run demo-jev --strategy baseline --limit 20
@@ -189,19 +189,21 @@ npm run evaluate -- --run RUN_ID --strategy jev --limit 20
 npm run evaluate -- --run RUN_ID --strategy jev-reasoning --limit 20
 ```
 
-后两种策略调用真实模型并计费。服务运行时优先通过其 UI/API 评估，保持单进程写入；离线 CLI 评估前关闭使用同一数据库的服务。
+后两种策略调用真实模型并计费。服务运行时可通过受保护的内部 API 创建评估，保持单进程写入；离线 CLI 评估前关闭使用同一数据库的服务。网页不触发任何评估或模型调用。
 
 只读 Demo 不能创建评估，但可以浏览已保存结果。需要公开展示实验时，先在本地合成 Demo 中生成结果，再发布该只读数据集。
 
 ## 访问控制与公开演示
 
-loopback 默认无需 token。设置 `API_TOKEN` 后，默认所有 `/api/*` 都要求 `Authorization: Bearer <console-token>`。在浏览器 **Access settings** 输入独立 token，仅保存于当前 sessionStorage，不能填写 Jev 或 OpenPoker Key。
+网页面向匿名访客，只执行读取，不提供登录、令牌输入、Bot 启停、配置修改、Demo 重置或实验触发。浏览器不保存或发送 `API_TOKEN`，模型分析与模型调用只在后端进行。
 
-需要匿名公开真实历史时，明确设置 `PUBLIC_HISTORY=true`，并配置独立 `API_TOKEN`。无鉴权访问只允许 GET：可查看 Run 汇总、已结束牌局列表、事件回放、底牌和当时的决策；判定以手牌 `status=complete` 为准，收益未完成核对的结束牌局也可查看并保留其未核对标识。正在进行的手牌及其决策返回 404；Overview 隐藏当前牌桌和运行错误，控制能力显示为禁用。历史事件和决策内容递归移除 turn token、鉴权及账户秘密。
+公开真实观战设置 `PUBLIC_HISTORY=true`，并在 `.env` 配置独立 `API_TOKEN`。实时观战通过同源 `GET /api/live` SSE 更新公共牌、座位、筹码、底池、行动玩家和公开行动流，并自动重连。流使用 `snapshot` 事件和每 15 秒一次的注释心跳，所有订阅者收到同样的公共投影；当前私有底牌、合法行动授权、模型请求和未完成决策不会公开。网站是否打开不影响 Bot 的运行。
 
-有效 Bearer token 恢复完整查询和管理权限；无 token 的写请求返回 403，提供错误 token 返回 401。匿名 `/api/evaluations` 暂返回空列表，避免实验结果引用仍在进行的手牌；管理员仍可查看和创建实验。此模式公开的是已结束的真实对局，和 `READ_ONLY_DEMO` 的合成数据模式不同；启动 Bot、模型请求及当前手牌都不因开放历史而获得匿名访问权限。
+已结束牌局可匿名读取完整已记录的事件、底牌和当时的决策。结束判定以手牌 `status=complete` 为准，收益未完成核对的结束牌局也可查看并保留未核对标识。进行中手牌的历史详情与决策仍不可匿名查询。公开数据移除 turn token、鉴权及账户秘密；统计与历史随后台运行异步刷新。匿名 `/api/evaluations` 仅发布整份结果中所有决策都属于已结束牌局的实验，包含进行中手牌的整份结果暂不公开。
 
-非 loopback 监听必须配置至少 24 字符的 `API_TOKEN`，或开启 `READ_ONLY_DEMO=true`。静态页面和 `/health` 可以响应；默认运行记录与管理 API 都受鉴权保护，`PUBLIC_HISTORY=true` 仅开放上述已结束历史。使用 HTTPS 反向代理，不把 token 放在 URL 中。匿名展示可以选择已结束真实历史或合成只读 Demo。
+`API_TOKEN` 保留为内部管理 API 的 Bearer 凭证，Compose 管理脚本从容器环境读取。无令牌写请求被拒绝，错误令牌返回 401。公网 Nginx 模板只允许 GET/HEAD，管理请求从服务器本机或容器内执行，不经过公共域名。内部完整查询和写入权限不改变网站只读定位。
+
+非 loopback 监听必须配置至少 24 字符的 `API_TOKEN`，或开启 `READ_ONLY_DEMO=true`。静态页面和 `/health` 可以响应；未启用 `PUBLIC_HISTORY` 且配置了令牌时，匿名访问受保护 API 返回 401，网页不能通过输入令牌解锁。需要公开展示时启用真实观战模式，或使用下面的合成只读 Demo。
 
 ```sh
 npm run build
@@ -282,7 +284,7 @@ sh scripts/manage.sh backup
 
 宿主端口默认只绑定 loopback，外部访问通过 HTTPS 反向代理。秘密在容器启动时注入；`.dockerignore` 排除 `.env` 与本地运行数据，凭据不进入镜像。`jev-card-agent-data` 命名卷保存数据库，启动、重启和更新均保留该卷。
 
-默认应用启动后从控制台显式开启 Bot；需要重启后自动恢复参赛时，在 `.env` 设置 `AUTO_START_BOT=true`。无凭据只读演示可在独立部署环境设置 `READ_ONLY_DEMO=true`、`DEMO_DATABASE_PATH=/app/data/demo.sqlite`，沿用同一管理入口；不要让 Demo 和真实服务同时占用同一宿主端口或共用数据库。
+正式观战部署在 `.env` 设置 `PUBLIC_HISTORY=true`、`AUTO_START_BOT=true`，后台在服务启动后自动参赛。无凭据只读演示可在独立部署环境设置 `READ_ONLY_DEMO=true`、`DEMO_DATABASE_PATH=/app/data/demo.sqlite`，沿用同一管理入口；不要让 Demo 和真实服务同时占用同一宿主端口或共用数据库。
 
 GitHub Actions 在检查通过后无缓存构建并自动发布镜像，服务器更新始终由操作者手动执行 `update`。健康检查失败不会自动拉取新镜像。完整配置与域名接入见[服务器部署手册](deployment.md)。
 

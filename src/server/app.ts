@@ -10,6 +10,8 @@ import { redact } from '../storage/database.js';
 import type { AppConfig } from './config.js';
 import { isLoopback } from './config.js';
 import { Controller, policyFor, ledgerFor } from './controller.js';
+import { publicRuntime } from './spectator.js';
+import { openSpectatorStream } from './spectator-stream.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -54,6 +56,7 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
   app.decorate('controller', controller);
   let evaluating = false;
   const publicViewers = new WeakSet<object>();
+  const streams = new Set<() => void>();
   const completedHand = (id: string) =>
     store.db.prepare("SELECT id FROM hands WHERE id=? AND status='complete'").get(id) !== undefined;
   app.addHook('onRequest', async (request, reply) => {
@@ -110,12 +113,19 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
       .send({ error: error instanceof Error ? error.message : 'Request failed' });
   });
   app.get('/health', () => ({ status: 'ok', service: 'jev-card-agent' }));
+  app.get('/api/live', (_request, reply) => {
+    const close = openSpectatorStream(reply, controller.spectator);
+    if (!reply.raw.destroyed) {
+      streams.add(close);
+      reply.raw.once('close', () => streams.delete(close));
+    }
+  });
   app.get('/api/overview', (request) => {
     const overview = controller.overview();
     if (!publicViewers.has(request)) return overview;
     return redact({
       ...overview,
-      runtime: { ...overview.runtime, table: null, error: null },
+      runtime: publicRuntime(overview.runtime),
       runs: overview.runs.map((run) => ({ ...run, reason: null })),
       recentHands: overview.recentHands.filter((hand) => hand.status === 'complete'),
       capabilities: {
@@ -155,9 +165,22 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
       return reply.code(404).send({ error: 'Decision not found' });
     return publicViewers.has(request) ? redact(result) : result;
   });
-  app.get('/api/evaluations', (request) =>
-    publicViewers.has(request) ? [] : controller.queries.evaluations(),
-  );
+  app.get('/api/evaluations', (request) => {
+    const evaluations = controller.queries.evaluations();
+    if (!publicViewers.has(request)) return evaluations;
+    return redact(
+      evaluations.filter((evaluation) =>
+        evaluation.rows.every((row) =>
+          store.db
+            .prepare(
+              `SELECT d.id FROM decisions d JOIN hands h ON h.id=d.hand_id
+              WHERE d.id=? AND h.status='complete'`,
+            )
+            .get(row.decisionId),
+        ),
+      ),
+    );
+  });
   app.post('/api/runtime/start', async (request) =>
     controller.start(startSchema.parse(request.body ?? {})),
   );
@@ -211,6 +234,10 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
       reply.code(404).send({ error: 'Route not found; run npm run build to serve the console' }),
     );
   }
+  app.addHook('preClose', async () => {
+    for (const close of streams) close();
+    streams.clear();
+  });
   app.addHook('onClose', async () => {
     await controller.close();
     if (!options.store) store.close();

@@ -32,13 +32,11 @@ export function useHistoryPages<T extends HistoryItem>(
 
   const load = useCallback(
     async (append: boolean, refresh = false) => {
-      if (!path || (busy.current && !refresh)) return;
+      if (!path || busy.current) return;
       const requestGeneration = generation.current;
       const requestCursorGeneration = cursorGeneration.current;
-      if (!refresh) {
-        busy.current = true;
-        setLoading(true);
-      }
+      busy.current = true;
+      if (!refresh) setLoading(true);
       setError(null);
       const before = append ? cursor.current : null;
       try {
@@ -65,9 +63,9 @@ export function useHistoryPages<T extends HistoryItem>(
       } catch (reason) {
         if (requestGeneration === generation.current) setError(message(reason));
       } finally {
-        if (requestGeneration === generation.current && !refresh) {
+        if (requestGeneration === generation.current) {
           busy.current = false;
-          setLoading(false);
+          if (!refresh) setLoading(false);
         }
       }
     },

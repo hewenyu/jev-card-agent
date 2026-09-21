@@ -20,6 +20,7 @@ chmod 600 .env
 ```dotenv
 BIND_ADDRESS=127.0.0.1
 CONSOLE_PORT=8787
+PUBLIC_HISTORY=true
 AUTO_START_BOT=true
 BOT_STRATEGY=jev-reasoning
 REASONING_API_FORMAT=messages
@@ -28,14 +29,14 @@ REASONING_TIMEOUT_MS=30000
 HYBRID_TIMEOUT_MS=40000
 ```
 
-`BIND_ADDRESS` 决定宿主机监听地址。默认仅本机；也可设为服务器的私有 VPN 地址，在同一网络内访问。公网访问应在认证控制台前配置 HTTPS 反向代理。镜像中的应用监听 `0.0.0.0:8787`，SQLite 位于专用持久卷。
+`BIND_ADDRESS` 决定宿主机监听地址。默认仅本机；也可设为服务器的私有 VPN 地址，在同一网络内访问。公开只读网站通过 HTTPS 反向代理提供访问。镜像中的应用监听 `0.0.0.0:8787`，SQLite 位于专用持久卷。
 
 ```sh
 sh scripts/manage.sh start
 sh scripts/manage.sh status
 ```
 
-`AUTO_START_BOT=true` 会在服务启动后自动连接并参赛，关闭后只启动控制台。首次开启前停止同账号的其他 Bot；数据库租约只协调同一持久数据库。控制台 Access settings 使用 `API_TOKEN`，不是供应商 API Key。
+`AUTO_START_BOT=true` 会在服务启动后自动连接并参赛，关闭后只启动展示服务。首次开启前停止同账号的其他 Bot；数据库租约只协调同一持久数据库。`API_TOKEN` 仅用于服务器内部管理 API，由 Compose 排空脚本从容器环境读取；网页不接收或发送此令牌。`PUBLIC_HISTORY=true` 开放匿名实时观战和已结束历史。
 
 默认镜像为 `hewenyulucky/jev-card-agent:latest`。`start` 在本地缺少镜像时自动拉取；已有镜像时不会主动更新，正在运行的服务也不通过 `start` 替换。
 
@@ -83,9 +84,11 @@ BIND_ADDRESS=127.0.0.1
 PUBLIC_HISTORY=true
 ```
 
-公开访问只读已结束的牌局历史；匿名请求不返回进行中的底牌或管理能力。管理者在 HTTPS 页面 Access settings 中输入独立 `API_TOKEN`。原始 SQLite 和原始 turn token 不公开下载；公开 API 对完整已结束牌局的协议事件和决策快照进行凭据脱敏。
+公开网站匿名展示实时公共牌、座位、筹码、底池和行动流，使用 SSE 自动更新并重连。当前私有底牌、合法行动授权和未完成决策保留在后台；已结束牌局提供完整已记录的脱敏历史与决策复盘。原始 SQLite 和原始 turn token 不公开下载。Jev、推理模型、密钥与自动运行配置都由后端管理，页面只执行读取。
 
-仓库提供实际使用的 [Nginx 配置](../deploy/nginx.conf)，其中仅有公开域名和本机反代地址。复制到其他服务器前将域名及证书路径替换成自己的，并先通过仅监听 80 端口的 ACME webroot 站点申请证书。证书存在后安装完整配置：
+HTTPS 代理的 `location /` 使用 `limit_except GET { deny all; }`，允许 GET 及隐含允许的 HEAD，拒绝公网管理写请求，即使携带有效内部令牌也不会放行。`proxy_buffering off` 使 SSE 及时到达浏览器；`GET /api/live` 发送 `snapshot` 事件，后端每 15 秒发送注释心跳，代理读超时维持 60 秒。Compose 管理脚本从容器内访问受保护 API，不经过公网代理，因此仍可安全排空和更新。
+
+仓库提供 [Nginx 配置模板](../deploy/nginx.conf)，其中仅有公开域名和本机反代地址。复制到其他服务器前将域名及证书路径替换成自己的，并先通过仅监听 80 端口的 ACME webroot 站点申请证书。证书存在后安装完整配置：
 
 ```sh
 sudo install -m 644 deploy/nginx.conf /etc/nginx/sites-available/openpoker.zve.ccwu.cc
@@ -111,4 +114,4 @@ sudo certbot renew --cert-name openpoker.zve.ccwu.cc --dry-run
 curl --head https://openpoker.zve.ccwu.cc/health
 ```
 
-TLS 与应用健康分别验收：证书和跳转正常时，后端尚未启动仍可能返回 502；容器启动后 `/health` 应返回 200，公开历史与管理员权限还需通过应用 API 单独检查。原始证书私钥、SSH 配置和服务器地址不进入公开仓库。
+TLS 与应用健康分别验收：证书和跳转正常时，后端尚未启动仍可能返回 502；容器启动后 `/health` 应返回 200，匿名实时流、已结束历史可读，以及公网写请求被拒绝还需单独检查。内部管理能力通过服务器本机入口检查。原始证书私钥、SSH 配置和服务器地址不进入公开仓库。

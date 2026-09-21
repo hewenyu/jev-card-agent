@@ -1,153 +1,64 @@
 import { useEffect, useState } from 'react';
-import type { EvaluationView, RunSummary, StrategyName } from '../../../src/shared/api';
+import type { EvaluationView } from '../../../src/shared/api';
 import { api, dollars, message, number, policyLabel, time } from '../api';
-import { Empty, ErrorNotice, Panel, SourceBadge, Status } from '../components/UI';
+import { Empty, ErrorNotice, Panel, Status } from '../components/UI';
 
-export function Experiments({
-  runs,
-  selectedRunId,
-  canControl,
-  jevConfigured,
-  reasoningConfigured,
-  openDecision,
-}: {
-  runs: RunSummary[];
-  selectedRunId: string;
-  canControl: boolean;
-  jevConfigured: boolean;
-  reasoningConfigured: boolean;
-  openDecision: (decisionId: string) => void;
-}) {
+export function Experiments({ openDecision }: { openDecision: (decisionId: string) => void }) {
   const [evaluations, setEvaluations] = useState<EvaluationView[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [strategy, setStrategy] = useState<StrategyName>('baseline');
-  const [limit, setLimit] = useState('20');
-  const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    void api<EvaluationView[]>('/evaluations')
-      .then((items) => {
-        if (active) {
-          setEvaluations(items);
-          setSelected(items[0]?.id ?? null);
-        }
-      })
-      .catch((reason: unknown) => {
+    let pending = false;
+    const refresh = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const items = await api<EvaluationView[]>('/evaluations');
+        if (!active) return;
+        setEvaluations(items);
+        setSelected((current) =>
+          items.some((item) => item.id === current) ? current : (items[0]?.id ?? null),
+        );
+        setError(null);
+      } catch (reason) {
         if (active) setError(message(reason));
-      })
-      .finally(() => {
+      } finally {
+        pending = false;
         if (active) setLoading(false);
-      });
+      }
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 3000);
+    const onFocus = () => void refresh();
+    window.addEventListener('focus', onFocus);
     return () => {
       active = false;
+      clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
     };
   }, []);
   const result = evaluations.find((item) => item.id === selected);
-  const run = runs.find((item) => item.id === selectedRunId);
-  async function evaluate() {
-    setBusy(true);
-    setError(null);
-    try {
-      const value = await api<EvaluationView>('/evaluations', {
-        runId: selectedRunId,
-        strategy,
-        limit: Number(limit),
-      });
-      setEvaluations((items) => [value, ...items.filter((item) => item.id !== value.id)]);
-      setSelected(value.id);
-    } catch (reason) {
-      setError(message(reason));
-    } finally {
-      setBusy(false);
-    }
-  }
   return (
     <>
       <div className="page-heading">
         <div>
           <p className="eyebrow">COMPARE CHOICES, NOT COUNTERFACTUAL PROFITS</p>
-          <h1>Put decisions to the test.</h1>
+          <h1>The choices, compared.</h1>
           <p className="subtle">
-            Re-run frozen inputs against another policy. Keep the original evidence intact.
+            Explore recorded evaluations of different policies on the same historical decisions.
           </p>
         </div>
       </div>
       <ErrorNotice error={error} />
-      <Panel title="New comparison" eyebrow="DECISION REPLAY">
-        <form
-          className="experiment-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void evaluate();
-          }}
-        >
-          <div className="experiment-source">
-            <span className="field-label">Source run</span>
-            <strong>{run ? run.id.slice(0, 24) : 'Select a run in the header'}</strong>
-            {run && <SourceBadge mode={run.mode} />}
-          </div>
-          <label className="field">
-            Compare against
-            <select
-              value={strategy}
-              onChange={(event) => setStrategy(event.target.value as StrategyName)}
-            >
-              <option value="baseline">Rule baseline · local</option>
-              <option value="jev" disabled={!jevConfigured}>
-                Jev Choice · paid API
-              </option>
-              {reasoningConfigured && (
-                <option value="jev-reasoning" disabled={!jevConfigured}>
-                  Jev + reasoning · paid APIs
-                </option>
-              )}
-            </select>
-          </label>
-          <label className="field">
-            Sample limit
-            <input
-              type="number"
-              min="1"
-              max="100"
-              value={limit}
-              required
-              onChange={(event) => setLimit(event.target.value)}
-            />
-          </label>
-          <button
-            className="button primary"
-            type="submit"
-            disabled={
-              busy ||
-              !run ||
-              !canControl ||
-              run.decisions === 0 ||
-              (strategy !== 'baseline' && !jevConfigured) ||
-              (strategy === 'jev-reasoning' && !reasoningConfigured)
-            }
-          >
-            {busy ? 'Evaluating…' : 'Run comparison'}
-          </button>
-        </form>
-        <p className="annotation experiment-note">
-          {strategy === 'baseline'
-            ? 'Baseline replay runs locally and makes no paid API calls.'
-            : strategy === 'jev-reasoning'
-              ? 'Jev requests reasoning only when needed, then reconsiders the legal choice. Both providers are metered.'
-              : 'Jev replay makes paid API requests within the server’s evaluation budget.'}{' '}
-          Alternative actions change future play; this comparison does not estimate alternative
-          profits.
-        </p>
-      </Panel>
       <div className="experiments-grid">
         <Panel title="Evaluation history" eyebrow="IMMUTABLE INPUTS">
           {loading ? (
             <div className="loading-state">Loading evaluations…</div>
           ) : !evaluations.length ? (
-            <Empty title="Your first comparison awaits">
-              Run a baseline comparison to inspect where the policies agree.
+            <Empty title="No evaluations published yet">
+              Completed comparisons will appear here when they are available.
             </Empty>
           ) : (
             <div className="evaluation-list">
@@ -200,7 +111,7 @@ export function Experiments({
               </div>
               <p className="annotation evaluation-note">
                 Mean response: {number(result.meanLatencyMs)} ms. Agreement measures consistency
-                between policies, not correctness.
+                between policies, not correctness. Alternative choices do not have measured profits.
               </p>
               <div className="table-scroll">
                 <table className="data-table">

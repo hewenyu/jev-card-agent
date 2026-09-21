@@ -119,21 +119,21 @@ test('public completed history pages to older hands and runs with retry and isol
   await expect(page.getByLabel('Selected run')).toHaveValue(runs[100]!.id);
   await expect(page.locator('.hand-item')).toHaveCount(1);
   await page.getByRole('link', { name: 'Live table' }).click();
-  await expect(page.getByRole('button', { name: 'Start live run', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Start live run', exact: true })).toHaveCount(0);
 });
 
-test('changing runs ignores an old response and removing access clears private history', async ({
+test('changing public runs ignores a delayed response and never sends a legacy token', async ({
   page,
 }) => {
   const original = (await (await page.request.get('/api/overview')).json()) as Overview;
-  const privateRun = { ...original.runs[0]!, id: 'private-active-run', status: 'running' };
+  const firstRun = { ...original.runs[0]!, id: 'public-first-run', status: 'running' };
   const publicRun = { ...original.runs[0]!, id: 'public-ended-run', status: 'stopped' };
-  const privateHand = {
+  const firstHand = {
     ...original.recentHands[0]!,
-    id: 'private-active-hand',
-    runId: privateRun.id,
+    id: 'public-first-hand',
+    runId: firstRun.id,
     handNumber: 999,
-    status: 'active',
+    status: 'complete',
   };
   const publicHand = {
     ...original.recentHands[0]!,
@@ -149,33 +149,33 @@ test('changing runs ignores an old response and removing access clears private h
     }
   });
   await page.route('**/api/overview', (route) => {
-    const authenticated = !!route.request().headers().authorization;
+    expect(route.request().headers().authorization).toBeUndefined();
     return route.fulfill({
       json: {
         ...original,
-        runs: authenticated ? [privateRun, publicRun] : [publicRun],
-        recentHands: authenticated ? [privateHand, publicHand] : [publicHand],
-        capabilities: { ...original.capabilities, canControl: authenticated },
+        runs: [firstRun, publicRun],
+        recentHands: [firstHand, publicHand],
+        capabilities: { ...original.capabilities, canControl: false },
         runtime: { ...original.runtime, running: false, table: null },
       },
     });
   });
   await page.route('**/api/runs?*', (route) =>
     route.fulfill({
-      json: route.request().headers().authorization ? [privateRun, publicRun] : [publicRun],
+      json: [firstRun, publicRun],
     }),
   );
-  let releasePrivate!: () => void;
-  const pendingPrivate = new Promise<void>((resolve) => {
-    releasePrivate = resolve;
+  let releaseFirst!: () => void;
+  const pendingFirst = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
   });
-  let privateRequested = false;
+  let firstRequested = false;
   await page.route('**/api/hands?*', async (route) => {
     const runId = new URL(route.request().url()).searchParams.get('runId');
-    if (runId === privateRun.id) {
-      privateRequested = true;
-      await pendingPrivate;
-      await route.fulfill({ json: [privateHand] });
+    if (runId === firstRun.id) {
+      firstRequested = true;
+      await pendingFirst;
+      await route.fulfill({ json: [firstHand] });
     } else {
       await route.fulfill({ json: [publicHand] });
     }
@@ -184,23 +184,18 @@ test('changing runs ignores an old response and removing access clears private h
     route.fulfill({ json: { hand: publicHand, events: [], decisions: [] } }),
   );
   await page.goto('/#replay');
-  await expect.poll(() => privateRequested).toBe(true);
+  await expect.poll(() => firstRequested).toBe(true);
   await page.getByLabel('Selected run').selectOption(publicRun.id);
   await expect(page.locator('.hand-item')).toHaveCount(1);
   const previousFinished = page.waitForResponse((response) =>
-    response.url().includes(`runId=${privateRun.id}`),
+    response.url().includes(`runId=${firstRun.id}`),
   );
-  releasePrivate();
+  releaseFirst();
   await previousFinished;
   await expect(page.locator('.hand-item')).toHaveCount(1);
   await expect(page.locator('.hand-item')).toContainText('Hand #001');
   await expect(page.getByText('Hand #999')).toHaveCount(0);
-  await page.getByRole('button', { name: /Access settings/ }).click();
-  await page.getByLabel('Console access token', { exact: true }).fill('');
-  await page.getByRole('button', { name: 'Save access settings' }).click();
-  await expect(page.getByLabel('Selected run').locator('option')).toHaveCount(1);
   await expect(page.getByLabel('Selected run')).toHaveValue(publicRun.id);
-  await expect(page.locator('option[value="private-active-run"]')).toHaveCount(0);
   await expect(page.locator('.hand-item')).toHaveCount(1);
   expect(await page.evaluate(() => sessionStorage.getItem('jev.console.token'))).toBeNull();
 });

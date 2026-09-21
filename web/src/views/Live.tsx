@@ -1,222 +1,128 @@
-import { useState } from 'react';
-import type { Overview, RuntimeView, StrategyName } from '../../../src/shared/api';
-import { api, message } from '../api';
+import type { RunSummary, RuntimeView, SpectatorEvent } from '../../../src/shared/api';
+import { number, policyLabel, time } from '../api';
+import type { LiveSpectator } from '../live';
 import { PokerTable } from '../components/PokerTable';
-import { ErrorNotice, Panel, SourceBadge, Status } from '../components/UI';
+import { Empty, Panel, SourceBadge, Status } from '../components/UI';
+import './live.css';
 
-export function Live({ data, refresh }: { data: Overview; refresh: () => Promise<void> }) {
-  const [strategy, setStrategy] = useState<StrategyName>('jev');
-  const [maxHands, setMaxHands] = useState('30');
-  const [maxMinutes, setMaxMinutes] = useState('30');
-  const [budget, setBudget] = useState('1');
-  const [autoRebuy, setAutoRebuy] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const runtime = data.runtime;
-  async function control(action: 'start' | 'stop') {
-    setBusy(true);
-    setError(null);
-    try {
-      if (action === 'start')
-        await api<RuntimeView>('/runtime/start', {
-          strategy,
-          buyIn: 2000,
-          maxHands: Number(maxHands),
-          maxMinutes: Number(maxMinutes),
-          budgetUsd: Number(budget),
-          autoRebuy,
-        });
-      else await api<RuntimeView>('/runtime/stop', {});
-      await refresh();
-    } catch (reason) {
-      setError(message(reason));
-    } finally {
-      setBusy(false);
-    }
-  }
-  const canStart =
-    data.capabilities.canControl &&
-    data.capabilities.liveConfigured &&
-    (strategy === 'baseline' || data.capabilities.jevConfigured) &&
-    (strategy !== 'jev-reasoning' || data.capabilities.reasoningConfigured === true);
+function actionLabel(event: SpectatorEvent, runtime: RuntimeView): string {
+  const player = runtime.table?.seats.find((seat) => seat.seat === event.seat);
+  const actor = player?.name ?? (event.seat === undefined ? '' : `Seat ${event.seat + 1}`);
+  const action = (event.action ?? event.type).replaceAll('_', ' ');
+  return `${actor} ${action}`.trim();
+}
+
+export function Live({
+  runtime,
+  runs,
+  live,
+}: {
+  runtime: RuntimeView;
+  runs: RunSummary[];
+  live: LiveSpectator;
+}) {
+  const run = runs.find((item) => item.id === runtime.runId);
+  const events =
+    live.snapshot?.runtime.runId === runtime.runId
+      ? live.snapshot.recentEvents.filter(
+          (event) =>
+            event.tableId === runtime.table?.tableId && event.handId === runtime.table?.handId,
+        )
+      : [];
   return (
     <>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">CONNECTED TO THE ARENA</p>
+          <p className="eyebrow">AUTONOMOUS PLAY · OPEN OBSERVATION</p>
           <h1>The agent’s table.</h1>
           <p className="subtle">
-            Autonomous play, bounded runs, and a clear view of runtime state.
+            Follow each action as it happens. Every completed hand becomes a record.
           </p>
         </div>
-        <SourceBadge
-          mode={runtime.mode === 'live' ? 'live' : runtime.mode === 'demo' ? 'demo' : 'recorded'}
-          active={runtime.running && runtime.mode === 'live'}
-        />
+        <span className={`spectator-connection ${live.status}`} role="status">
+          <i className={`dot ${live.status === 'live' ? 'pulse' : ''}`} />
+          {live.status === 'live'
+            ? 'Live updates connected'
+            : live.status === 'connecting'
+              ? 'Connecting live updates…'
+              : 'Reconnecting live updates…'}
+        </span>
       </div>
-      <ErrorNotice error={error ?? runtime.error} />
-      <div className="live-grid">
+      <div className="spectator-layout">
         <Panel
-          className="table-panel"
-          title={
-            runtime.table?.tableId
-              ? `Table ${runtime.table.tableId.slice(0, 12)}`
-              : 'Waiting for the next hand'
-          }
-          eyebrow="6-MAX · NO-LIMIT HOLD’EM"
+          title="Live table"
+          eyebrow={runtime.mode === 'demo' ? 'RECORDED DEMONSTRATION' : 'OPENPOKER ARENA'}
           action={<Status>{runtime.status}</Status>}
         >
           <PokerTable
             table={runtime.table}
-            label={
-              runtime.mode === 'demo'
-                ? 'DEMO TABLE'
-                : runtime.running
-                  ? 'OPENPOKER ARENA'
-                  : 'NO ACTIVE TABLE'
-            }
+            label={runtime.mode === 'demo' ? 'SYNTHETIC DEMO' : 'LIVE TABLE'}
+            animated={live.status === 'live'}
+            events={events}
+            motionEpoch={`${live.motionEpoch}:${runtime.runId ?? ''}`}
           />
-          <div className="panel-footer">
-            <span className={`legend-dot ${runtime.running ? '' : 'muted-dot'}`} />
-            {runtime.running
-              ? 'Runtime is active. Updates refresh every 3 seconds.'
-              : 'Runtime is idle. Starting a live run enters the real Arena.'}
-          </div>
+          <p className="annotation spectator-note">
+            {runtime.table
+              ? 'Public table view. Private cards and decision details appear in completed hand replays.'
+              : 'The agent is between tables. The next table will appear automatically.'}
+          </p>
         </Panel>
-        <Panel title="Run controls" eyebrow="AUTONOMY WITH LIMITS">
-          <form
-            className="run-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void control('start');
-            }}
-          >
-            <label className="field">
-              Decision policy
-              <select
-                value={strategy}
-                onChange={(event) => setStrategy(event.target.value as StrategyName)}
-                disabled={runtime.running}
-              >
-                <option value="jev">Jev Choice</option>
-                <option value="baseline">Rule baseline</option>
-                {data.capabilities.reasoningConfigured && (
-                  <option value="jev-reasoning">Jev + reasoning</option>
-                )}
-              </select>
-            </label>
-            {strategy === 'jev-reasoning' && (
-              <p className="annotation">
-                Jev decides when to request reasoning, then makes the final legal choice.
-              </p>
-            )}
-            <div className="form-grid">
-              <label className="field">
-                Hand limit
-                <input
-                  type="number"
-                  min="1"
-                  max="10000"
-                  value={maxHands}
-                  onChange={(event) => setMaxHands(event.target.value)}
-                  required
-                  disabled={runtime.running}
-                />
-              </label>
-              <label className="field">
-                Minutes
-                <input
-                  type="number"
-                  min="1"
-                  max="1440"
-                  value={maxMinutes}
-                  onChange={(event) => setMaxMinutes(event.target.value)}
-                  required
-                  disabled={runtime.running}
-                />
-              </label>
+        <Panel title="At the table" eyebrow="THE AGENT">
+          <dl className="key-values">
+            <div>
+              <dt>Policy</dt>
+              <dd>{runtime.strategy ? policyLabel(runtime.strategy) : '—'}</dd>
             </div>
-            <label className="field">
-              Model budget · USD
-              <input
-                type="number"
-                min="0.001"
-                max="9"
-                step="0.001"
-                value={budget}
-                onChange={(event) => setBudget(event.target.value)}
-                required
-                disabled={runtime.running}
-              />
-            </label>
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                checked={autoRebuy}
-                onChange={(event) => setAutoRebuy(event.target.checked)}
-                disabled={runtime.running}
-              />
-              Automatic virtual-chip rebuy
-            </label>
-            <div className="control-note">
-              Buy-in: 2,000 virtual chips. A live run enters OpenPoker and may make paid Jev
-              requests up to its configured limits.
+            <div>
+              <dt>Model</dt>
+              <dd>{runtime.mode === 'demo' ? 'Synthetic demonstration' : (run?.model ?? '—')}</dd>
             </div>
-            {runtime.running ? (
-              <button
-                type="button"
-                className="button danger full-width"
-                disabled={busy || !data.capabilities.canControl}
-                onClick={() => void control('stop')}
-              >
-                {busy ? 'Stopping…' : 'Stop live run'}
-              </button>
-            ) : (
-              <button
-                type="submit"
-                className="button primary full-width"
-                disabled={busy || !canStart}
-              >
-                {busy ? 'Connecting…' : 'Start live run'}
-              </button>
-            )}
-            {!canStart && !runtime.running && (
-              <p className="annotation">
-                {!data.capabilities.canControl
-                  ? 'Console access is required to control the agent.'
-                  : !data.capabilities.liveConfigured
-                    ? 'Configure OPENPOKER_API_KEY on the server to enter the Arena.'
-                    : 'Configure the Jev API key on the server, or select baseline.'}
-              </p>
-            )}
-          </form>
+            <div>
+              <dt>Run</dt>
+              <dd>{runtime.runId ?? 'Waiting'}</dd>
+            </div>
+            <div>
+              <dt>Table</dt>
+              <dd>{runtime.table?.tableId ?? 'Waiting'}</dd>
+            </div>
+            <div>
+              <dt>Hand</dt>
+              <dd>{runtime.table?.handId ?? 'Waiting'}</dd>
+            </div>
+            <div>
+              <dt>Recorded hands</dt>
+              <dd>{number(run?.hands ?? 0)}</dd>
+            </div>
+          </dl>
+          {run && <SourceBadge mode={run.mode} active={runtime.running} />}
+          <p className="annotation spectator-note">
+            The agent plays autonomously. This page follows the game.
+          </p>
         </Panel>
       </div>
-      <Panel title="Runtime contract" eyebrow="WHAT HAPPENS WITHOUT YOU">
-        <div className="runtime-contract">
-          <div>
-            <span>01</span>
-            <h3>Connect & recover</h3>
-            <p>
-              WebSocket V2 carries state. Reconnect and resync restore the latest action authority.
-            </p>
-          </div>
-          <div>
-            <span>02</span>
-            <h3>Decide & validate</h3>
-            <p>
-              Jev chooses from legal candidates. A deadline guard handles expired and failed
-              requests.
-            </p>
-          </div>
-          <div>
-            <span>03</span>
-            <h3>Execute & record</h3>
-            <p>
-              Actions are tracked through acknowledgment. Every hand becomes a replayable record.
-            </p>
-          </div>
-        </div>
+      <Panel title="Table activity" eyebrow="CONFIRMED ACTIONS">
+        {!events.length ? (
+          <Empty title="Waiting for the next action">
+            Public actions will appear here as play continues.
+          </Empty>
+        ) : (
+          <ol className="spectator-feed" aria-label="Public table activity">
+            {[...events].reverse().map((event) => (
+              <li key={event.id}>
+                <time dateTime={event.at}>{time(event.at)}</time>
+                <strong>{actionLabel(event, runtime)}</strong>
+                <span>
+                  {event.movements
+                    .map(
+                      (movement) =>
+                        `${movement.direction === 'to-pot' ? 'To pot' : `To seat ${movement.seat + 1}`} · ${number(movement.amount)} chips`,
+                    )
+                    .join(' / ')}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
       </Panel>
     </>
   );

@@ -1,0 +1,67 @@
+.spectator-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(240px, 1fr);
+  gap: 24px;
+}
+.spectator-layout > .panel {
+  min-width: 0;
+}
+.spectator-layout .key-values {
+  padding: 0 24px;
+}
+.spectator-layout .key-values dd {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.spectator-layout > .panel > .badge {
+  margin: 0 24px;
+}
+.spectator-note {
+  padding: 0 24px 20px;
+}
+.spectator-connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.spectator-connection.live {
+  color: var(--green);
+}
+.spectator-feed {
+  margin: 0;
+  padding: 0 24px 18px;
+  list-style: none;
+}
+.spectator-feed li {
+  display: grid;
+  grid-template-columns: 130px 1fr auto;
+  gap: 16px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.spectator-feed time,
+.spectator-feed li > span {
+  color: var(--muted);
+}
+.spectator-feed strong,
+.spectator-feed li > span {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 1100px) {
+  .spectator-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 620px) {
+  .spectator-feed li {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+
+.spectator-layout .seat-5 {
+  top: 3px;
+}

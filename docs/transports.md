@@ -12,6 +12,20 @@
 
 Bot 主动外连，无需为了接收牌局事件开放公网 webhook。产品控制台的认证和访问端口按部署文档配置。
 
+## 网站实时观战：单向 SSE
+
+网站是公开只读展示端，浏览器通过同源 `GET /api/live` 接收 `text/event-stream`，不持有 OpenPoker、Jev 或内部管理凭据，也不直接连接 Arena。部署使用 `PUBLIC_HISTORY=true` 开放匿名观战及已结束历史；内部管理 API 仍由 `API_TOKEN` 保护，公开反向代理拒绝写请求。此链路是从本项目后端向浏览器推送展示数据，不是 OpenPoker 的 webhook。
+
+每次连接立即发送 `event: snapshot`，其 JSON 数据为 `SpectatorSnapshot { sequence, observedAt, runtime, recentEvents }`。此后 Runtime 状态变化继续推送完整快照，15 秒发送一次 SSE 注释心跳。浏览器使用 EventSource 自动重连，重新取得当前快照；不依赖 Last-Event-ID 补齐历史。首次连接和每次重连只恢复当前桌面，之后按 movement ID 播放新事件，避免把初始快照中的历史动作重复动画。
+
+实时表格只包含公开的公共牌、底池、座位名称、筹码、当前投注、弃牌状态、行动座位及牌局标识。`heroCards` 始终为空数组；当前私有底牌、合法动作授权、turn token、模型上下文、模型调用内容和运行错误不进入 SSE，即使该请求携带有效管理 token 也使用相同公共投影。已结束手牌的脱敏历史由原历史 API 单独提供。
+
+`recentEvents` 最多保留当前 Run、当前桌、当前手牌的 32 个公开事件，包括开始、玩家动作和结算。`ChipMovement` 使用稳定 ID、座位、整数筹码金额及 `to-pot` / `from-pot` 方向。下注金额仅取协议的 `contribution_delta` 或已知的 `stack_before - stack_after`；raise-to 总额不能当作本次投入筹码。结算只使用 `hand_result.payouts` 的 `{seat, amount}` 数组。无法核实的筹码变化不生成动画；桌面状态仍按已验证 Runtime 快照更新。
+
+Runtime 在事件刚到达时尚未更新 reducer，观战模块延后到微任务读取更新后的状态，并忽略旧序列及其他手牌事件。事件 ID 和序列水位防止重复消息或重连后重复动画。浏览器断开后释放订阅和心跳；慢消费者一旦触发 HTTP 写入背压即断开，重连获取最新完整快照，不在服务端累积无界消息队列。
+
+匿名 `GET /api/evaluations` 仅展示所有引用决策都属于已结束手牌的已有评估；含进行中或缺失决策的整份结果不公开。公开网站不能创建新评估、启动或停止 Bot，也不能触发模型费用。
+
 ## 调研依据
 
 当前公开资料没有列出 OpenPoker 原生 HTTP 行动 webhook、callback URL 注册或异步 job/result 合同。REST 管理 hosted bot 策略和启停，不等于自托管策略可以逐回合通过 HTTP 行动。赛事通知文档描述 email。

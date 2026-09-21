@@ -52,7 +52,8 @@ describe('console API and security boundaries', () => {
       )
       .run('private-routing-turn-token', 'private-routing-authorization', 'demo-jev-hand-1-flop');
     const overview = (await app.inject('/api/overview')).json<Overview>();
-    expect(overview.runtime.table).toBeNull();
+    expect(overview.runtime.table?.heroCards).toEqual([]);
+    expect(overview.runtime.table?.seats).toHaveLength(6);
     expect(overview.capabilities).toEqual({
       canControl: false,
       liveConfigured: false,
@@ -101,7 +102,7 @@ describe('console API and security boundaries', () => {
         })
       ).statusCode,
     ).toBe(200);
-    expect((await app.inject('/api/evaluations')).json()).toEqual([]);
+    expect((await app.inject('/api/evaluations')).json<EvaluationView[]>()).toHaveLength(1);
     expect(
       (await app.inject({ url: '/api/evaluations', headers: admin })).json<EvaluationView[]>(),
     ).toHaveLength(1);
@@ -192,7 +193,7 @@ describe('console API and security boundaries', () => {
       .run('demo-jev-hand-4');
     for (const prefix of ['/%61pi', '/a%70i']) {
       const overview = (await app.inject(`${prefix}/overview`)).json<Overview>();
-      expect(overview.runtime.table).toBeNull();
+      expect(overview.runtime.table?.heroCards).toEqual([]);
       expect(overview.capabilities.canControl).toBe(false);
       expect((await app.inject(`${prefix}/hands/demo-jev-hand-4`)).statusCode).toBe(404);
       expect((await app.inject(`${prefix}/decisions/demo-jev-hand-4-flop`)).statusCode).toBe(404);

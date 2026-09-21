@@ -77,6 +77,9 @@ export interface TableView {
   heroCards: string[];
   heroSeat: number | null;
   dealerSeat: number | null;
+  actorSeat?: number | null;
+  stateSeq?: number;
+  complete?: boolean;
   seats: {
     seat: number;
     name: string;
@@ -85,6 +88,33 @@ export interface TableView {
     folded: boolean;
     status: string;
   }[];
+}
+
+export interface ChipMovement {
+  id: string;
+  tableId: string;
+  handId: string;
+  seat: number;
+  amount: number;
+  direction: 'to-pot' | 'from-pot';
+}
+
+export interface SpectatorEvent {
+  id: string;
+  tableId: string;
+  handId: string;
+  at: string;
+  type: string;
+  seat?: number;
+  action?: string;
+  movements: ChipMovement[];
+}
+
+export interface SpectatorSnapshot {
+  sequence: number;
+  observedAt: string;
+  runtime: RuntimeView;
+  recentEvents: SpectatorEvent[];
 }
 
 export interface RuntimeView {

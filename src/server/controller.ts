@@ -13,6 +13,8 @@ import { Budget } from '../storage/budget.js';
 import { seedDemo } from '../storage/demo.js';
 import { json } from '../storage/database.js';
 import type { AppConfig } from './config.js';
+import type { ServerEvent } from '../openpoker/protocol.js';
+import { SpectatorFeed } from './spectator.js';
 
 export interface RunRequest {
   strategy: StrategyName;
@@ -75,12 +77,14 @@ export function policyFor(
 export class Controller {
   readonly queries: Queries;
   readonly budget: Budget;
+  readonly spectator: SpectatorFeed;
   runtime: PokerRuntime | null = null;
   private strategy: StrategyName = 'jev';
   private starting = false;
   private leaseTimer?: ReturnType<typeof setInterval>;
   private controllerError: string | null = null;
   private demoSelected: boolean;
+  private detachSpectator?: () => void;
   constructor(
     readonly config: AppConfig,
     readonly store: Store,
@@ -93,6 +97,7 @@ export class Controller {
         throw new Error('Demo database contains live data; choose a clean demo database');
       seedDemo(store);
     }
+    this.spectator = new SpectatorFeed(this.view());
   }
   async start(request: RunRequest): Promise<RuntimeView> {
     if (this.config.readOnlyDemo || this.config.demo)
@@ -135,6 +140,7 @@ export class Controller {
         wsUrl: this.config.openPokerWsUrl,
         restUrl: this.config.openPokerRestUrl,
       });
+      this.observeRuntime(this.runtime);
       this.runtime.once('stopped', () => this.releaseLease());
       this.leaseTimer = setInterval(() => {
         try {
@@ -228,6 +234,7 @@ export class Controller {
       DELETE FROM runs WHERE mode='demo'; COMMIT;`);
     seedDemo(this.store);
     this.demoSelected = true;
+    this.spectator.update(this.view());
   }
   async close(): Promise<void> {
     if (this.view().running && this.runtime) {
@@ -240,6 +247,42 @@ export class Controller {
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
     this.releaseLease();
+    this.detachSpectator?.();
+    this.spectator.close();
+  }
+  private observeRuntime(runtime: PokerRuntime): void {
+    this.detachSpectator?.();
+    let attached = true;
+    let queued = false;
+    let pending: ServerEvent[] = [];
+    const schedule = () => {
+      if (queued) return;
+      queued = true;
+      // The runtime emits event before applying its reducer; publish the resulting state.
+      queueMicrotask(() => {
+        queued = false;
+        if (!attached || this.runtime !== runtime) return;
+        const events = pending;
+        pending = [];
+        this.spectator.update(this.view(), events);
+      });
+    };
+    const onEvent = (event: ServerEvent) => {
+      if (typeof event.table_seq === 'number' && event.table_seq <= runtime.state.lastTableSeq)
+        return;
+      pending.push(event);
+      pending = pending.slice(-128);
+      schedule();
+    };
+    runtime.on('event', onEvent);
+    runtime.on('status', schedule);
+    this.detachSpectator = () => {
+      attached = false;
+      pending = [];
+      runtime.off('event', onEvent);
+      runtime.off('status', schedule);
+    };
+    this.spectator.update(this.view());
   }
   private releaseLease(): void {
     if (this.leaseTimer) clearInterval(this.leaseTimer);
@@ -257,6 +300,9 @@ function tableView(state: PokerState): TableView {
     heroCards: state.holeCards,
     heroSeat: state.heroSeat,
     dealerSeat: state.dealerSeat,
+    actorSeat: state.actorSeat,
+    stateSeq: state.lastTableSeq,
+    complete: state.complete,
     seats: state.seats.map((seat) => ({
       seat: seat.seat,
       name: seat.name ?? 'Empty seat',

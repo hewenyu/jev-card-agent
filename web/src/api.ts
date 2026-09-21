@@ -1,28 +1,21 @@
-const tokenKey = 'jev.console.token';
-
-export function getToken(): string {
-  return sessionStorage.getItem(tokenKey) ?? '';
+// Retire credentials saved by older versions of the management console.
+try {
+  sessionStorage.removeItem('jev.console.token');
+} catch {
+  // Reading public data also works when browser storage is unavailable.
 }
 
-export function saveToken(value: string): void {
-  if (value.trim()) sessionStorage.setItem(tokenKey, value.trim());
-  else sessionStorage.removeItem(tokenKey);
-}
-
-export async function api<T>(path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
-  const token = getToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+export async function api<T>(path: string): Promise<T> {
   const response = await fetch(`/api${path}`, {
-    method: body === undefined ? 'GET' : 'POST',
-    headers,
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    method: 'GET',
+    signal: AbortSignal.timeout(15_000),
+    credentials: 'omit',
+    headers: { Accept: 'application/json' },
   });
   const data: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     if (response.status === 401)
-      throw new Error('Access requires a console token. Open Access settings to connect.');
+      throw new Error('Public data is temporarily unavailable. Please retry the connection.');
     const detail =
       data && typeof data === 'object' && 'error' in data
         ? String(data.error)

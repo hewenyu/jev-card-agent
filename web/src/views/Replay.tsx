@@ -27,7 +27,7 @@ export function Replay({
   hasMoreHands: boolean;
   loadOlderHands: () => void;
 }) {
-  const [detail, setDetail] = useState<HandDetail | null>(null);
+  const [record, setRecord] = useState<HandDetail | null>(null);
   const [cursor, setCursor] = useState(0);
   const [decisionId, setDecisionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,36 +36,64 @@ export function Replay({
   useEffect(() => {
     setFilter('all');
   }, [run?.id]);
-  const handId = hands.find((hand) => hand.id === selectedHand)?.id ?? hands[0]?.id;
+  // Pin the initial choice in parent state so new completed hands do not move the replay.
+  useEffect(() => {
+    if (!selectedHand && hands[0]) selectHand(hands[0].id);
+  }, [hands, selectedHand, selectHand]);
+  const handId = selectedHand ?? hands[0]?.id;
+  const runId = run?.id;
+  const detail = record && record.hand.id === handId && record.hand.runId === runId ? record : null;
   useEffect(() => {
     let active = true;
-    setDetail(null);
+    let pending = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    setRecord(null);
     setError(null);
+    setCursor(0);
     if (!handId) {
       setLoading(false);
       return;
     }
     setLoading(true);
-    void api<HandDetail>(`/hands/${encodeURIComponent(handId)}`)
-      .then((value) => {
+    async function refresh() {
+      if (pending || !active) return;
+      pending = true;
+      clearTimeout(timer);
+      try {
+        const value = await api<HandDetail>(`/hands/${encodeURIComponent(handId!)}`);
         if (!active) return;
-        setDetail(value);
-        setCursor(0);
-        setDecisionId(
-          value.decisions.find((item) => item.id === selectedDecision)?.id ??
-            value.decisions[0]?.id ??
-            null,
+        if (value.hand.id !== handId || value.hand.runId !== runId)
+          throw new Error('The returned hand does not match the selected run.');
+        setRecord(value);
+        setCursor((current) => Math.min(current, Math.max(0, value.events.length - 1)));
+        setDecisionId((current) =>
+          value.decisions.some((item) => item.id === current)
+            ? current
+            : (value.decisions[0]?.id ?? null),
         );
-      })
-      .catch((reason: unknown) => {
+        setError(null);
+      } catch (reason: unknown) {
         if (active) setError(message(reason));
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+      } finally {
+        pending = false;
+        if (active) {
+          setLoading(false);
+          // Schedule after completion: a slow response cannot overlap a newer request.
+          timer = setTimeout(() => void refresh(), 3000);
+        }
+      }
+    }
+    void refresh();
+    const onFocus = () => void refresh();
+    window.addEventListener('focus', onFocus);
     return () => {
+      window.removeEventListener('focus', onFocus);
       active = false;
+      clearTimeout(timer);
     };
+  }, [handId, runId]);
+  useEffect(() => {
+    setDecisionId(selectedDecision);
   }, [handId, selectedDecision]);
   const table = useMemo(() => (detail ? replayTable(detail, cursor) : null), [detail, cursor]);
   const decision = detail?.decisions.find((item) => item.id === decisionId) ?? detail?.decisions[0];
