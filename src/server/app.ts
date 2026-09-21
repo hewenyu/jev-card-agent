@@ -6,6 +6,7 @@ import fastifyStatic from '@fastify/static';
 import { z, ZodError } from 'zod';
 import { evaluateRun } from '../evaluation/service.js';
 import { Store } from '../storage/store.js';
+import { runPerformance } from '../storage/performance.js';
 import { redact } from '../storage/database.js';
 import type { AppConfig } from './config.js';
 import { isLoopback } from './config.js';
@@ -169,6 +170,11 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
       ...query,
       completedOnly: publicViewers.has(request),
     });
+  });
+  app.get('/api/runs/:id/performance', (request, reply) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params);
+    const performance = runPerformance(store, id);
+    return performance ?? reply.code(404).send({ error: 'Run not found' });
   });
   app.get('/api/hands/:id', (request, reply) => {
     const { id } = z.object({ id: z.string() }).parse(request.params);

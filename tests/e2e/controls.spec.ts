@@ -116,11 +116,9 @@ test('390px controls and long recorded details stay inside every public page', a
     });
   });
   await page.goto('/');
-  await expect(
-    page.getByRole('heading', { name: 'Every decision. An open record.' }),
-  ).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Results at a glance.' })).toBeVisible();
   const headings: Record<string, string> = {
-    Overview: 'Every decision. An open record.',
+    Overview: 'Results at a glance.',
     'Live table': 'The agent’s table.',
     'Replay & decisions': 'Replay the evidence.',
     Evaluations: 'The choices, compared.',

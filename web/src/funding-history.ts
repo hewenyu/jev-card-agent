@@ -11,7 +11,7 @@ export interface FundingHistoryState {
 }
 const PAGE_SIZE = 8;
 
-/** One app-level reader shared by Overview and Live, including view switches. */
+/** One app-level reader for Live funding history, retained across view switches. */
 export function useFundingHistory(): FundingHistoryState {
   const [state, setState] = useState<Omit<FundingHistoryState, 'loadMore'>>({
     events: [],

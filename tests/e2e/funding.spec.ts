@@ -78,6 +78,24 @@ async function fixture(page: Page) {
           },
         });
   });
+  await page.route('**/api/runs/*/performance', (route) =>
+    route.fulfill({
+      json: {
+        runId: 'funding-run',
+        settledHands: 1,
+        wonHands: 0,
+        excludedHands: 0,
+        netChips: -450,
+        winRate: 0,
+        score: null,
+        scoreObservedAt: null,
+        profitPoints: [
+          { at: new Date(base).toISOString(), handNumber: 1, settledHands: 1, netChips: -450 },
+        ],
+        scorePoints: [],
+      },
+    }),
+  );
   await page.route('**/api/live/decisions', (route) =>
     route.fulfill({ json: { session: null, decisions: [] } }),
   );
@@ -112,17 +130,14 @@ async function fixture(page: Page) {
   return { state, funding, base, send, focus };
 }
 
-test('account rebuy and seat balances refresh across Overview and Live without conflating profit', async ({
+test('Live balances refresh while Overview keeps account funding separate from profit', async ({
   page,
 }) => {
   const { state, funding, base, send } = await fixture(page);
-  await page.goto('/');
+  await page.goto('/#live');
   await expect(page.getByTestId('account-available')).toHaveText('0');
   await expect(page.getByTestId('seat-stack')).toHaveText('—');
   await expect(page.getByTestId('rebuy-countdown')).toContainText('remaining');
-  await expect(
-    page.locator('.metric').filter({ hasText: 'Net result' }).locator('strong'),
-  ).toHaveText('-450');
   await send(state.runtime);
   state.runtime = {
     ...state.runtime,
@@ -167,6 +182,10 @@ test('account rebuy and seat balances refresh across Overview and Live without c
   await expect(page.getByTestId('seat-stack')).toHaveText('1,500');
   await expect(page.getByTestId('account-at-table')).toHaveText('1,500');
   await page.getByRole('link', { name: 'Overview', exact: true }).click();
+  await expect(page.getByTestId('account-available')).toHaveCount(0);
+  await expect(page.getByTestId('seat-stack')).toHaveCount(0);
+  await expect(page.getByTestId('overview-net')).toHaveText('-450');
+  await page.getByRole('link', { name: 'Live table', exact: true }).click();
   await expect(page.getByTestId('account-available')).toHaveText('0');
   await expect(page.getByTestId('seat-stack')).toHaveText('1,500');
 });
@@ -181,7 +200,7 @@ test('loading and stale accounts stay explicit and old funding frames cannot ove
     status: 'loading',
     updatedAt: null,
   });
-  await page.goto('/');
+  await page.goto('/#live');
   await expect(page.getByTestId('account-available')).toHaveText('—');
   await expect(page.getByText('Loading account', { exact: true })).toBeVisible();
   state.runtime.funding = funding({
@@ -221,7 +240,7 @@ test('funding details fit a mobile viewport and an elapsed cooldown does not inv
     updatedAt: new Date(base - 60_000).toISOString(),
   });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
+  await page.goto('/#live');
   await expect(page.getByTestId('rebuy-countdown')).toHaveText(
     'Window elapsed · awaiting confirmation',
   );
@@ -255,11 +274,13 @@ test('funding history shares one reader across views and separates rebuy observa
     rebuyAvailableAt: new Date(base + 120_000).toISOString(),
   };
   state.events = [scheduled];
-  await page.goto('/');
+  await page.goto('/#live');
   const history = page.getByRole('region', { name: 'Funding history' });
   await expect(history.getByText('Rebuy scheduled', { exact: true })).toBeVisible();
   await expect(history).toContainText('Account available — → — chips');
   const reads = state.eventRequests;
+  await page.getByRole('link', { name: 'Overview', exact: true }).click();
+  await expect(history).toHaveCount(0);
   await page.getByRole('link', { name: 'Live table', exact: true }).click();
   await expect(history.getByText('Rebuy scheduled', { exact: true })).toBeVisible();
   expect(state.eventRequests).toBe(reads);
@@ -305,7 +326,7 @@ test('older funding records remain accessible after automatic refresh', async ({
     chipsAtTable: null,
     rebuyAvailableAt: null,
   }));
-  await page.goto('/');
+  await page.goto('/#live');
   const history = page.getByRole('region', { name: 'Funding history' });
   await expect(history.locator('li')).toHaveCount(8);
   await history.getByRole('button', { name: 'Load older funding events' }).click();
@@ -321,6 +342,8 @@ test('older funding records remain accessible after automatic refresh', async ({
   await focus();
   await expect(history.locator('li')).toHaveCount(13);
   await expect(history).toContainText('Account available 11 → 12 chips');
+  await page.getByRole('link', { name: 'Overview', exact: true }).click();
+  await expect(history).toHaveCount(0);
   await page.getByRole('link', { name: 'Live table', exact: true }).click();
   await expect(history.locator('li')).toHaveCount(13);
 });

@@ -31,17 +31,13 @@ test('public site supports overview, historical replay, and recorded evaluation 
     }),
   );
   await page.goto('/');
-  await expect(
-    page.getByRole('heading', { name: 'Every decision. An open record.' }),
-  ).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Results at a glance.' })).toBeVisible();
   await expect(page.getByLabel('Selected run')).toHaveValue(/demo/);
+  await expect(page.locator('.topbar .source-demo')).toContainText('Demo');
   await expect(
-    page.getByText('Selected run only. Demo results never count as Arena results.'),
+    page.getByText('Selected run · full recorded history · automatically refreshed'),
   ).toBeVisible();
-  await page
-    .getByRole('button', { name: /Replay hand/ })
-    .first()
-    .click();
+  await page.getByRole('link', { name: 'Replay & decisions', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Replay the evidence.' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Decision trace' })).toBeVisible();
   const slider = page.getByRole('slider', { name: 'Replay event' });
@@ -130,9 +126,7 @@ test('mobile console keeps navigation and replay usable without horizontal overf
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
-  await expect(
-    page.getByRole('heading', { name: 'Every decision. An open record.' }),
-  ).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Results at a glance.' })).toBeVisible();
   await page.getByRole('link', { name: 'Replay & decisions' }).click();
   await expect(page.getByRole('heading', { name: 'Decision trace' })).toBeVisible();
   const widths = await page.evaluate(() => ({
@@ -191,6 +185,22 @@ test('public replay displays reasoning provider provenance and failures', async 
 test('unverified ended hands do not appear as zero profit or inflate the displayed metric sample', async ({
   page,
 }) => {
+  await page.route('**/api/runs/*/performance', (route) =>
+    route.fulfill({
+      json: {
+        runId: decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-2)!),
+        settledHands: 0,
+        wonHands: 0,
+        excludedHands: 1,
+        netChips: 0,
+        winRate: null,
+        score: null,
+        scoreObservedAt: null,
+        profitPoints: [],
+        scorePoints: [],
+      },
+    }),
+  );
   await page.route('**/api/overview', async (route) => {
     const response = await route.fetch();
     const data = await response.json();
@@ -224,7 +234,7 @@ test('unverified ended hands do not appear as zero profit or inflate the display
   const net = page.locator('.metric').filter({ hasText: 'Net result' });
   await expect(net.locator('strong')).toHaveText('—');
   await expect(page.getByText('0 verified · 1 excluded')).toBeVisible();
-  await expect(page.getByRole('cell', { name: 'Unverified', exact: true })).toBeVisible();
+  await expect(page.getByRole('table')).toHaveCount(0);
   await page.getByRole('link', { name: 'Replay & decisions' }).click();
   await expect(page.locator('.hand-item').getByText('Unverified', { exact: true })).toBeVisible();
 });

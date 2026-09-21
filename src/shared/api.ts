@@ -1,6 +1,19 @@
 export type RunMode = 'demo' | 'live' | 'evaluation';
 export type StrategyName = 'jev' | 'baseline' | 'jev-reasoning';
 
+export interface PerformanceView {
+  runId: string;
+  settledHands: number;
+  wonHands: number;
+  excludedHands: number;
+  netChips: number;
+  winRate: number | null;
+  score: number | null;
+  scoreObservedAt: string | null;
+  profitPoints: { at: string; handNumber: number; settledHands: number; netChips: number }[];
+  scorePoints: { at: string; score: number }[];
+}
+
 export interface RunSummary {
   id: string;
   mode: RunMode;

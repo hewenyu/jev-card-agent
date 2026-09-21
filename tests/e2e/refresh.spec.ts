@@ -77,6 +77,30 @@ async function historyFixture(page: Page) {
     }),
   );
   await page.route('**/api/runs?*', (route) => route.fulfill({ json: [currentRun(), otherRun] }));
+  await page.route('**/api/runs/*/performance', (route) => {
+    const current = currentRun();
+    return route.fulfill({
+      json: {
+        runId: current.id,
+        settledHands: current.settledHands,
+        wonHands: current.settledHands,
+        excludedHands: 0,
+        netChips: current.netChips,
+        winRate: 100,
+        score: null,
+        scoreObservedAt: null,
+        profitPoints: [
+          {
+            at: hand.startedAt,
+            handNumber: current.hands,
+            settledHands: current.settledHands,
+            netChips: current.netChips,
+          },
+        ],
+        scorePoints: [],
+      },
+    });
+  });
   await page.route('**/api/hands?*', (route) => {
     const runId = new URL(route.request().url()).searchParams.get('runId');
     return route.fulfill({

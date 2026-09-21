@@ -1,0 +1,105 @@
+.results-overview .results-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.results-overview .metric > strong {
+  font-size: clamp(30px, 3.4vw, 48px);
+  margin: 22px 0 14px;
+  overflow-wrap: anywhere;
+}
+.results-panel .panel-header {
+  flex-wrap: wrap;
+  gap: 18px;
+}
+.curve-switch {
+  display: flex;
+  gap: 3px;
+  padding: 4px;
+  background: #101a13;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.curve-switch button {
+  color: #91a18f;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 8px 13px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.curve-switch button[aria-pressed='true'] {
+  color: var(--green);
+  border-color: #445b39;
+  background: #253421;
+}
+.curve-switch button:hover {
+  color: #daeccf;
+}
+.results-chart {
+  margin: 18px 24px 26px;
+}
+.results-chart-body {
+  display: flex;
+  gap: 12px;
+  height: clamp(220px, 25vw, 340px);
+}
+.results-chart-scale {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  text-align: right;
+  min-width: 42px;
+}
+.results-chart-scale,
+.results-chart-dates {
+  font-size: 10px;
+  color: #8f9e8c;
+  font-variant-numeric: tabular-nums;
+}
+.results-chart svg {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  overflow: visible;
+}
+.results-chart-dates {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 16px 0 0 54px;
+}
+.results-chart-dates span:last-child {
+  text-align: right;
+}
+.results-footer {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.results-loading {
+  padding: 90px 24px;
+  color: #91a18f;
+  text-align: center;
+}
+@media (max-width: 760px) {
+  .results-overview .results-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .results-metrics .metric:last-child {
+    grid-column: 1 / -1;
+  }
+  .results-overview .metric > strong {
+    font-size: 32px;
+    margin: 16px 0 10px;
+  }
+  .results-chart {
+    margin: 14px 17px 22px 10px;
+  }
+  .results-chart-body {
+    gap: 8px;
+  }
+  .results-chart-dates {
+    margin-left: 50px;
+    font-size: 9px;
+  }
+}

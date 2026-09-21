@@ -226,19 +226,7 @@ export function App() {
             </Empty>
           ) : (
             <>
-              {view === 'overview' && (
-                <Overview
-                  runtime={displayData.runtime}
-                  fundingHistory={fundingHistory}
-                  run={run}
-                  hands={hands}
-                  openHand={openHand}
-                  navigate={navigate}
-                  historyLoading={handPages.loading}
-                  historyError={handPages.error}
-                  retryHistory={() => void handPages.loadMore()}
-                />
-              )}
+              {view === 'overview' && <Overview run={run} revision={revision} />}
               {view === 'live' && (
                 <Live
                   runtime={displayData.runtime}

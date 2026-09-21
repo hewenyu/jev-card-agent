@@ -27,26 +27,18 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('mobile overview keeps the wide history table inside its own scroll area', async ({
-  page,
-}) => {
+test('mobile overview keeps statistics and its curve within the viewport', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('button', { name: /Replay hand/ }).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Results at a glance.' })).toBeVisible();
+  await expect(page.locator('.metric')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: 'Net profit', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Replay hand/ })).toHaveCount(0);
   const dimensions = await page.evaluate(() => ({
     document: document.documentElement.scrollWidth,
     viewport: window.innerWidth,
-    table: document.querySelector('.table-scroll')!.scrollWidth,
-    container: document.querySelector('.table-scroll')!.clientWidth,
   }));
-  expect(dimensions.table).toBeGreaterThan(dimensions.container);
   expect(dimensions.document).toBeLessThanOrEqual(dimensions.viewport);
-  await page.locator('.table-scroll').evaluate((element) => {
-    element.scrollLeft = element.scrollWidth;
-  });
-  await page
-    .getByRole('button', { name: /Replay hand/ })
-    .first()
-    .click();
+  await page.getByRole('link', { name: 'Replay & decisions', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Decision trace' })).toBeVisible();
 });
 

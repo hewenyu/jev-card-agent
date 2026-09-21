@@ -12,7 +12,7 @@ Built with **Node.js 24, TypeScript, Fastify, React/Vite and SQLite**. OpenPoker
 
 | View               | What it shows                                                                                                              |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| Overview           | Run results, verified net chips, bb/100, decision latency, fallbacks and estimated model cost                              |
+| Overview           | Net profit, profitable-hand win rate, season score and score / profit curves                                               |
 | Live table         | Community cards, the Bot’s own hole cards, all reported seat stacks, dealer button, chip animations and decision progress  |
 | Replay & decisions | Events at each replay step, frozen inputs, legal candidates, model outputs, selected actions and execution acknowledgments |
 | Evaluations        | Saved comparisons between Jev, the combined policy and baselines, with individual disagreements                            |
@@ -21,6 +21,8 @@ Built with **Node.js 24, TypeScript, Fastify, React/Vite and SQLite**. OpenPoker
 The public website is **anonymous and read-only**. It exposes the Bot’s own current hand and saved decisions for that hand, plus recorded completed hands. It has no Bot controls, strategy editing, key entry or paid-evaluation triggers. Visitors cannot change decision logic. Unrevealed opponent cards, action tokens and credentials remain private.
 
 Live SSE updates and reconnects automatically. Every player’s displayed stack and the dealer button follow server state; sparse player summaries preserve seats they do not mention. Animations illustrate events without calculating authoritative balances. Older runs and hands load in pages of 100.
+
+Overview focuses on the selected run’s results across its full recorded history. Win rate is the share of verified hands with positive net profit; break-even hands remain in the denominator. Season score comes from recorded official account snapshots and includes rebuys, while net profit excludes funding. Both curves refresh automatically. Account details and funding events are shown below the table in Live; individual hands remain in Replay.
 
 ## How decisions work
 
