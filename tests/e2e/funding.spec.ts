@@ -137,6 +137,7 @@ test('Live balances refresh while Overview keeps account funding separate from p
   await page.goto('/#live');
   await expect(page.getByTestId('account-available')).toHaveText('0');
   await expect(page.getByTestId('seat-stack')).toHaveText('—');
+  await expect(page.getByTestId('seat-bet')).toHaveText('—');
   await expect(page.getByTestId('rebuy-countdown')).toContainText('remaining');
   await send(state.runtime);
   state.runtime = {
@@ -174,20 +175,26 @@ test('Live balances refresh while Overview keeps account funding separate from p
       heroSeat: 0,
       dealerSeat: 0,
       stateSeq: 2,
-      seats: [{ seat: 0, name: 'Jev', stack: 1500, bet: 0, folded: false, status: 'active' }],
+      seats: [{ seat: 0, name: 'Jev', stack: 1450, bet: 50, folded: false, status: 'active' }],
     },
   };
   await send(state.runtime);
   await expect(page.getByTestId('account-available')).toHaveText('0');
-  await expect(page.getByTestId('seat-stack')).toHaveText('1,500');
+  await expect(page.getByTestId('seat-stack')).toHaveText('1,450');
+  await expect(page.getByTestId('seat-bet')).toHaveText('50');
   await expect(page.getByTestId('account-at-table')).toHaveText('1,500');
+  await expect(page.locator('.funding-balances > div')).toHaveCount(4);
+  await expect(page.locator('.funding-balances')).toContainText('Available to bet');
+  await expect(page.locator('.funding-balances')).toContainText('Current street bet');
   await page.getByRole('link', { name: 'Overview', exact: true }).click();
   await expect(page.getByTestId('account-available')).toHaveCount(0);
   await expect(page.getByTestId('seat-stack')).toHaveCount(0);
+  await expect(page.getByTestId('seat-bet')).toHaveCount(0);
   await expect(page.getByTestId('overview-net')).toHaveText('-450');
   await page.getByRole('link', { name: 'Live table', exact: true }).click();
   await expect(page.getByTestId('account-available')).toHaveText('0');
-  await expect(page.getByTestId('seat-stack')).toHaveText('1,500');
+  await expect(page.getByTestId('seat-stack')).toHaveText('1,450');
+  await expect(page.getByTestId('seat-bet')).toHaveText('50');
 });
 
 test('loading and stale accounts stay explicit and old funding frames cannot overwrite newer reconciliation', async ({

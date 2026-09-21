@@ -83,7 +83,13 @@ export function HandSession({ runtime }: { runtime: RuntimeView }) {
   return (
     <Panel
       title="Hand session"
-      eyebrow="REASONING → JEV → ACTION"
+      eyebrow={
+        runtime.strategy === 'jev-reasoning'
+          ? 'REASONING → JEV → ACTION'
+          : runtime.strategy === 'jev'
+            ? 'JEV → ACTION'
+            : 'BASELINE → ACTION'
+      }
       className="hand-session-panel"
       action={
         <Status>
@@ -121,8 +127,7 @@ export function HandSession({ runtime }: { runtime: RuntimeView }) {
               : 'No decisions recorded for this hand yet'
           }
         >
-          Saved analysis and Jev choices appear automatically. Text is shown only after it has been
-          recorded.
+          Saved decisions appear automatically. Text is shown only after it has been recorded.
         </Empty>
       ) : (
         <>

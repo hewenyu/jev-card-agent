@@ -72,27 +72,38 @@ export function AccountFunding({
               Account available <small>CHIPS</small>
             </dt>
             <dd data-testid="account-available">{chips(funding?.availableChips)}</dd>
-            <p>{stale ? 'Last confirmed available chips' : 'Available for the next buy-in'}</p>
+            <p>
+              {stale
+                ? 'Last confirmed available chips'
+                : 'Off-table balance · ready for the next buy-in'}
+            </p>
           </div>
           <div>
             <dt>
-              Seat stack <small>CHIPS</small>
+              Available to bet <small>CHIPS</small>
             </dt>
             <dd data-testid="seat-stack">{chips(hero?.stack)}</dd>
             <p>
               {hero
                 ? runtime.mode === 'demo'
                   ? 'Synthetic table snapshot'
-                  : 'Current table · updates with play'
+                  : 'Seat balance · excludes the current bet'
                 : 'No current seat reported'}
             </p>
+          </div>
+          <div>
+            <dt>
+              Current street bet <small>CHIPS</small>
+            </dt>
+            <dd data-testid="seat-bet">{chips(hero?.bet)}</dd>
+            <p>Already committed · included in the pot</p>
           </div>
           <div>
             <dt>
               Account at table <small>CHIPS</small>
             </dt>
             <dd data-testid="account-at-table">{chips(funding?.chipsAtTable)}</dd>
-            <p>Account-reported snapshot · refreshed separately</p>
+            <p>Official account snapshot · may lag live play</p>
           </div>
         </dl>
         <dl className="funding-details">

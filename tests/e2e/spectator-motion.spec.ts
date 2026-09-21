@@ -375,7 +375,8 @@ test('all six seat balances follow server snapshots through actions, settlement 
     });
     await expect(page.locator('[data-movement-id="visual-call-7"]')).toBeVisible();
     await stacks([2100, 2200, 2300, 2175, 2500, 2600]);
-    await expect(page.locator('.seat-3 .seat-bet')).toHaveText('225');
+    await expect(page.locator('.seat-3 .seat-bet')).toHaveText('Bet 225');
+    await expect(page.locator('.seat-3 .seat-bet strong')).toHaveText('225');
     const finalStacks = [2050, 2150, 2270, 2125, 2850, 2505];
     source.send({
       ...source.current,
@@ -402,7 +403,11 @@ test('all six seat balances follow server snapshots through actions, settlement 
     });
     await expect(page.locator('[data-movement-id="visual-award-11"]')).toBeVisible();
     await stacks(finalStacks);
-    await expect(page.locator('.seat-bet')).toHaveCount(0);
+    await expect(page.locator('.seat-bet')).toHaveCount(6);
+    for (const bet of await page.locator('.seat-bet').all()) {
+      await expect(bet).toHaveText('Bet 0');
+    }
+    await expect(page.locator('.pot > span')).toHaveText('SETTLED POT');
     await expect(page.locator('.chip-flight')).toHaveCount(0);
     await stacks(finalStacks);
     source.send({
@@ -419,6 +424,7 @@ test('all six seat balances follow server snapshots through actions, settlement 
     });
     await stacks([2050, 2150, 2270, 2125, null, 2505]);
     await expect(page.locator('.seat-4 .seat-info')).not.toContainText('Bot 5');
+    await expect(page.locator('.seat-4 .seat-bet')).toHaveCount(0);
     source.send({
       ...source.current,
       sequence: 5,

@@ -64,6 +64,9 @@ describe('all players use authoritative server chip values', () => {
       payouts: [{ seat: 3, amount: 9999 }],
     });
     expect(state.seats.map((seat) => seat.stack)).toEqual(Object.values(finalStacks));
+    expect(state.seats.every((seat) => seat.bet === 0)).toBe(true);
+    expect(state.complete).toBe(true);
+    expect(state.pot).toBe(1400);
     expect(reduceMessage(state, { type: 'table_state', table_seq: 11, seats: table().seats })).toBe(
       state,
     );
@@ -73,6 +76,41 @@ describe('all players use authoritative server chip values', () => {
       snapshot: { seats: table().seats },
     };
     expect(reduceMessage(state, oldSnapshot)).toBe(state);
+  });
+
+  it('clears previous-street bets before merging a new-street turn summary', () => {
+    const before = table();
+    const state = reduceMessage(before, {
+      type: 'your_turn',
+      table_seq: 11,
+      community_cards: ['Ah', 'Kd', '2c'],
+      players: [
+        { seat: 0, stack: 975 },
+        { seat: 4, stack: 1350, bet: 50 },
+      ],
+    });
+    expect(state.street).toBe('flop');
+    expect(state.seats.map((seat) => seat.bet)).toEqual([0, 0, 0, 0, 50, 0]);
+    expect(state.seats[0]?.stack).toBe(975);
+    const sameStreet = reduceMessage(state, {
+      type: 'your_turn',
+      table_seq: 12,
+      community_cards: ['Ah', 'Kd', '2c'],
+      players: [{ seat: 4, stack: 1350 }],
+    });
+    expect(sameStreet.seats[4]?.bet).toBe(50);
+    expect(before.seats[4]?.bet).toBe(40);
+  });
+
+  it.each([
+    [{ total_pot: 500, pot: 450 }, 500],
+    [{ pot: 450 }, 450],
+    [{ total_pot: 0, pot: 450 }, 0],
+  ])('keeps the server settlement pot separate from cleared bets: %j', (fields, expected) => {
+    const state = reduceMessage(table(), { type: 'hand_result', table_seq: 11, ...fields });
+    expect(state.pot).toBe(expected);
+    expect(state.complete).toBe(true);
+    expect(state.seats.every((seat) => seat.bet === 0)).toBe(true);
   });
 
   it('replaces occupancy only on full snapshots and explicit departures, and accepts a new occupant’s server stack', () => {

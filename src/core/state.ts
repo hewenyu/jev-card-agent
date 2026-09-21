@@ -261,6 +261,10 @@ export function reduceMessage(previous: PokerState, message: RawMessage): PokerS
             : board.length === 3
               ? 'flop'
               : 'preflop';
+      const seats =
+        currentStreet === state.street
+          ? state.seats
+          : state.seats.map((seat) => ({ ...seat, bet: 0 }));
       return {
         ...state,
         actorSeat: state.heroSeat,
@@ -270,7 +274,7 @@ export function reduceMessage(previous: PokerState, message: RawMessage): PokerS
         pot: chips(message.pot) ?? state.pot,
         board,
         street: currentStreet,
-        seats: parseSeats(message.players, state.seats, false) ?? state.seats,
+        seats: parseSeats(message.players, seats, false) ?? seats,
       };
     }
     case 'table_state':
@@ -298,10 +302,15 @@ export function reduceMessage(previous: PokerState, message: RawMessage): PokerS
       return {
         ...state,
         complete: true,
+        pot: chips(message.total_pot) ?? chips(message.pot) ?? state.pot,
         turnToken: null,
         validActions: [],
         actorSeat: null,
-        seats: state.seats.map((s) => ({ ...s, stack: chips(stacks[String(s.seat)]) ?? s.stack })),
+        seats: state.seats.map((s) => ({
+          ...s,
+          stack: chips(stacks[String(s.seat)]) ?? s.stack,
+          bet: 0,
+        })),
       };
     }
     case 'player_joined': {

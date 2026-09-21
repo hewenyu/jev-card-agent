@@ -15,30 +15,25 @@ cp -n .env.example .env
 chmod 600 .env
 ```
 
-也可以下载仓库源码后进入解压目录执行后两条命令。已有 `.env` 应保留，不要覆盖。在 `.env` 中填入 OpenPoker、Jev、独立 `DEEPSEEK_API_KEY` 和内部 `API_TOKEN`，保留既有预算账本与限制。所有者已选择 DeepSeek-V4.1-Flash 关闭 thinking 作为本轮部署目标；以下是目标配置，实际上线完成时间与集成证据见[验证报告](verification.md)，不能把配置说明当成上线验收。
+也可以下载仓库源码后进入解压目录执行后两条命令。已有 `.env` 应保留，不要覆盖。在 `.env` 中填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY` 与内部 `API_TOKEN`，保留既有 Jev 超时、预算账本和费用限制。所有者本轮选择纯 Jev 持续收集真实对局数据；以下是目标配置，实际上线完成时间与集成证据见[验证报告](verification.md)，不能把配置说明当成上线验收。
 
 ```dotenv
 BIND_ADDRESS=127.0.0.1
 CONSOLE_PORT=8787
 PUBLIC_HISTORY=true
 AUTO_START_BOT=true
-BOT_STRATEGY=jev-reasoning
-REASONING_MODE=always
-REASONING_PROVIDER=deepseek
-DEEPSEEK_API_BASE_URL=https://api.deepseek.com/anthropic
-DEEPSEEK_MODEL=deepseek-flash
-DEEPSEEK_THINKING=disabled
-REASONING_TIMEOUT_MS=10000
-REASONING_MAX_OUTPUT_TOKENS=4096
-HYBRID_TIMEOUT_MS=40000
-JEV_TIMEOUT_MS=3000
+BOT_STRATEGY=jev
 ```
 
-`REASONING_PROVIDER=deepseek` 选择专用 Messages provider，不读取标准 provider 的凭据作为备用。官方请求 ID 是 `deepseek-flash`，不是自行构造的版本名称。`DEEPSEEK_THINKING=disabled` 显式关闭思考，请求不发送 `output_config.effort`；旧环境即使保留 `REASONING_EFFORT=high` 也不会开启 thinking。`always` 仍表示每次有效决策先请求分析，再由 Jev 选择最终合法行动。
+`BOT_STRATEGY=jev` 让 Jev 根据当前局面与有界上下文直接选择合法行动，不请求 DeepSeek 或其他分析模型。Jev 首次调用后最多重试 3 次，共享当前行动期限与既有预算；不能及时得到合法模型结果时记录本地合法 fallback。此配置不修改 `JEV_TIMEOUT_MS`、`RUN_BUDGET_USD` 或 `TOTAL_BUDGET_USD`。
 
-DeepSeek 分析单次超时 10 秒，首次之后最多重试 3 次；Jev 单次超时 3 秒，同样最多重试 3 次。所有尝试共享 40 秒 Hybrid deadline 和持久费用预算，不保证可以用完全部重试。分析失败时只由 Jev 在剩余时间内继续，必要时采用合法本地 fallback；GPT 与 Claude 不作为自动兜底，也不会因 DeepSeek 失败自动切换 provider。
+`AUTO_START_BOT=true` 在服务就绪后自动开始一个 Run，不限制手数或时长，启用 auto-rebuy。先持续运行数小时收集数据，完整原始牌局和决策保存在同一持久卷；后台不会根据短期输赢自动改写策略。后续复盘和 harness 对照见[评估文档](evaluation.md)。
 
-标准 provider 的 Responses / Messages 支持仍保留用于另行配置的对照实验，其 `REASONING_API_FORMAT`、`REASONING_MODEL`、`REASONING_MESSAGES_MODEL` 在本目标下不决定实际模型。专用配置与保守峰值计费见[接入合同](transports.md#deepseek-messages-专用合同)。关闭思考后返回的分析可以用于 Jev 决策，但不称为 thinking 返回或 high 思考成功。
+### 可选分析模型
+
+只有另行决定开展组合策略实验时，才设置 `BOT_STRATEGY=jev-reasoning` 并配置分析 provider。DeepSeek 需独立 `DEEPSEEK_API_KEY`，使用 `REASONING_PROVIDER=deepseek`、官方地址 `https://api.deepseek.com/anthropic` 与 `DEEPSEEK_MODEL=deepseek-flash`。`DEEPSEEK_THINKING=disabled` 关闭 thinking，也不发送 effort；`REASONING_MODE=always` 表示每次先分析、再由 Jev 选择。分析超时和 Hybrid 总期限应显式按实验配置记录，不套用于纯 Jev。标准 Responses / Messages 适配器同样保留为显式实验选项，不作自动兜底。完整合同见[接入说明](transports.md#deepseek-messages-专用合同)。
+
+### 监听与启动
 
 `BIND_ADDRESS` 决定宿主机监听地址。默认仅本机；也可设为服务器的私有 VPN 地址，在同一网络内访问。公开只读网站通过 HTTPS 反向代理提供访问。镜像中的应用监听 `0.0.0.0:8787`，SQLite 位于专用持久卷。
 
@@ -94,7 +89,9 @@ sh scripts/manage.sh logs
 
 ### 经明确要求开始全新运行
 
-如所有者明确要求清空历史并重新开始，应先完成新镜像验证与发布，等待旧 Bot 当前手牌结束、由官方 REST 确认离桌，再停止 Compose 服务。创建权限为 `600` 的一致数据库备份后，离线清理旧 Run、牌局、决策、行动、原始事件、评估和资金展示记录，同时清除牌桌恢复检查点、旧 session 来源、活动 Run 标记及已停止进程的租约。不能仅清空页面列表而保留会重新恢复旧桌的检查点。
+本次所有者已明确授权归档旧样本并清理本地历史，以最新部署的纯 Jev 代码重新采样。以下是执行要求，不是已完成清理或上线的声明；新采集历史之后持续保留，常规更新不会重复清空数据。
+
+获得此类明确授权后，应先完成新镜像验证与发布，等待旧 Bot 当前手牌结束、由官方 REST 确认离桌，再停止 Compose 服务。创建权限为 `600` 的一致数据库备份后，离线清理旧 Run、牌局、决策、行动、原始事件、评估和资金展示记录，同时清除牌桌恢复检查点、旧 session 来源、活动 Run 标记及已停止进程的租约。不能仅清空页面列表而保留会重新恢复旧桌的检查点。
 
 模型 `usage` 与 `provider_usage` 账本必须保留，清理前后累计费用及未知请求预留保持一致；清理历史不增加剩余模型额度。备份留在服务器私有目录，不通过公开网站访问。清理操作只在服务停止后的运维环境执行，不提供公开写接口；只启动已验证的新镜像，确认新 Run、新牌桌状态及新产生的历史，官方账户余额和补筹冷却由服务端重新同步。此操作不删除 OpenPoker 官方持有的账户或比赛记录。
 
@@ -107,7 +104,7 @@ BIND_ADDRESS=127.0.0.1
 PUBLIC_HISTORY=true
 ```
 
-公开网站匿名展示公共牌、Bot 自己的当前手牌、座位、筹码、底池和行动流，使用 SSE 自动更新并重连。按所有者要求，当前手的决策阶段及已保存分析通过只读接口同步展示；已结束牌局保留完整已记录的脱敏历史与决策复盘。未公开的对手底牌、合法行动授权、鉴权凭据及原始 SQLite 不公开下载。本轮目标每次先请求关闭 thinking 的 DeepSeek Flash 分析，再由 Jev 选择；密钥、模型配置与自主运行都由后端管理，页面只执行读取。
+公开网站匿名展示公共牌、Bot 自己的当前手牌、座位、筹码、底池和行动流，使用 SSE 自动更新并重连。按所有者要求，当前手的决策阶段及已保存分析通过只读接口同步展示；已结束牌局保留完整已记录的脱敏历史与决策复盘。未公开的对手底牌、合法行动授权、鉴权凭据及原始 SQLite 不公开下载。本轮目标由 Jev 直接从合法候选中选择；密钥、模型配置与自主运行都由后端管理，页面只执行读取。
 
 HTTPS 代理的 `location /` 使用 `limit_except GET { deny all; }`，允许 GET 及隐含允许的 HEAD，拒绝公网管理写请求，即使携带有效内部令牌也不会放行。`proxy_buffering off` 使 SSE 及时到达浏览器；`GET /api/live` 发送 `snapshot` 事件，后端每 15 秒发送注释心跳，代理读超时维持 60 秒。Compose 管理脚本从容器内访问受保护 API，不经过公网代理，因此仍可安全排空和更新。
 

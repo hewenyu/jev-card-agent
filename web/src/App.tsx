@@ -15,6 +15,7 @@ import { Experiments } from './views/Experiments';
 import { mergeHistory, useHistoryPages } from './history';
 import { latestFunding } from './funding';
 import { useFundingHistory } from './funding-history';
+import { latestRuntime } from './runtime-view';
 
 const views = [
   { id: 'overview', label: 'Overview' },
@@ -41,9 +42,7 @@ export function App() {
   const displayData = data && {
     ...data,
     runtime: {
-      ...(live.snapshot && (live.status === 'live' || live.receivedAt >= overviewStartedAt)
-        ? live.snapshot.runtime
-        : data.runtime),
+      ...latestRuntime(data.runtime, live.snapshot?.runtime, live.receivedAt >= overviewStartedAt),
       funding: latestFunding(
         data.runtime.funding,
         live.snapshot?.runtime.funding,

@@ -203,6 +203,22 @@
   color: #b7f78a;
   padding-left: 4px;
 }
+.seat-balance {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 5px;
+}
+.seat-balance small {
+  color: #aaba9b;
+  font-size: 8px;
+}
+.seat-info .seat-balance strong {
+  margin-top: 0;
+  overflow-wrap: anywhere;
+}
 .seat-info strong {
   display: block;
   font-size: 11px;
@@ -241,6 +257,17 @@
   display: flex;
   align-items: center;
   gap: 4px;
+}
+.seat-bet:not(.has-bet) {
+  color: #91a187;
+  background: transparent;
+}
+.seat-bet:not(.has-bet) i {
+  opacity: 0.35;
+}
+.seat-bet strong {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
 }
 .seat-bet i {
   display: inline-block;
@@ -346,6 +373,9 @@
   .seat-info > span {
     font-size: 8px;
   }
+  .seat-balance small {
+    font-size: 7px;
+  }
   .seat-info strong {
     font-size: 10px;
   }
@@ -364,12 +394,12 @@
   }
   .seat-1,
   .replay-main .seat-1 {
-    left: -3px;
+    left: 0;
     top: 50%;
   }
   .seat-4,
   .replay-main .seat-4 {
-    right: -3px;
+    right: 0;
     top: 50%;
   }
   .seat-2,

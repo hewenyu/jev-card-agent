@@ -22,6 +22,16 @@ SQLite 保存 Run、协议事件、手牌、冻结决策上下文、候选、模
 
 Jev 的概率与 confidence 是模型对给定候选的输出，**不是扑克胜率、EV 或已经验证的混合策略频率**。规则 baseline 是可检查的启发式策略，不宣称 GTO。程序只在生成的合法候选集合中比较行动，不代表遍历全部下注金额。
 
+## 当前数据收集与后续 harness 对照
+
+本次部署计划按所有者明确授权先归档旧样本：等待离桌、停止服务并完成私有一致备份后，清空旧 Run、手牌、决策、行动、事件、评估、资金展示记录与恢复检查点，再以新版纯 Jev 从空的本地样本集开始采集。旧样本留在私有备份，不混入新 Run 的统计；新采集的数据持续保留。`usage`、`provider_usage` 及未知费用预留不清除，官方账户余额和 OpenPoker 历史不受该本地清理影响。此处不代表清理或上线已经完成。
+
+当前重点是数据采样：本轮使用 `BOT_STRATEGY=jev`，目标为持续运行数小时后再复盘，不在收集期间自动改写策略；目标时长不代表已经采足样本，实际运行时长与样本量需单独核实。保留已记录的完整原始协议事件、每手 session、冻结决策输入、候选、行动确认、结算与费用账本。模型实际输入保持有界，不将完整历史数据库逐次发送，也不因上下文裁剪删除数据库历史。自动启动不限制手数和时长，开启 auto-rebuy，模型请求仍受既有费用预算与行动 deadline 约束。
+
+成功的 Jev 请求保存原请求，以及通过 schema 解析后的 `model`、`usage`、`answers`。该结构不是逐字 HTTP 响应档案；schema 未保留的额外字段不属于完整保留承诺。失败调用仅保留 attempts、状态及可取得的部分诊断，不能假定能够重建全部失败请求/响应正文。数据分析须区分成功的结构化输出与失败记录。
+
+数据积累后再复盘。后续向 harness 注入总结、对手习惯或策略规则，应保存明确版本及来源，使用同一组冻结输入、相同信息截止和合法候选对照原策略，分别报告选项差异、延迟、失败、fallback 和成本。注入后产生的新 Run 要与原版本分开统计；不得把之后的结果泄漏到原决策输入，也不得用原行动收益替代新行动的反事实收益。当前没有自动在线学习或盈利保证。
+
 ## 收益口径
 
 每手净收益为可靠起始筹码与 `hand_result.final_stacks` 的差值。后续买入和 rebuy 不计入已结算手牌收益。缺少起始历史或跨越两个策略 Run 的未完成手牌保留记录，但 `profit=null`，不参与净收益和 bb/100；界面显示缺失状态。
@@ -40,14 +50,14 @@ REASONING_API_FORMAT=messages npm run evaluate -- --run RUN_ID --strategy jev-re
 
 每次评估从原记录读取冻结 context 与候选，不修改真实 Run。结果保存独立 ID、原 decision ID、新旧候选、成功/失败、平均延迟和估算成本。界面 Evaluations 仅查看已经生成的报告，不创建新调用。
 
-纯 Jev 每个样本调用一次 Jev。本轮组合策略目标使用 `REASONING_MODE=always` 与专用 DeepSeekProvider，`deepseek-flash` 显式关闭 thinking，先分析再交给 Jev 从冻结候选中作最终选择。其他 provider 仅在明确配置的实验中使用，不作为自动兜底。只有显式 `REASONING_MODE=adaptive` 使用旧的 Jev 路由、按需分析及再次选择。全链路受总 deadline 和逐调用预算限制；always 模式分析失败后在剩余时间内调用 Jev，无法及时获得合法结果时由 Runtime 明确记录 fallback。分析模型不能直接向牌桌提交动作。
+本轮部署目标为纯 Jev，每个样本直接交给 Jev 从冻结候选中选择，供应商重试独立记录。组合策略仅在显式实验中启用：`REASONING_MODE=always` 先分析再由 Jev 作最终选择；专用 DeepSeekProvider 支持 `deepseek-flash` 与关闭 thinking，其他 provider 同样必须明确配置，不作为自动兜底。只有显式 `REASONING_MODE=adaptive` 使用 Jev 路由、按需分析及再次选择。全链路受总 deadline 和逐调用预算限制；无法及时获得合法结果时明确记录 fallback。分析模型不能直接向牌桌提交动作。
 
 重跑结果只统计选项一致数、错误数、延迟与费用；不会把原牌局结算赋给替代策略。不同 Run 的真实收益可以并列查看，但公开 Arena 的时段、对手和牌序不受控，不能据此做因果归因。
 
 ## API 协议与模型一致性
 
 - Jev：`POST https://api.typesafe.ai/v1/systemone`，固定请求 `jev-1.13.0`，Choice 必须属于候选，概率项齐全且有效，总和容差 1%，choice 与最高概率一致。
-- DeepSeek：专用 `POST /anthropic/v1/messages`，本轮使用 `deepseek-flash`、`thinking.type=disabled`，不发送 effort。保存分析、实际模型和含缓存分类的 usage；不将关闭思考的分析标作 thinking 返回。
+- DeepSeek：专用 `POST /anthropic/v1/messages`，可选实验使用 `deepseek-flash`、`thinking.type=disabled`，不发送 effort。保存分析、实际模型和含缓存分类的 usage；不将关闭思考的分析标作 thinking 返回。
 - 标准 Responses：配置 `/v1` base URL 后调用 `/responses`，默认请求 `reasoning.effort=high` 与 `summary=auto`，保存实际返回的分析和推理摘要，拒绝静默模型替换。
 - 标准 Messages：调用 `/messages`，使用 `x-api-key`、`anthropic-version`、`thinking.type=adaptive` 与默认 `output_config.effort=high`，保存供应商实际返回的分析、thinking 文本及 usage。没有返回的思考内容不补写。
 - 代理返回的模型名只能证明接口所报告的身份，不能独立审计其底层模型。

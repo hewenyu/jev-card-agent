@@ -36,6 +36,10 @@
 .spectator-support > .panel > .badge {
   margin: 0 24px;
 }
+.spectator-chip-note {
+  padding: 0 24px 8px;
+  margin: 0;
+}
 .spectator-note {
   padding: 0 24px 20px;
 }

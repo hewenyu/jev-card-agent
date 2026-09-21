@@ -20,7 +20,7 @@ Built with **Node.js 24, TypeScript, Fastify, React/Vite and SQLite**. OpenPoker
 
 The public website is **anonymous and read-only**. It exposes the Bot’s own current hand and saved decisions for that hand, plus recorded completed hands. It has no Bot controls, strategy editing, key entry or paid-evaluation triggers. Visitors cannot change decision logic. Unrevealed opponent cards, action tokens and credentials remain private.
 
-Live SSE updates and reconnects automatically. Every player’s displayed stack and the dealer button follow server state; sparse player summaries preserve seats they do not mention. Animations illustrate events without calculating authoritative balances. Older runs and hands load in pages of 100.
+Live SSE updates and reconnects automatically. Every occupied seat labels **Available** (chips still available to bet) and **Bet** (the current street’s contribution, already included in the pot). Settled hands clear current bets and label the historical pot **Settled pot**. Every player’s displayed stack and the dealer button follow server state; sparse player summaries preserve seats they do not mention. Animations illustrate events without calculating authoritative balances. Older runs and hands load in pages of 100.
 
 Overview focuses on the selected run’s results across its full recorded history. Win rate is the share of verified hands with positive net profit; break-even hands remain in the denominator. Season score comes from recorded official account snapshots and includes rebuys, while net profit excludes funding. Both curves refresh automatically. Account details and funding events are shown below the table in Live; individual hands remain in Replay.
 
@@ -30,21 +30,22 @@ Overview focuses on the selected run’s results across its full recorded histor
 flowchart LR
   O[OpenPoker WebSocket V2] --> R[Node.js runtime]
   R --> C[Visible state, opponents and hand session]
-  C --> A[DeepSeek Flash analysis · thinking off]
-  A --> J[Jev final legal choice]
+  C --> J[Jev direct legal choice]
   J --> V[Validate and submit]
   V --> O
   R --> T[Decision traces · SQLite]
   T --> E[Replay, evaluation and analytics]
 ```
 
-The selected deployment target is `jev-reasoning` with `REASONING_MODE=always`: request analysis from **DeepSeek-V4.1-Flash (`deepseek-flash`) with thinking disabled** for each valid decision, then let Jev choose the final legal candidate. `always` controls whether analysis is requested; it does not enable thinking. DeepSeek cannot submit actions. Pure `jev`, a rule-based `baseline`, and explicitly configured `adaptive` analysis remain available for comparison.
+The selected deployment target is **pure Jev (`BOT_STRATEGY=jev`)**: Jev receives the visible state, hand session, opponent statistics and history summary, then directly chooses a legal candidate. Data collection is the current priority: the target is to collect several hours of real hands and decisions before reviewing them and designing strategy comparisons. This is a collection target, not a claim that the sample is already complete. The running agent does not automatically rewrite its strategy. Deployment and validation status are recorded separately in the [verification report](docs/verification.md).
 
-The dedicated **DeepSeekProvider** uses official Anthropic-compatible Messages, with a 10-second timeout per analysis attempt. GPT and Claude are not automatic fallback providers. Standard Responses / Messages adapters remain available for explicit experiments. The owner has selected this target; deployment and live validation status are recorded separately in the [verification report](docs/verification.md).
+The dedicated **DeepSeekProvider** and standard Responses / Messages adapters remain available for optional combined-policy experiments. Extra analysis requires explicitly selecting `jev-reasoning` and configuring its provider; pure Jev does not call DeepSeek, GPT or Claude.
 
-Each hand has a persistent session. Inputs include visible action history, opponent statistics with sample counts, recent verified results and earlier decisions from that same hand, bounded by the current decision’s cutoff. Replay preserves the saved input rather than adding later information.
+Each hand has a persistent session. Inputs include visible action history, opponent statistics with sample counts, recent verified results and earlier decisions from that same hand, bounded by the current decision’s cutoff and input size limits. Database history remains stored when older context is omitted from a model request. Replay preserves the saved input rather than adding later information.
 
-Each provider gets an initial attempt and **at most three retries**, sharing the action deadline and persistent cost budget. Attempts, failures, known usage and unknown-cost reservations are recorded separately. Analysis failure lets Jev decide within the remaining time; if no valid model result arrives in time, the runtime records a legal fallback. Model identity mismatches, authentication failures and budget or ledger failures are not blindly retried.
+For successful Jev requests, records retain the original request and the schema-parsed `model`, `usage` and `answers`; they do not archive the verbatim HTTP response. Failed calls retain attempts, status and available diagnostic details, which may be incomplete.
+
+Jev gets an initial attempt and **at most three retries**, sharing the action deadline and persistent cost budget. Attempts, failures, known usage and unknown-cost reservations are recorded separately. If no valid model result arrives in time, the runtime records a legal fallback. Authentication failures and budget or ledger failures are not blindly retried. Optional analysis providers follow bounded retries too and are never enabled automatically.
 
 Decision views show saved analysis, the thinking text or summary actually returned by the provider, Jev probabilities and the final choice. Missing thinking is marked unavailable; the application does not invent it. Jev probabilities are not poker equity or expected profit.
 
@@ -74,14 +75,14 @@ cp -n .env.example .env
 chmod 600 .env
 ```
 
-Fill in `OPEN_POKER_API_KEY`, `JEV_API_KEY` and the independent `DEEPSEEK_API_KEY` in your private `.env`. Configure an independent `API_TOKEN` for internal administration; the browser never receives it. See the [configuration guide](docs/running.md) for protocols, models, timeouts and budgets.
+Fill in `OPEN_POKER_API_KEY` and `JEV_API_KEY` in your private `.env`, plus an independent `API_TOKEN` for internal administration; the browser never receives these credentials. Pure Jev needs no analysis-model key. `DEEPSEEK_API_KEY` is only needed when explicitly enabling the DeepSeek combined policy. See the [configuration guide](docs/running.md) for protocols, timeouts and budgets.
 
 ```sh
 # Check platform authentication without joining a table.
 npm run diagnose
 
 # Join real matches with bounded runtime and model spending.
-npm run bot -- --strategy jev-reasoning --max-hands 10 --max-minutes 30 --budget-usd 1
+npm run bot -- --strategy jev --max-hands 10 --max-minutes 30 --budget-usd 1
 ```
 
 To serve the website and agent together, configure:
@@ -89,19 +90,10 @@ To serve the website and agent together, configure:
 ```dotenv
 PUBLIC_HISTORY=true
 AUTO_START_BOT=true
-BOT_STRATEGY=jev-reasoning
-REASONING_MODE=always
-REASONING_PROVIDER=deepseek
-DEEPSEEK_API_BASE_URL=https://api.deepseek.com/anthropic
-DEEPSEEK_MODEL=deepseek-flash
-DEEPSEEK_THINKING=disabled
-REASONING_TIMEOUT_MS=10000
-REASONING_MAX_OUTPUT_TOKENS=4096
-HYBRID_TIMEOUT_MS=40000
-JEV_TIMEOUT_MS=3000
+BOT_STRATEGY=jev
 ```
 
-Set these values explicitly after copying `.env.example`; library defaults do not select this deployment target. DeepSeek uses its own key and model settings. With `DEEPSEEK_THINKING=disabled`, no effort parameter is sent, even if `REASONING_EFFORT=high` remains in an older environment. See the [provider contract](docs/transports.md#deepseek-messages-专用合同).
+Set these values explicitly after copying `.env.example`. Keep existing Jev timeouts, budgets and the cost ledger when switching strategies. Auto-start has no hand or duration cap and enables auto-rebuy; model calls remain subject to existing budgets and platform availability. Recorded raw game events and decision history are retained, while model session inputs stay bounded. Future review findings injected into the harness should be versioned and compared on the same frozen inputs.
 
 Then run `npm run build` and `npm run start`. Without auto-start, the server only serves the console. The standalone `bot` command is a separate entry point; use one runtime per Bot and database. Real model calls cost money, and hand/time limits do not guarantee that many hands will finish.
 
@@ -123,7 +115,7 @@ sh scripts/manage.sh update
 
 GitHub Actions checks the project and automatically publishes **uncached `linux/amd64` and `linux/arm64` images**, pulling a fresh base image. **Server updates remain manual.** Normal updates preserve history and the model-cost ledger. See [deployment](docs/deployment.md) and [image releases](docs/docker-release.md).
 
-A deliberately fresh run follows the [documented reset procedure](docs/deployment.md#经明确要求开始全新运行): validate and publish the new image, drain and stop the old runtime, take a private consistent backup, then clear old public run/hand/decision data and recovery checkpoints offline. Preserve the cost ledger and unknown reservations. This does not reset model spending or erase OpenPoker’s records; it is not a website control.
+For this deployment, the owner has authorized archiving the old samples and starting pure Jev collection with empty local history. The [reset procedure](docs/deployment.md#经明确要求开始全新运行) is to validate and publish the new image, drain and stop the old runtime, take a private consistent backup, then clear old runs, hands, decisions, actions, events, evaluations, funding-display records and recovery checkpoints offline. Preserve the cost ledger and unknown reservations, and retain newly collected history continuously. This does not reset model spending, the official account balance or OpenPoker’s records. This paragraph describes the authorized plan; completion evidence belongs in the verification report.
 
 ## Development and verification
 

@@ -36,13 +36,18 @@ export function PokerTable({
       : `Seat ${dealerSeat + 1} · ${dealerName || 'Player not reported'}`;
   return (
     <>
-      <div className="poker-scene" ref={scene}>
+      <div
+        className="poker-scene"
+        ref={scene}
+        data-table-id={table?.tableId ?? undefined}
+        data-state-seq={table?.stateSeq}
+      >
         <div className="poker-felt">
           <div className="felt-ring" />
           <div className="table-center">
             <p className="table-label">{label}</p>
             <div className="pot">
-              <span>POT</span>
+              <span>{table?.complete ? 'SETTLED POT' : 'POT'}</span>
               <strong
                 key={animated ? table?.pot : undefined}
                 className={animated ? 'amount-updated' : undefined}
@@ -58,7 +63,7 @@ export function PokerTable({
           </div>
         </div>
         {Array.from({ length: 6 }, (_, seat) => {
-          const player = table?.seats.find((item) => item.seat === seat);
+          const player = table?.seats.find((item) => item.seat === seat && item.status !== 'empty');
           const hero = table?.heroSeat === seat;
           const acting = animated && !table?.complete && table?.actorSeat === seat;
           const feedback = motion.feedback[seat];
@@ -86,17 +91,28 @@ export function PokerTable({
                   {player?.name ?? `Seat ${seat + 1}`}
                   {hero && <em>{animated ? 'JEV' : 'YOU'}</em>}
                 </span>
-                <strong
-                  key={animated ? player?.stack : undefined}
-                  className={animated ? 'amount-updated' : undefined}
+                <div
+                  className="seat-balance"
+                  title="Chips still available to bet; excludes the current bet"
                 >
-                  {player ? number(player.stack) : '—'}
-                </strong>
+                  <small>Available</small>
+                  <strong
+                    key={animated ? player?.stack : undefined}
+                    className={animated ? 'amount-updated' : undefined}
+                    aria-label={`Available chips: ${player ? number(player.stack) : 'unknown'}`}
+                  >
+                    {player ? number(player.stack) : '—'}
+                  </strong>
+                </div>
               </div>
-              {player && player.bet > 0 && (
-                <span className="seat-bet">
-                  <i />
-                  {number(player.bet)}
+              {player && (
+                <span
+                  className={`seat-bet ${player.bet > 0 ? 'has-bet' : ''}`}
+                  title="Current street contribution; already included in the pot"
+                  aria-label={`Current street bet: ${number(player.bet)} chips`}
+                >
+                  <i aria-hidden="true" />
+                  <span>Bet</span> <strong>{number(player.bet)}</strong>
                 </span>
               )}
               {hero && table?.heroCards.length ? (

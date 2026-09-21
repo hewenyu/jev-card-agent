@@ -66,6 +66,9 @@ export function Live({
             events={events}
             motionEpoch={`${live.motionEpoch}:${runtime.runId ?? ''}`}
           />
+          <p className="annotation spectator-chip-note">
+            Available = chips left to bet. Bet = this street’s chips already in the pot.
+          </p>
           <p className="annotation spectator-note">
             {runtime.table
               ? 'The agent’s own cards are shown. Follow its recorded analysis and choices in the hand session.'

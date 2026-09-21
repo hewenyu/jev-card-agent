@@ -20,7 +20,7 @@
 
 公开网站**匿名只读**，展示 Bot 自己的当前手牌、本手已保存决策，以及已结束牌局。网站不提供 Bot 控制、策略编辑、密钥输入或付费实验入口，访客不能改变决策逻辑。未公开的对手底牌、行动授权与鉴权凭据保持私密。
 
-实时 SSE 自动更新并重连。所有玩家的座位筹码与庄家按钮以服务端状态为准；稀疏玩家摘要保留没有提及的座位。动画只呈现事件，不用于计算权威余额。较早的 Run 和手牌按每页 100 条加载。
+实时 SSE 自动更新并重连。每个已入座玩家分别标出 **Available（可下注筹码）** 和 **Bet（当前街已下注，已计入底池）**。结算后本轮下注归零，历史底池标为 **Settled pot（已结算底池）**。所有玩家的座位筹码与庄家按钮以服务端状态为准；稀疏玩家摘要保留没有提及的座位。动画只呈现事件，不用于计算权威余额。较早的 Run 和手牌按每页 100 条加载。
 
 Overview 专注所选 Run 的完整历史战绩。胜率为净收益大于零的已核实手牌占比，平局计入分母；赛季积分来自已记录的官方账户快照，包含补筹，净收益不含补筹。两条曲线自动刷新。账户明细及补筹事件位于 Live 牌桌下方，逐手记录在 Replay 查看。
 
@@ -30,21 +30,22 @@ Overview 专注所选 Run 的完整历史战绩。胜率为净收益大于零的
 flowchart LR
   O[OpenPoker WebSocket V2] --> R[Node.js Runtime]
   R --> C[可见局面、对手信息与同手会话]
-  C --> A[DeepSeek Flash 分析 · 关闭思考]
-  A --> J[Jev 最终合法选择]
+  C --> J[Jev 直接选择合法行动]
   J --> V[校验并提交]
   V --> O
   R --> T[决策记录 · SQLite]
   T --> E[回放、评估与分析]
 ```
 
-已选定的部署目标为 `jev-reasoning` 与 `REASONING_MODE=always`：每次有效决策先请求 **DeepSeek-V4.1-Flash（`deepseek-flash`）关闭 thinking 的分析**，再由 Jev 选择最终合法候选。`always` 控制每次请求分析，不表示开启思考。DeepSeek 没有动作提交权。纯 `jev`、规则 `baseline` 和需显式配置的 `adaptive` 按需分析模式保留用于对照。
+本轮部署目标是 **纯 Jev（`BOT_STRATEGY=jev`）**：将可见局面、同手 session、对手统计和历史摘要交给 Jev，直接从合法候选中选择行动。当前重点是数据采样，目标是先持续运行数小时积累真实牌局与决策数据，再复盘并设计策略对照；这不表示已经采足数小时样本。当前不会在线自动修改策略。此处描述部署目标，实际上线与验收状态见[验证报告](docs/verification.md)。
 
-专用 **DeepSeekProvider** 使用官方 Anthropic 兼容 Messages，每次分析尝试超时为 10 秒，GPT 与 Claude 不作为自动兜底。标准 Responses / Messages 适配器保留用于明确配置的实验。所有者已决定此目标；实际部署与线上验收状态另记[验证报告](docs/verification.md)。
+专用 **DeepSeekProvider** 和标准 Responses / Messages 适配器保留为可选组合策略实验。只有显式选择 `jev-reasoning` 并配置相应 provider 时才请求额外分析；纯 Jev 不调用 DeepSeek、GPT 或 Claude。
 
-每手建立持久 session。输入包含截止当前决策的可见行动历史、带样本数的对手统计、最近已核实战绩和本手此前决策。回放保留当时保存的输入，不补入之后才知道的信息。
+每手建立持久 session。输入包含截止当前决策的可见行动历史、带样本数的对手统计、最近已核实战绩和本手此前决策，并受输入大小限制；较早上下文未进入本次模型请求时，数据库中的历史仍然保留。回放保留当时保存的输入，不补入之后才知道的信息。
 
-每个 provider 首次调用后**最多重试三次**，共同受当前行动期限和持久费用预算约束。各次尝试、失败、已知用量与未知费用预留分别记录。分析失败时 Jev 在剩余时间内继续决策；无法及时取得有效模型结果时，Runtime 记录合法降级。模型身份不匹配、鉴权失败、预算或账本错误不盲目重试。
+成功的 Jev 请求保存原请求及 schema 解析后的 `model`、`usage`、`answers`，并非逐字保存 HTTP 响应。失败调用保留 attempts、状态和可取得的部分诊断，不能假定拥有完整失败响应。
+
+Jev 首次调用后**最多重试三次**，共同受当前行动期限和持久费用预算约束。各次尝试、失败、已知用量与未知费用预留分别记录；无法及时取得有效模型结果时，Runtime 记录合法降级。鉴权、预算或账本错误不盲目重试。可选分析 provider 同样遵守有限重试，不会自动开启。
 
 决策视图展示已保存分析、供应商实际返回的思考文本或摘要、Jev 候选概率与最终选择。未返回思考时明确显示缺失，不生成补写。Jev 选项概率不是扑克胜率或预期盈利。
 
@@ -74,14 +75,14 @@ cp -n .env.example .env
 chmod 600 .env
 ```
 
-在私有 `.env` 填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY` 与独立的 `DEEPSEEK_API_KEY`。另设独立 `API_TOKEN` 用于内部管理；浏览器不会接收该凭证。协议、模型、超时和预算配置见[运行手册](docs/running.md)。
+在私有 `.env` 填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY`，另设独立 `API_TOKEN` 用于内部管理；浏览器不会接收这些凭证。纯 Jev 无需分析模型密钥，`DEEPSEEK_API_KEY` 仅在显式启用 DeepSeek 组合策略时需要。协议、超时和预算配置见[运行手册](docs/running.md)。
 
 ```sh
 # 检查平台鉴权，不加入牌桌。
 npm run diagnose
 
 # 加入真实对局，并限制运行时长和模型费用。
-npm run bot -- --strategy jev-reasoning --max-hands 10 --max-minutes 30 --budget-usd 1
+npm run bot -- --strategy jev --max-hands 10 --max-minutes 30 --budget-usd 1
 ```
 
 同时运行网站与 Agent 时，配置：
@@ -89,19 +90,10 @@ npm run bot -- --strategy jev-reasoning --max-hands 10 --max-minutes 30 --budget
 ```dotenv
 PUBLIC_HISTORY=true
 AUTO_START_BOT=true
-BOT_STRATEGY=jev-reasoning
-REASONING_MODE=always
-REASONING_PROVIDER=deepseek
-DEEPSEEK_API_BASE_URL=https://api.deepseek.com/anthropic
-DEEPSEEK_MODEL=deepseek-flash
-DEEPSEEK_THINKING=disabled
-REASONING_TIMEOUT_MS=10000
-REASONING_MAX_OUTPUT_TOKENS=4096
-HYBRID_TIMEOUT_MS=40000
-JEV_TIMEOUT_MS=3000
+BOT_STRATEGY=jev
 ```
 
-复制 `.env.example` 后显式设置以上值，代码默认值不会自动选择这个部署目标。DeepSeek 使用独立密钥与型号配置；`DEEPSEEK_THINKING=disabled` 时不发送 effort 参数，即使旧环境保留 `REASONING_EFFORT=high` 也不会启用思考。详见[provider 合同](docs/transports.md#deepseek-messages-专用合同)。
+复制 `.env.example` 后显式设置以上值。保留既有 Jev 超时、费用预算与账本，不因切换策略清零或扩大限制。自动启动不限制手数和时长，启用 auto-rebuy；模型调用仍受既有预算与平台状态约束。已记录的原始牌局事件与决策历史持久保存，模型输入使用有界 session；后续注入 harness 的复盘结论应版本化，并在同一组冻结输入上比较。
 
 随后执行 `npm run build` 和 `npm run start`。未开启自动启动时只提供控制台页面。独立 `bot` 命令是另一运行入口，同一个 Bot 和数据库只运行一个 Runtime。真实模型调用产生费用，手数和时长上限不保证完成对应数量的牌局。
 
@@ -123,7 +115,7 @@ sh scripts/manage.sh update
 
 GitHub Actions 自动检查，并**无缓存发布 `linux/amd64` 与 `linux/arm64` 镜像**，构建时重新拉取基础镜像。**服务器保持手动更新。** 常规更新保留历史和模型费用账本。详见[部署手册](docs/deployment.md)与[镜像发布流程](docs/docker-release.md)。
 
-明确要求从全新状态开始时，遵循[历史清理流程](docs/deployment.md#经明确要求开始全新运行)：先验证并发布新版镜像，排空并停止旧 Runtime，创建私有一致备份，再离线清理旧公开 Run、手牌、决策及恢复检查点。保留费用账本和未知请求预留；清理不重置模型消费、不删除 OpenPoker 官方记录，也不通过网站操作。
+本次部署已获所有者授权：归档旧样本，从空的本地历史开始纯 Jev 采样。按[历史清理流程](docs/deployment.md#经明确要求开始全新运行)，先验证并发布新版镜像，排空并停止旧 Runtime，创建私有一致备份，再离线清理旧 Run、手牌、决策、行动、事件、评估、资金展示记录及恢复检查点。费用账本和未知请求预留继续保留，新采集历史持续保存；清理不重置模型消费或官方账户余额，不删除 OpenPoker 官方记录。这是已授权的执行计划，是否完成以验证报告为准。
 
 ## 开发与验证
 
