@@ -39,7 +39,7 @@
 
 ## 自动化和生产构建
 
-已完成检查：ESLint 零 warning、Prettier、TypeScript strict、127 项 Vitest 测试、9 项 Playwright 测试、生产构建和仓库行数/秘密扫描通过。当前最长文件为 807 行；构建输出的 86 个文件也扫描了本地配置的真实秘密，未发现泄漏。全部 npm 依赖审计为零已知漏洞。其中包括免费补筹与持续入队、历史反馈截止点、稳定游标分页、公开/私有权限切换、缺失收益样本、稀疏 players 回放与右侧座位底牌可见性回归。
+已完成检查：ESLint 零 warning、Prettier、TypeScript strict、148 项 Vitest 测试、11 项 Playwright 测试、生产构建和仓库行数/秘密扫描通过。当前最长文件为 807 行；构建输出的 86 个文件也扫描了本地配置的真实秘密，未发现泄漏。全部 npm 依赖审计为零已知漏洞。其中包括免费补筹与持续入队、历史反馈截止点、稳定游标分页、公开/私有权限切换、缺失收益样本、稀疏 players 回放与右侧座位底牌可见性回归。
 
 Docker 实际执行了干净 `npm ci` 和生产构建；容器以 UID 1000 运行，健康/页面/API 返回正常，只读写请求返回 403。写入临时持久卷标记后重启容器，标记仍存在。镜像中的 Runtime 与本地构建 SHA-256 一致；验证容器和临时卷已清理。具体命令：
 
@@ -48,14 +48,23 @@ npm ci
 npm run check
 npm run test:e2e
 npm audit --omit=dev
-docker build -t jev-card-agent:local .
 ```
 
 截图来自构建后的 Node 服务与 SQLite 数据。合成 Demo 的 Overview、Replay、Experiments 及 390px 移动端已做实际截图检查；另使用无供应商凭据的本地只读查询服务检查真实运行数据。46 个真实行动回放节点的下注/弃牌状态无回退，决策信息截止点的公共牌和自己的底牌均与冻结输入一致。真实数据截图留在被忽略的私有目录，合成数据始终标为 Demo。
 
+## GitHub 发布与服务器部署
+
+提交 `674c874b7412391cfda071e3b12b51a42a9527ba` 的 [GitHub 镜像发布](https://github.com/hewenyu/jev-card-agent/actions/runs/35554105325) 已成功。镜像 manifest 为 `sha256:43c66bc586cedffde15b5380ff6e4c30c5fa7c9fb187fec90d210786213570dc`，已核实同时包含 `linux/amd64` 与 `linux/arm64`。构建不使用缓存，并重新拉取基础镜像；镜像后续版本与 digest 以对应工作流 Summary 为准。
+
+服务器于 `2026-09-21T02:29:33Z` 使用 Docker Compose 启动，迁入原有 2 个 Run、44 手牌局、93 次决策、1,490 条事件与全部 93 条费用记录，SQLite 完整性检查通过。服务只绑定宿主 loopback，由 Nginx HTTPS 代理到公开域名。Bot 开启 `jev-reasoning`、Messages `claude-opus-5` adaptive thinking、自动补筹与持续入队；无手数/时长上限，累计模型估算预算为 $9，耗尽后采用合法 fallback。
+
+`2026-09-21T02:32:57Z` 快照中，服务器 Run 已记录 7 手结算、7 次决策且无 fallback。新决策实际包含 10 手已核实历史摘要、问题模板版本和构建提交号。公网 `/health` 返回 200，匿名历史读取成功，进行中的底牌隐藏，匿名控制返回 403，错误令牌返回 401，编码 API 路径同样受保护。这是运行快照，不代表持续运行的最终数量。
+
+公开界面地址：[openpoker.zve.ccwu.cc](https://openpoker.zve.ccwu.cc)。HTTPS 源站证书、Nginx 校验与 Certbot 模拟续期均通过。公网桌面浏览器已实际加载真实手牌、逐事件回放、Jev 候选概率和已接受动作。真实长 ID 与展开上下文在 390px 下暴露的两处溢出已修复，并新增先失败后通过的移动端回归。服务器统一使用 Compose 管理入口，已实际执行 start 验证保留原运行容器，并完成在线 SQLite 备份复制到宿主机；停止、重启和更新的排空顺序、失败时禁止替换及在线备份由 21 项隔离管理测试覆盖。
+
 ## 验证边界
 
-- GitHub 镜像发布与服务器部署正在进行；实际发布和域名验收另行记录。
+- 服务器已真实自动参赛；自然故障与长期运行仍需持续监测。
 - 没有证明长期收益、策略优势或排行榜名次。
 - 真实 GPT-6 在当前代理上尚未验证；Messages 简短探针及 30 秒预算的扑克分析成功；12 秒预算的早期探针曾取消。
 - 断线、重复 ACK、迟到响应和数据库冲突主要由本地协议测试验证，不能宣称生产运行自然经历了所有故障。

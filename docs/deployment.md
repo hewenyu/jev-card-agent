@@ -2,11 +2,20 @@
 
 镜像通过 GitHub Actions 的 `DOCKER` 环境自动构建并发布到 `hewenyulucky/jev-card-agent`。环境 Secrets 为 `USER`、`TOKEN`；参见[镜像发布流程](docker-release.md)。镜像支持 `linux/amd64` 和 `linux/arm64`。构建明确禁用 Docker 和 npm Actions 缓存，并拉取最新基础镜像。CI 不连接运行服务器、不自动更新正在运行的容器。
 
-服务器只需要 Docker Engine 和 Docker Compose。使用独立目录保存仓库中的 `compose.yaml` 和本地 `.env`，目录权限建议 700，`.env` 权限 600。不要将 `.env` 上传至 GitHub 或放入镜像。
+服务器只需要 Docker Engine 和 Docker Compose，无需安装 Node.js。克隆仓库或下载源码，在部署目录保留 `compose.yaml`、`.env.example` 和 `scripts/`，本地创建 `.env`。目录权限建议 700，`.env` 权限 600。管理脚本内部的容器操作全部使用 `docker compose`；不要将 `.env` 上传至 GitHub 或放入镜像。
 
 ## 首次启动
 
-将 `scripts/update-container.sh` 同时放入服务器的 `scripts/` 目录。在服务器目录准备 `.env`，填入 OpenPoker、Jev 凭据和独立 `API_TOKEN`。沿用 `.env.example` 中的预算配置。设置：
+首次准备部署目录：
+
+```sh
+git clone https://github.com/hewenyu/jev-card-agent.git
+cd jev-card-agent
+cp -n .env.example .env
+chmod 600 .env
+```
+
+也可以下载仓库源码后进入解压目录执行后两条命令。已有 `.env` 应保留，不要覆盖。在 `.env` 中填入 OpenPoker、Jev 凭据和独立 `API_TOKEN`，沿用样例中的预算配置。组合策略还需填写推理服务地址与凭据。设置：
 
 ```dotenv
 BIND_ADDRESS=127.0.0.1
@@ -22,31 +31,48 @@ HYBRID_TIMEOUT_MS=40000
 `BIND_ADDRESS` 决定宿主机监听地址。默认仅本机；也可设为服务器的私有 VPN 地址，在同一网络内访问。公网访问应在认证控制台前配置 HTTPS 反向代理。镜像中的应用监听 `0.0.0.0:8787`，SQLite 位于专用持久卷。
 
 ```sh
-docker compose pull
-docker compose up -d
-docker compose ps
+sh scripts/manage.sh start
+sh scripts/manage.sh status
 ```
 
 `AUTO_START_BOT=true` 会在服务启动后自动连接并参赛，关闭后只启动控制台。首次开启前停止同账号的其他 Bot；数据库租约只协调同一持久数据库。控制台 Access settings 使用 `API_TOKEN`，不是供应商 API Key。
+
+默认镜像为 `hewenyulucky/jev-card-agent:latest`。`start` 在本地缺少镜像时自动拉取；已有镜像时不会主动更新，正在运行的服务也不通过 `start` 替换。
+
+## 一键管理
+
+所有命令在部署目录执行：
+
+| 命令                           | 行为                                                   |
+| ------------------------------ | ------------------------------------------------------ |
+| `sh scripts/manage.sh start`   | 启动服务，首次自动拉取缺失镜像                         |
+| `sh scripts/manage.sh stop`    | 等待当前手牌结束并确认离桌，然后停止服务               |
+| `sh scripts/manage.sh restart` | 同样先排空，再用本地镜像重新启动服务                   |
+| `sh scripts/manage.sh update`  | 同样先排空，显式拉取配置标签的最新镜像并重建服务       |
+| `sh scripts/manage.sh status`  | 查看 Compose 服务状态                                  |
+| `sh scripts/manage.sh logs`    | 查看最近 100 行日志并持续跟踪，Ctrl+C 退出查看         |
+| `sh scripts/manage.sh backup`  | 在线创建一致 SQLite 备份并复制到宿主机 `data/backups/` |
+
+`stop`、`restart`、`update` 都先通过受保护 API 请求停止，持续等待当前牌局结束，再用 OpenPoker REST 确认已离桌。正常排空不设置强制结束当前手牌的时间限制；状态无法核实时退出，不继续停止或替换容器。容器的 150 秒停止宽限期用于已排空服务的退出，不是当前手牌的最长时限。
 
 ## 手动更新 latest
 
 先确认 GitHub 的镜像发布工作流成功，再在服务器部署目录执行：
 
 ```sh
-sh scripts/update-container.sh
-docker compose logs --tail 50 app
+sh scripts/manage.sh update
+sh scripts/manage.sh logs
 ```
 
-该脚本由操作者手动执行：先通过受保护 API 请求停止，持续等待当前牌局结束，再用 OpenPoker REST 确认已离桌，然后拉取镜像并重建容器。正常更新不设置强制结束当前手牌的时间限制；状态无法核实时退出，保留旧容器。不要用直接 `docker compose up` 替换仍在打牌的实例。仓库没有 Watchtower、定时拉取或 CI SSH 部署。自动启动配置决定新容器是否恢复参赛。
+更新由操作者手动执行。不要用直接 `docker compose up` 替换仍在打牌的实例。仓库没有 Watchtower、定时拉取或 CI SSH 部署。自动启动配置决定新容器是否恢复参赛。旧入口 `sh scripts/update-container.sh` 保留兼容，转交 `manage.sh update` 执行同一流程。
 
-`latest` 是可变标记。部署前可记录 `docker image inspect hewenyulucky/jev-card-agent:latest --format '{{index .RepoDigests 0}}'`；需要固定版本或回退时，在 `.env` 设置 `JEV_IMAGE=hewenyulucky/jev-card-agent:sha-完整提交号`，再手动执行 pull/up。`JEV_IMAGE` 不会覆盖持久数据。
+`latest` 是可变标记。需要固定版本或回退时，在 `.env` 设置 `JEV_IMAGE=hewenyulucky/jev-card-agent:sha-完整提交号`，再手动执行 `sh scripts/manage.sh update`。也可按镜像发布记录配置 digest。`JEV_IMAGE` 不会覆盖持久数据。
 
 ## 数据与运行
 
 `jev-card-agent-data` 卷保存 SQLite 主文件及 WAL/SHM，更新容器时保留。不要执行 `docker compose down -v`，除非明确要删除全部运行数据。备份与恢复方法见[运行手册](running.md#sqlite-持久化备份与恢复)。费用账本随数据库保留；模型预算不足会采用合法 fallback，不自动充值。
 
-`docker compose stop` 停止服务；`docker compose up -d` 使用已有本地镜像启动，不主动拉取新版。健康检查只表示 HTTP 可响应，Bot 实际连接与错误查看控制台或日志。公开日志前移除私有运行标识和牌局信息。
+日常停止、启动和重启使用上述管理入口。健康检查只表示 HTTP 可响应，Bot 实际连接与错误查看控制台或日志。公开日志前移除私有运行标识和牌局信息。`backup` 使用运行中容器内的 Node.js SQLite online backup 写入 `/app/data/backups/`，再通过 `docker compose cp` 复制到宿主机；备份默认保存于被 Git 忽略的 `data/backups/`，包含敏感记录，不公开上传。
 
 ## 域名与 Nginx
 
@@ -67,7 +93,7 @@ sudo ln -sfn /etc/nginx/sites-available/openpoker.zve.ccwu.cc /etc/nginx/sites-e
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-单独保存该域名配置，先执行 `nginx -t` 再 reload，保留服务器其他站点。证书续期可自动执行；容器镜像更新仍只通过手动 drain/pull/up 流程执行。
+单独保存该域名配置，先执行 `nginx -t` 再 reload，保留服务器其他站点。证书续期可自动执行；容器镜像更新仍只通过手动 `sh scripts/manage.sh update` 执行。
 
 ### TLS 配置与续期
 

@@ -137,9 +137,9 @@ npm run bot -- --strategy jev --max-hands 10 --max-minutes 30 --budget-usd 1 --b
 
 服务器需要在容器重启后恢复自主参赛时，设置 `AUTO_START_BOT=true`、`BOT_STRATEGY=jev`，保留同一持久数据库。HTTP 监听成功后会调用一次正常的 Bot 启动流程：买入 `2000`、启用 auto-rebuy、不限制手数和时长，单 Run 模型预算使用 `RUN_BUDGET_USD`，累计预算仍使用持久账本。启动失败会输出错误、关闭 HTTP 服务并以失败状态退出，由容器重启策略处理。Demo 和只读 Demo 即使设置此开关也不会自动参赛。运行中的 UI/CLI 有界启动参数保持原有语义。
 
-此开关只控制进程启动后的参赛，不下载或更新镜像。镜像更新必须由部署者手动构建/拉取并重新创建容器；不要安装自动更新镜像的服务。
+此开关只控制进程启动后的参赛，不下载或更新镜像。服务器镜像更新由部署者手动执行 `sh scripts/manage.sh update`，脚本先等待当前手牌结束并确认离桌，再通过 Compose 拉取和重建；不要安装自动更新镜像的服务。
 
-需要由进程管理器自动重启的无界面服务，可在构建后使用 `node --env-file-if-exists=.env dist/cli/bot.js --strategy jev --budget-usd 1` 作为启动命令；Docker 可覆盖默认命令为 `node dist/cli/bot.js --strategy jev --budget-usd 1`。该命令启动即参赛，默认不限手数/时长。模型累计预算随持久数据库保留；同一账号只运行一个实例。
+需要由进程管理器自动重启的本地无界面服务，可在构建后使用 `node --env-file-if-exists=.env dist/cli/bot.js --strategy jev --budget-usd 1` 作为启动命令。该命令启动即参赛，默认不限手数/时长。Docker 部署使用下文的 Compose 管理入口和 `AUTO_START_BOT`，保留控制台及管理 API。模型累计预算随持久数据库保留；同一账号只运行一个实例。
 
 ## Jev 与推理模型组合
 
@@ -214,7 +214,15 @@ HOST=0.0.0.0 READ_ONLY_DEMO=true DEMO_DATABASE_PATH=data/public-demo.sqlite node
 
 数据库位于 `DATABASE_PATH`。WAL 模式可能同时存在主 `.sqlite`、`-wal` 和 `-shm` 文件，把整个目录置于可写持久卷，更新代码或重建容器时保留该目录。
 
-不要只复制运行中的主文件。使用 SQLite online backup 创建一致副本，备份含敏感运行数据，应保存到受限目录：
+不要只复制运行中的主文件。Compose 部署在服务运行时执行：
+
+```sh
+sh scripts/manage.sh backup
+```
+
+管理脚本通过 `docker compose exec` 使用容器内 Node.js SQLite online backup，在 `/app/data/backups/` 创建一致副本，再通过 `docker compose cp` 复制到宿主机 `data/backups/`。备份含敏感运行数据，默认宿主目录位于 Git 忽略的 `data/` 下，应限制访问，不公开上传。
+
+本地 Node.js 部署可直接执行同类在线备份：
 
 ```sh
 node --input-type=module <<'JS'
@@ -235,52 +243,48 @@ JS
 
 替换源路径为实际数据库位置。恢复步骤：
 
-1. 停止 Bot 及所有访问原数据库的进程。
+1. 停止 Bot 及所有访问原数据库的进程；Compose 部署先执行 `sh scripts/manage.sh stop`，等待离桌确认及服务停止。
 2. 将原主文件、同名 WAL/SHM 一起移入受限归档目录，不覆盖唯一原件。
 3. 将一致备份复制到 `DATABASE_PATH`，设置服务用户可读写权限，不把旧 WAL/SHM 放回副本旁。
-4. 启动控制台，核对 Run、决策、结算和费用；参赛前确认没有其他实例连接该 Bot。
+4. 暂设 `AUTO_START_BOT=false` 后启动控制台，核对 Run、决策、结算和费用；Compose 部署使用 `sh scripts/manage.sh start`。参赛前确认没有其他实例连接该 Bot，再恢复所需启动配置。
 
 恢复旧备份也会回退本地费用账本，但供应商实际消费不会回退；需要结合外部账户与当前牌桌核对，不能把恢复视为额度重置。
 
-## Docker
+## Docker Compose
 
 仓库的多阶段 [Dockerfile](../Dockerfile) 使用 Node.js 24，生产镜像仅装生产依赖，以非 root `node` 用户运行。已在本地 Docker Engine 验证构建、只读 Demo、HTTP 健康、写入禁用、UID 1000 和持久卷重启；实际服务器配置与验证见[部署手册](deployment.md)及[验证报告](verification.md)。
 
-```sh
-docker build -t jev-card-agent .
-docker volume create jev-demo-data
-```
-
-无凭据只读演示：
+克隆仓库或下载源码，保留 [compose.yaml](../compose.yaml)、`.env.example` 和 `scripts/`。在部署目录创建 `.env`，配置独立 `API_TOKEN` 和供应商凭据后启动；服务器无需另外安装 Node.js。
 
 ```sh
-docker run --rm --init --name jev-demo \
-  -p 127.0.0.1:8787:8787 \
-  -e READ_ONLY_DEMO=true \
-  -e DEMO_DATABASE_PATH=/app/data/demo.sqlite \
-  -v jev-demo-data:/app/data \
-  jev-card-agent
+cp -n .env.example .env
+chmod 600 .env
+# 编辑 .env 后启动。
+sh scripts/manage.sh start
+sh scripts/manage.sh status
 ```
 
-真实受限控制台：先在 `.env` 配置独立 `API_TOKEN` 和供应商凭据，使用另一个持久卷，并关闭占用同一宿主端口的 Demo。
+统一管理入口如下，内部的容器操作全部使用 `docker compose`：
 
 ```sh
-docker volume create jev-live-data
-docker run -d --init --restart unless-stopped --name jev-agent \
-  --env-file .env \
-  -e HOST=0.0.0.0 \
-  -e DATABASE_PATH=/app/data/jev.sqlite \
-  -e READ_ONLY_DEMO=false \
-  -p 127.0.0.1:8787:8787 \
-  -v jev-live-data:/app/data \
-  jev-card-agent
+sh scripts/manage.sh start
+sh scripts/manage.sh stop
+sh scripts/manage.sh restart
+sh scripts/manage.sh update
+sh scripts/manage.sh status
+sh scripts/manage.sh logs
+sh scripts/manage.sh backup
 ```
 
-宿主端口只绑定 loopback，外部访问通过 HTTPS 反向代理。秘密在容器启动时注入；`.dockerignore` 排除 `.env` 与本地运行数据，凭据不进入镜像。
+`start` 使用配置的镜像，默认是 `hewenyulucky/jev-card-agent:latest`，首次缺少镜像时自动拉取；发现已有运行实例时保持容器不变，配置调整通过 `restart` 或 `update` 生效。`stop`、`restart`、`update` 先请求正常停止，等待当前手牌结束并通过平台 REST 确认离桌；无法确认时不继续停止或替换容器。`restart` 使用本地镜像，`update` 才显式拉取配置标签的最新镜像并重建。旧 `scripts/update-container.sh` 入口保留并转交 `manage.sh update`。`logs` 显示最近 100 行并持续跟踪，Ctrl+C 只退出日志查看。
 
-默认应用启动后从控制台显式开启 Bot；需要重启后自动恢复参赛时，在 `.env` 设置 `AUTO_START_BOT=true`。停止时先从 UI 请求停止并等到 Runtime 已停止、平台已离桌，再执行 `docker stop --time 150 jev-agent`。这 150 秒用于已排空服务的退出，不是当前手牌的最长时限。`docker logs jev-agent` 可查看日志，分享前删除私人运行标识及数据。
+正常排空默认无时间上限；Compose 的 150 秒停止宽限期用于已排空服务的退出，不是当前手牌的最长时限。不要直接替换仍在打牌的容器。`backup` 为在线一致备份，输出默认复制到宿主机 `data/backups/`。
 
-使用仓库 [compose.yaml](../compose.yaml) 部署时，手动运行 `sh scripts/update-container.sh`：脚本先请求正常停止并等待离桌验证，再拉取镜像和重建容器。健康检查失败不会自动拉取新镜像。完整命令见[服务器部署手册](deployment.md)。
+宿主端口默认只绑定 loopback，外部访问通过 HTTPS 反向代理。秘密在容器启动时注入；`.dockerignore` 排除 `.env` 与本地运行数据，凭据不进入镜像。`jev-card-agent-data` 命名卷保存数据库，启动、重启和更新均保留该卷。
+
+默认应用启动后从控制台显式开启 Bot；需要重启后自动恢复参赛时，在 `.env` 设置 `AUTO_START_BOT=true`。无凭据只读演示可在独立部署环境设置 `READ_ONLY_DEMO=true`、`DEMO_DATABASE_PATH=/app/data/demo.sqlite`，沿用同一管理入口；不要让 Demo 和真实服务同时占用同一宿主端口或共用数据库。
+
+GitHub Actions 在检查通过后无缓存构建并自动发布镜像，服务器更新始终由操作者手动执行 `update`。健康检查失败不会自动拉取新镜像。完整配置与域名接入见[服务器部署手册](deployment.md)。
 
 ## 自动检查与验证边界
 

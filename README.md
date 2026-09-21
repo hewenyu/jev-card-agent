@@ -6,6 +6,8 @@ An autonomous poker agent and decision-model evaluation platform powered by Jev,
 
 OpenPoker 提供游戏服务器、匹配和结算；本项目负责 Agent 的持续运行、决策、恢复和评估。最终接入方式为自托管 WebSocket Bot。
 
+公开历史与决策回放：**https://openpoker.zve.ccwu.cc**。访客可直接查看已结束的真实牌局；实时信息与管理操作需要独立访问令牌。
+
 ## 本地演示
 
 ```sh
@@ -70,6 +72,20 @@ npm run test:e2e
 [运行手册](docs/running.md) 包含生产启动、只读公开 Demo、访问控制、Docker、SQLite 一致备份与恢复。密钥、数据库、WAL 文件与私有对局数据不进入公开源码。
 
 生产构建、真实本地 API/SQLite 浏览器测试、Docker 构建、非 root 容器运行与持久卷重启均已验证。真实 Arena、模型接口和服务器部署的具体证据及限制以[验证报告](docs/verification.md)和[服务器部署手册](docs/deployment.md)为准。镜像发布可以通过 CI 自动完成，运行中的服务器只在手动执行更新流程后替换镜像。
+
+服务器统一使用 Docker Compose。进入包含 `compose.yaml`、私有 `.env` 和 `scripts/` 的部署目录：
+
+```sh
+sh scripts/manage.sh start   # 已运行时保持原容器；首次自动获取镜像
+sh scripts/manage.sh status
+sh scripts/manage.sh logs
+sh scripts/manage.sh backup
+sh scripts/manage.sh stop    # 等当前手牌结束并确认离桌
+sh scripts/manage.sh restart # 排空后重建，使用已有镜像
+sh scripts/manage.sh update  # 排空后拉取 latest，再重建
+```
+
+GitHub Actions 自动检查并**无缓存**发布镜像；运行服务器只在手动执行管理命令后更新。SQLite 持久卷和历史预算账本在容器更新时保留。
 
 ## 文档
 

@@ -85,6 +85,9 @@ input[type='checkbox'] {
   grid-template-columns: 225px minmax(0, 1fr);
   gap: 20px;
 }
+.replay-main {
+  min-width: 0;
+}
 .hand-browser {
   min-width: 0;
   align-self: start;
