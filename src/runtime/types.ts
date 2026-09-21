@@ -30,6 +30,14 @@ export interface RuntimeStatus {
   state: PokerState;
 }
 export interface StartOptions {
+  reasoning?: {
+    provider: string;
+    protocol: string;
+    model: string;
+    thinking?: 'enabled' | 'disabled';
+    effort?: string;
+    timeoutMs: number;
+  };
   runId?: string;
   kind?: 'live' | 'demo';
   strategy?: string;

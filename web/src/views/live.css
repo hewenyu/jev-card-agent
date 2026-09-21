@@ -1,19 +1,39 @@
+.spectator-heading {
+  margin-bottom: 20px;
+}
+.spectator-heading h1 {
+  font-size: 29px;
+}
+.spectator-heading .subtle {
+  margin-bottom: 0;
+}
+.spectator-decisions .hand-session-panel {
+  margin: 0;
+  max-height: min(660px, calc(100dvh - 210px));
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.spectator-support {
+  margin-top: 24px;
+}
 .spectator-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.8fr) minmax(240px, 1fr);
+  grid-template-columns: minmax(0, 1.55fr) minmax(340px, 1fr);
+  align-items: start;
   gap: 24px;
 }
-.spectator-layout > .panel {
+.spectator-layout > .panel,
+.spectator-decisions {
   min-width: 0;
 }
-.spectator-layout .key-values {
+.spectator-support .key-values {
   padding: 0 24px;
 }
-.spectator-layout .key-values dd {
+.spectator-support .key-values dd {
   overflow-wrap: anywhere;
   min-width: 0;
 }
-.spectator-layout > .panel > .badge {
+.spectator-support > .panel > .badge {
   margin: 0 24px;
 }
 .spectator-note {
@@ -53,6 +73,11 @@
 @media (max-width: 1100px) {
   .spectator-layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .spectator-decisions .hand-session-panel {
+    max-height: none;
+    overflow-y: visible;
+    scrollbar-gutter: auto;
   }
 }
 @media (max-width: 620px) {

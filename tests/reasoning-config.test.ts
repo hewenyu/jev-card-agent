@@ -7,6 +7,8 @@ describe('backend reasoning configuration', () => {
       reasoningMode: 'always',
       reasoningEffort: 'high',
       reasoningMaxOutputTokens: 4096,
+      reasoningTimeoutMs: 10000,
+      reasoningProvider: 'standard',
     });
   });
   it('requires an explicit adaptive mode and accepts bounded provider settings', () => {

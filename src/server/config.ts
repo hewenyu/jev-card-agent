@@ -18,16 +18,21 @@ export interface AppConfig {
   jevModel: string;
   jevTimeoutMs: number;
   reasoningApiKey: string;
+  reasoningProvider: 'standard' | 'deepseek';
+  deepseekBaseUrl: string;
+  deepseekModel: string;
+  deepseekThinking: 'enabled' | 'disabled';
   reasoningBaseUrl: string;
   reasoningProtocol: 'responses' | 'messages';
   reasoningModel: string;
   reasoningMessagesModel: string;
   reasoningTimeoutMs: number;
   reasoningMode: 'always' | 'adaptive';
-  reasoningEffort: 'low' | 'medium' | 'high';
+  reasoningEffort: 'low' | 'medium' | 'high' | 'max';
   reasoningMaxOutputTokens: number;
   hybridTimeoutMs: number;
   reasoningInputPricePerMillion: number;
+  reasoningCacheReadInputPricePerMillion: number;
   reasoningOutputPricePerMillion: number;
   totalBudgetUsd: number;
   runBudgetUsd: number;
@@ -47,10 +52,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
   const botStrategy = env.BOT_STRATEGY || 'jev';
   const reasoningMode = env.REASONING_MODE || 'always';
   const reasoningEffort = env.REASONING_EFFORT || 'high';
+  const reasoningProvider = env.REASONING_PROVIDER || 'standard';
+  if (!['standard', 'deepseek'].includes(reasoningProvider))
+    throw new Error('REASONING_PROVIDER must be standard or deepseek');
+  const deepseek = reasoningProvider === 'deepseek';
+  const deepseekModel = env.DEEPSEEK_MODEL || 'deepseek-flash';
+  const deepseekThinking = env.DEEPSEEK_THINKING || 'enabled';
+  if (!['enabled', 'disabled'].includes(deepseekThinking))
+    throw new Error('DEEPSEEK_THINKING must be enabled or disabled');
+  if (deepseek && !['deepseek-flash', 'deepseek-v4-pro'].includes(deepseekModel))
+    throw new Error('DEEPSEEK_MODEL must use an exact published model ID');
+  const prices = deepseekModel === 'deepseek-v4-pro' ? [1.32, 0.044, 3.96] : [0.3, 0.006, 1.2];
+  const inputPrice = numeric(
+    deepseek ? env.DEEPSEEK_INPUT_PRICE_PER_MILLION : env.REASONING_INPUT_PRICE_PER_MILLION,
+    deepseek ? prices[0]! : 10,
+    deepseek ? 'DEEPSEEK_INPUT_PRICE_PER_MILLION' : 'REASONING_INPUT_PRICE_PER_MILLION',
+  );
   if (!['always', 'adaptive'].includes(reasoningMode))
     throw new Error('REASONING_MODE must be always or adaptive');
-  if (!['low', 'medium', 'high'].includes(reasoningEffort))
-    throw new Error('REASONING_EFFORT must be low, medium or high');
+  if (!['low', 'medium', 'high', ...(deepseek ? ['max'] : [])].includes(reasoningEffort))
+    throw new Error('REASONING_EFFORT must be low, medium or high (max requires DeepSeek)');
   if (!['jev', 'baseline', 'jev-reasoning'].includes(botStrategy))
     throw new Error('BOT_STRATEGY must be jev, baseline or jev-reasoning');
   if (env.AUTO_START_BOT && !['true', 'false'].includes(env.AUTO_START_BOT))
@@ -76,12 +97,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
     jevBaseUrl: env.JEV_BASE_URL || 'https://api.typesafe.ai',
     jevModel: env.JEV_MODEL || 'jev-1.13.0',
     jevTimeoutMs: numeric(env.JEV_TIMEOUT_MS, 3000, 'JEV_TIMEOUT_MS', 1),
-    reasoningApiKey: synthetic ? '' : env.REASONING_API_KEY || '',
+    reasoningApiKey: synthetic
+      ? ''
+      : (deepseek ? env.DEEPSEEK_API_KEY : env.REASONING_API_KEY) || '',
+    reasoningProvider: reasoningProvider as AppConfig['reasoningProvider'],
+    deepseekBaseUrl: env.DEEPSEEK_API_BASE_URL || 'https://api.deepseek.com/anthropic',
+    deepseekModel,
+    deepseekThinking: deepseekThinking as AppConfig['deepseekThinking'],
     reasoningBaseUrl: env.REASONING_API_BASE_URL || 'https://api.openai.com/v1',
-    reasoningProtocol: env.REASONING_API_FORMAT === 'messages' ? 'messages' : 'responses',
+    reasoningProtocol:
+      deepseek || env.REASONING_API_FORMAT === 'messages' ? 'messages' : 'responses',
     reasoningModel: env.REASONING_MODEL || 'gpt-6-astra',
     reasoningMessagesModel: env.REASONING_MESSAGES_MODEL || 'claude-opus-5',
-    reasoningTimeoutMs: numeric(env.REASONING_TIMEOUT_MS, 12000, 'REASONING_TIMEOUT_MS', 1),
+    reasoningTimeoutMs: numeric(env.REASONING_TIMEOUT_MS, 10000, 'REASONING_TIMEOUT_MS', 1),
     reasoningMode: reasoningMode as AppConfig['reasoningMode'],
     reasoningEffort: reasoningEffort as AppConfig['reasoningEffort'],
     reasoningMaxOutputTokens: numeric(
@@ -91,15 +119,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
       1,
     ),
     hybridTimeoutMs: numeric(env.HYBRID_TIMEOUT_MS, 15000, 'HYBRID_TIMEOUT_MS', 1),
-    reasoningInputPricePerMillion: numeric(
-      env.REASONING_INPUT_PRICE_PER_MILLION,
-      10,
-      'REASONING_INPUT_PRICE_PER_MILLION',
-    ),
+    reasoningInputPricePerMillion: inputPrice,
+    reasoningCacheReadInputPricePerMillion: deepseek
+      ? numeric(
+          env.DEEPSEEK_CACHE_READ_INPUT_PRICE_PER_MILLION,
+          prices[1]!,
+          'DEEPSEEK_CACHE_READ_INPUT_PRICE_PER_MILLION',
+        )
+      : inputPrice,
     reasoningOutputPricePerMillion: numeric(
-      env.REASONING_OUTPUT_PRICE_PER_MILLION,
-      50,
-      'REASONING_OUTPUT_PRICE_PER_MILLION',
+      deepseek ? env.DEEPSEEK_OUTPUT_PRICE_PER_MILLION : env.REASONING_OUTPUT_PRICE_PER_MILLION,
+      deepseek ? prices[2]! : 50,
+      deepseek ? 'DEEPSEEK_OUTPUT_PRICE_PER_MILLION' : 'REASONING_OUTPUT_PRICE_PER_MILLION',
     ),
     totalBudgetUsd: numeric(env.TOTAL_BUDGET_USD, 9, 'TOTAL_BUDGET_USD'),
     runBudgetUsd: numeric(env.RUN_BUDGET_USD, 1, 'RUN_BUDGET_USD'),

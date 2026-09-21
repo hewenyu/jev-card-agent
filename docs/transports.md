@@ -4,11 +4,12 @@
 
 采用 Node.js + TypeScript 自托管 Bot，通过 `wss://openpoker.ai/ws` 连接 OpenPoker。正式组合策略由后端先调用推理服务的 HTTPS API，再调用 Jev 的请求—响应 API 作最终选择。HTTP webhook、异步结果回调和远程决策 worker 不在交付范围内。
 
-| 服务           | 地址                                            | 用途                                    |
-| -------------- | ----------------------------------------------- | --------------------------------------- |
-| OpenPoker WS   | `wss://openpoker.ai/ws`                         | 实时状态与行动                          |
-| OpenPoker REST | `https://api.openpoker.ai`，路径以 `/api/` 开头 | 身份、活跃牌局、历史与统计              |
-| Jev            | `https://api.typesafe.ai/v1/systemone`          | POST state/model/questions，返回 Choice |
+| 服务              | 地址                                             | 用途                                    |
+| ----------------- | ------------------------------------------------ | --------------------------------------- |
+| OpenPoker WS      | `wss://openpoker.ai/ws`                          | 实时状态与行动                          |
+| OpenPoker REST    | `https://api.openpoker.ai`，路径以 `/api/` 开头  | 身份、活跃牌局、历史与统计              |
+| Jev               | `https://api.typesafe.ai/v1/systemone`           | POST state/model/questions，返回 Choice |
+| DeepSeek Messages | `https://api.deepseek.com/anthropic/v1/messages` | 专用 provider 的推理分析                |
 
 Bot 主动外连，无需为了接收牌局事件开放公网 webhook。产品控制台的认证和访问端口按部署文档配置。
 
@@ -20,7 +21,7 @@ Bot 主动外连，无需为了接收牌局事件开放公网 webhook。产品�
 
 实时表格包含公共牌、Bot 自己的当前手牌、底池、座位名称、筹码、当前投注、弃牌状态、行动座位及牌局标识。Bot 所有者明确要求公开自己的手牌；不包含未公开的对手底牌。SSE 同时提供当前决策阶段，`GET /api/live/decisions` 提供当前手已保存的决策及分析。合法动作授权、turn token、鉴权密钥和运行错误不进入公共投影。已结束手牌的脱敏历史由历史 API 提供。
 
-模型调用由后端配置控制：`REASONING_MODE=always` 每次先请求分析，再让 Jev 选择；默认思考强度 `high`。一个 session 对应一手牌，输入由持久化的、截止当前回合可见的同手历史重建；不依赖供应商会话存储。仅 `REASONING_MODE=adaptive` 使用旧的 Jev 按需分析门控。浏览器只读取调用进度与已经保存的结果，不能改策略或触发额外调用。
+模型调用由后端配置控制：本轮目标 `REASONING_MODE=always` 每次先请求 DeepSeek Flash 关闭 thinking 的分析，再让 Jev 选择；`always` 不等于开启思考。一个 session 对应一手牌，输入由持久化的、截止当前回合可见的同手历史重建；不依赖供应商会话存储。仅 `REASONING_MODE=adaptive` 使用旧的 Jev 按需分析门控。浏览器只读取调用进度与已经保存的结果，不能改策略或触发额外调用。
 
 `recentEvents` 最多保留当前 Run、当前桌、当前手牌的 32 个公开事件，包括开始、玩家动作和结算。`ChipMovement` 使用稳定 ID、座位、整数筹码金额及 `to-pot` / `from-pot` 方向。下注金额仅取协议的 `contribution_delta` 或已知的 `stack_before - stack_after`；raise-to 总额不能当作本次投入筹码。结算只使用 `hand_result.payouts` 的 `{seat, amount}` 数组。无法核实的筹码变化不生成动画；桌面状态仍按已验证 Runtime 快照更新。
 
@@ -75,3 +76,24 @@ OpenPoker 的核心对局使用免费的整数虚拟筹码。账户 `/api/me` �
 恢复校验继续遵循官方字段排除和 SHA-256 合同；不根据字段名称猜测浮点数，不忽略哈希，也不修改筹码状态。只有新接收并保留数字词法的事件能够完整复核；已经通过普通 `JSON.stringify` 丢失词法的旧记录不回填猜测值。现场数字恢复仅用于诊断，不作为运行时兼容分支。
 
 官方依据：[V2 消息合同的 state_hash verification](https://docs.openpoker.ai/api-reference/message-types/)及[完整文档](https://docs.openpoker.ai/llms-full.txt)。哈希证明快照一致性，不证明完整收到所有私有事件。
+
+## DeepSeek Messages 专用合同
+
+DeepSeek 通过 `REASONING_PROVIDER=deepseek` 明确选择专用 provider，默认 `standard` 的 Responses / Messages provider 保持原有职责。使用独立 `DEEPSEEK_API_KEY`，不回退到标准 provider 密钥。`DEEPSEEK_API_BASE_URL` 默认官方 Anthropic base URL `https://api.deepseek.com/anthropic`，最终请求路径为 `/anthropic/v1/messages`；使用 `x-api-key` 鉴权，不将凭据放在 URL。`anthropic-version` 在该兼容入口被忽略，`max_tokens`、`messages` 和 `stream` 属于支持字段。
+
+| 项目       | 专用 provider 合同                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------ |
+| 型号       | 官方请求 ID `deepseek-flash` 对应 DeepSeek-V4.1-Flash；不猜测 `deepseek-v4.1-flash` 等名称       |
+| 思考开关   | 显式 `thinking: { type: 'enabled' }` 或 `{ type: 'disabled' }`，不用标准 Messages 的 `adaptive`  |
+| 强度       | 启用时发送 `output_config.effort`；`REASONING_EFFORT=medium` 映射 `high`，`max` 仅 DeepSeek 可用 |
+| 思考预算   | 官方忽略 `thinking.budget_tokens`，不能用它证明限制已生效                                        |
+| 返回校验   | 核对响应 `model` 与请求 ID，并要求完成响应及可用分析；保存实际返回的 thinking，缺失时标明未提供  |
+| 故障与计费 | 与现有 provider 共用取消、逐次预留/结算、重试和总 deadline；未知用量保留预留                     |
+
+官方明确说明未知模型名会自动映射到 `deepseek-flash`；`claude-opus*` 会映射到 `deepseek-v4-pro`，`claude-haiku*` / `claude-sonnet*` 映射到 Flash。旧 Flash 名称也可能被映射到已更新模型。因此 HTTP 200 不能单独证明请求型号成立；专用 provider 限制已知型号并严格比较实际返回值，不能利用映射掩盖模型身份不匹配。
+
+缓存输入保留供应商原 usage，并按 Messages 口径将 `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` 归一化为总输入，分别保存缓存字段；不得直接套用其他协议的总输入字段。缓存读取按独立费率，非缓存输入与缓存写入按普通输入费率计价。DeepSeek 专属 `DEEPSEEK_INPUT_PRICE_PER_MILLION`、`DEEPSEEK_CACHE_READ_INPUT_PRICE_PER_MILLION`、`DEEPSEEK_OUTPUT_PRICE_PER_MILLION` 默认分别为 $0.30、$0.006、$1.20，使用本次官方 Flash 文档的保守峰值。官方谷值为其一半；预留不能假设必定命中缓存或处于谷时，估算价不代替最终供应商账单。
+
+所有者已选择本轮目标 `DEEPSEEK_MODEL=deepseek-flash`、`DEEPSEEK_THINKING=disabled`，请求不发送 `output_config.effort`。分析单次 10 秒，首次之后最多 3 次重试并共享 40 秒 Hybrid deadline；最终行动仍由 Jev 决定，不自动调用 GPT 或 Claude 兜底。实际集成与上线状态另记验证报告。
+
+合同依据：[Anthropic API 兼容说明](https://api-docs.deepseek.com/guides/anthropic_api)、[Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode)、[Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing)。支持字段与官方价格是文档证据；真实返回、延迟及思考开关对比另记[验证报告](verification.md)。

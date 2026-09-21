@@ -28,7 +28,7 @@ Live SSE updates and reconnects automatically. Every player’s displayed stack 
 flowchart LR
   O[OpenPoker WebSocket V2] --> R[Node.js runtime]
   R --> C[Visible state, opponents and hand session]
-  C --> A[Reasoning analysis · high]
+  C --> A[DeepSeek Flash analysis · thinking off]
   A --> J[Jev final legal choice]
   J --> V[Validate and submit]
   V --> O
@@ -36,7 +36,9 @@ flowchart LR
   T --> E[Replay, evaluation and analytics]
 ```
 
-The deployment policy is `jev-reasoning` with `REASONING_MODE=always` and `REASONING_EFFORT=high`: request analysis for each valid decision, then let Jev choose the final legal candidate. The reasoning model cannot submit actions. Pure `jev`, a rule-based `baseline`, and explicitly configured `adaptive` reasoning remain available for comparison.
+The selected deployment target is `jev-reasoning` with `REASONING_MODE=always`: request analysis from **DeepSeek-V4.1-Flash (`deepseek-flash`) with thinking disabled** for each valid decision, then let Jev choose the final legal candidate. `always` controls whether analysis is requested; it does not enable thinking. DeepSeek cannot submit actions. Pure `jev`, a rule-based `baseline`, and explicitly configured `adaptive` analysis remain available for comparison.
+
+The dedicated **DeepSeekProvider** uses official Anthropic-compatible Messages, with a 10-second timeout per analysis attempt. GPT and Claude are not automatic fallback providers. Standard Responses / Messages adapters remain available for explicit experiments. The owner has selected this target; deployment and live validation status are recorded separately in the [verification report](docs/verification.md).
 
 Each hand has a persistent session. Inputs include visible action history, opponent statistics with sample counts, recent verified results and earlier decisions from that same hand, bounded by the current decision’s cutoff. Replay preserves the saved input rather than adding later information.
 
@@ -70,7 +72,7 @@ cp -n .env.example .env
 chmod 600 .env
 ```
 
-Fill in `OPEN_POKER_API_KEY`, `JEV_API_KEY` and the reasoning provider settings in your private `.env`. Configure an independent `API_TOKEN` for internal administration; the browser never receives it. See the [configuration guide](docs/running.md) for protocols, models, timeouts and budgets.
+Fill in `OPEN_POKER_API_KEY`, `JEV_API_KEY` and the independent `DEEPSEEK_API_KEY` in your private `.env`. Configure an independent `API_TOKEN` for internal administration; the browser never receives it. See the [configuration guide](docs/running.md) for protocols, models, timeouts and budgets.
 
 ```sh
 # Check platform authentication without joining a table.
@@ -87,8 +89,17 @@ PUBLIC_HISTORY=true
 AUTO_START_BOT=true
 BOT_STRATEGY=jev-reasoning
 REASONING_MODE=always
-REASONING_EFFORT=high
+REASONING_PROVIDER=deepseek
+DEEPSEEK_API_BASE_URL=https://api.deepseek.com/anthropic
+DEEPSEEK_MODEL=deepseek-flash
+DEEPSEEK_THINKING=disabled
+REASONING_TIMEOUT_MS=10000
+REASONING_MAX_OUTPUT_TOKENS=4096
+HYBRID_TIMEOUT_MS=40000
+JEV_TIMEOUT_MS=3000
 ```
+
+Set these values explicitly after copying `.env.example`; library defaults do not select this deployment target. DeepSeek uses its own key and model settings. With `DEEPSEEK_THINKING=disabled`, no effort parameter is sent, even if `REASONING_EFFORT=high` remains in an older environment. See the [provider contract](docs/transports.md#deepseek-messages-专用合同).
 
 Then run `npm run build` and `npm run start`. Without auto-start, the server only serves the console. The standalone `bot` command is a separate entry point; use one runtime per Bot and database. Real model calls cost money, and hand/time limits do not guarantee that many hands will finish.
 

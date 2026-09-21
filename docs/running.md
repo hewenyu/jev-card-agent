@@ -1,6 +1,6 @@
 # 运行与部署手册
 
-本手册对应实际 Node.js 命令、环境变量和控制接口。正式运行配置使用 `jev-reasoning`：每次先请求 high 强度分析，再由 Jev 作最终选择。实时游戏连接使用 OpenPoker WebSocket V2。Demo、历史回放和真实 Arena 数据分别标识。
+本手册对应实际 Node.js 命令、环境变量和控制接口。本轮已选部署目标使用 `jev-reasoning`：每次先请求 DeepSeek-V4.1-Flash 关闭 thinking 的分析，再由 Jev 作最终选择。实际部署与验收状态见[验证报告](verification.md)。实时游戏连接使用 OpenPoker WebSocket V2。Demo、历史回放和真实 Arena 数据分别标识。
 
 ## 安装
 
@@ -110,7 +110,7 @@ npm run diagnose -- --reasoning --skip-openpoker
 
 ## 正式自动参赛
 
-填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY`、独立推理服务凭据与内部 `API_TOKEN`，设置 `AUTO_START_BOT=true`、`BOT_STRATEGY=jev-reasoning`、`REASONING_MODE=always`、`REASONING_EFFORT=high`、`PUBLIC_HISTORY=true`，执行 `npm run build`、`npm run start`。服务启动后自动参赛，网页只展示实时牌桌、自己的手牌和已保存决策。策略、模型、预算和自动启动配置保存在后台。
+填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY`、独立 `DEEPSEEK_API_KEY` 与内部 `API_TOKEN`，设置 `AUTO_START_BOT=true`、`BOT_STRATEGY=jev-reasoning`、`REASONING_MODE=always`、`REASONING_PROVIDER=deepseek`、`DEEPSEEK_MODEL=deepseek-flash`、`DEEPSEEK_THINKING=disabled`、`PUBLIC_HISTORY=true`，执行 `npm run build`、`npm run start`。完整超时和地址配置见[部署手册](deployment.md)。服务启动后自动参赛，网页只展示实时牌桌、自己的手牌和已保存决策。策略、模型、预算和自动启动配置保存在后台。
 
 无界面入口：
 
@@ -168,26 +168,33 @@ npm run bot -- --strategy jev-reasoning --max-hands 10 --max-minutes 30 --budget
 
 ## Jev 与推理模型组合
 
-正式组合策略默认使用 `REASONING_MODE=always` 和 `REASONING_EFFORT=high`。每次有效行动都先请求分析，再由 Jev 从合法候选中选择。纯 Jev 与 baseline 是独立对照策略，切换策略产生不同 Run。
+本轮目标显式选择 `REASONING_PROVIDER=deepseek`、`DEEPSEEK_MODEL=deepseek-flash`、`DEEPSEEK_THINKING=disabled` 和 `REASONING_MODE=always`。每次有效行动先请求关闭思考的分析，再由 Jev 从合法候选中选择；`always` 不等于启用 thinking。纯 Jev 与 baseline 是独立对照策略，切换策略产生不同 Run。
 
 正式组合流程：**冻结本手 session 与当前局面 → 推理分析 → Jev 最终选择 → Runtime 校验并提交**。推理模型只提供建议和可观察依据，没有动作提交权。只有后台显式设置 `REASONING_MODE=adaptive` 时，才使用旧的 **Jev 初始选择及路由 → 按需分析 → Jev 再次选择** 流程。
 
-always 模式分析超时、预算不足或供应商失败时，在剩余时间内由 Jev 决策；无法及时获得合法模型结果时使用本地 fallback。adaptive 模式分析失败时可保留仍有效的初始 Jev 选择。两种模式的迟到结果均由 Runtime 拒绝，记录失败阶段，不将故障降级标记为完成分析。
+always 模式分析超时、预算不足或供应商失败时，在剩余时间内由 Jev 决策；无法及时获得合法模型结果时使用本地 fallback，不转向 GPT、Claude 或其他 provider。adaptive 模式分析失败时可保留仍有效的初始 Jev 选择。两种模式的迟到结果均由 Runtime 拒绝，记录失败阶段，不将故障降级标记为完成分析。
 
-| 变量                                 | 含义                                         |
-| ------------------------------------ | -------------------------------------------- |
-| `REASONING_API_KEY`                  | 独立推理服务凭据                             |
-| `REASONING_API_BASE_URL`             | 服务根地址或 `/v1` 地址；HTTPS，本地测试除外 |
-| `REASONING_API_FORMAT`               | `responses` 或 `messages`                    |
-| `REASONING_MODEL`                    | Responses 请求模型名                         |
-| `REASONING_MESSAGES_MODEL`           | Messages 请求模型名                          |
-| `REASONING_MODE`                     | 默认 `always`；`adaptive` 为显式按需分析模式 |
-| `REASONING_EFFORT`                   | 默认 `high`，请求供应商支持的思考强度        |
-| `REASONING_MAX_OUTPUT_TOKENS`        | 默认 `4096`，推理输出上限                    |
-| `REASONING_TIMEOUT_MS`               | 默认 `12000`，分析期限                       |
-| `HYBRID_TIMEOUT_MS`                  | 默认 `15000`，组合决策总期限                 |
-| `REASONING_INPUT_PRICE_PER_MILLION`  | 输入价格预留估算，按服务实际定价核对         |
-| `REASONING_OUTPUT_PRICE_PER_MILLION` | 输出价格预留估算，按服务实际定价核对         |
+| 变量                                 | 含义                                                                        |
+| ------------------------------------ | --------------------------------------------------------------------------- |
+| `REASONING_PROVIDER`                 | 库默认 `standard`；本轮部署显式选择 `deepseek`                              |
+| `DEEPSEEK_API_KEY`                   | DeepSeek 独立凭据，不复用标准 provider 密钥                                 |
+| `DEEPSEEK_API_BASE_URL`              | 本轮使用官方 `https://api.deepseek.com/anthropic`                           |
+| `DEEPSEEK_MODEL`                     | 本轮 `deepseek-flash`；仅接受已核对的官方请求 ID                            |
+| `DEEPSEEK_THINKING`                  | 库默认 `enabled`；本轮部署显式设置 `disabled`                               |
+| `REASONING_API_KEY`                  | 标准 Responses / Messages provider 的凭据                                   |
+| `REASONING_API_BASE_URL`             | 标准 provider 根地址或 `/v1` 地址；HTTPS，本地测试除外                      |
+| `REASONING_API_FORMAT`               | 标准 provider 使用 `responses` 或 `messages`                                |
+| `REASONING_MODEL`                    | 标准 Responses 请求模型名                                                   |
+| `REASONING_MESSAGES_MODEL`           | 标准 Messages 请求模型名                                                    |
+| `REASONING_MODE`                     | 默认 `always`；`adaptive` 为显式按需分析模式                                |
+| `REASONING_EFFORT`                   | 默认 `high`；DeepSeek disabled 时不发送 effort，不会因残留配置开启 thinking |
+| `REASONING_MAX_OUTPUT_TOKENS`        | 默认 `4096`，分析输出上限                                                   |
+| `REASONING_TIMEOUT_MS`               | 库默认 `12000`；本轮部署显式 `10000`，单次分析期限                          |
+| `HYBRID_TIMEOUT_MS`                  | 库默认 `15000`；本轮部署显式 `40000`，组合决策总期限                        |
+| `REASONING_INPUT_PRICE_PER_MILLION`  | 标准 provider 输入价格预留估算，按实际定价核对                              |
+| `REASONING_OUTPUT_PRICE_PER_MILLION` | 标准 provider 输出价格预留估算，按实际定价核对                              |
+
+复制 `.env.example` 后必须按上面的本轮目标覆盖配置，模板默认值不等于部署选择。DeepSeek 使用独立输入、缓存命中和输出价格；官方峰值估算见[验证记录](verification.md)。首次请求后最多重试 3 次，受共同的 Hybrid deadline 和预算限制，不保证用完次数。
 
 `responses` 使用 `POST /v1/responses` 与 Bearer 鉴权；`messages` 使用 `POST /v1/messages`、`x-api-key` 和 Anthropic 版本头。这是模型 HTTP 协议，不是 OpenPoker webhook。
 
@@ -330,9 +337,9 @@ npm run test:e2e
 
 指标口径见[评估文档](evaluation.md)，实现边界见[架构](architecture.md)和[接入决定](transports.md)。
 
-## 强制思考与会话复盘
+## 每次分析与会话复盘
 
-正式 Bot 使用 `BOT_STRATEGY=jev-reasoning`、`REASONING_MODE=always`、`REASONING_EFFORT=high`。每次有效行动先请求推理分析，再由 Jev 选择合法候选；推理模型不能直接下注。`REASONING_MAX_OUTPUT_TOKENS=4096` 控制输出上限，仍受单回合 deadline 和持久费用预算约束。分析失败后由 Jev 在剩余时间内决策；无法及时取得合法模型结果时明确记录 fallback。
+本轮 Bot 目标使用 `BOT_STRATEGY=jev-reasoning`、`REASONING_MODE=always`，通过专用 DeepSeekProvider 请求 `deepseek-flash`，显式 `DEEPSEEK_THINKING=disabled`。每次有效行动先请求分析，再由 Jev 选择合法候选；DeepSeek 不能直接下注。`REASONING_MAX_OUTPUT_TOKENS=4096` 控制输出上限，单次分析 10 秒，Hybrid 总计 40 秒，仍受持久费用预算约束。分析失败后由 Jev 在剩余时间内决策；无法及时取得合法模型结果时明确记录 fallback，不调用 GPT 或 Claude 兜底。
 
 每手一个本地持久会话，同手不同动作有独立 decisionId 和 turn；重连继续使用之前可见的同手分析摘要。上下文包括当前行动历史、对手统计及样本分母、最近 10 手已核实结果；同手记忆最多 12 次，每回合分析最多 4000 字符、先前分析合计最多 12,000 字符，优先保留较近回合。交给 Jev 的建议还按完整请求剩余空间裁剪，记录原始/使用长度与截断；完整供应商文本保留用于复盘。请求由保存的上下文重建，不依赖供应商托管会话。
 

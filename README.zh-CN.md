@@ -28,7 +28,7 @@
 flowchart LR
   O[OpenPoker WebSocket V2] --> R[Node.js Runtime]
   R --> C[可见局面、对手信息与同手会话]
-  C --> A[推理分析 · high]
+  C --> A[DeepSeek Flash 分析 · 关闭思考]
   A --> J[Jev 最终合法选择]
   J --> V[校验并提交]
   V --> O
@@ -36,7 +36,9 @@ flowchart LR
   T --> E[回放、评估与分析]
 ```
 
-正式部署使用 `jev-reasoning`、`REASONING_MODE=always` 和 `REASONING_EFFORT=high`：每次有效决策先请求分析，再由 Jev 选择最终合法候选。推理模型没有动作提交权。纯 `jev`、规则 `baseline` 和需显式配置的 `adaptive` 按需分析模式保留用于对照。
+已选定的部署目标为 `jev-reasoning` 与 `REASONING_MODE=always`：每次有效决策先请求 **DeepSeek-V4.1-Flash（`deepseek-flash`）关闭 thinking 的分析**，再由 Jev 选择最终合法候选。`always` 控制每次请求分析，不表示开启思考。DeepSeek 没有动作提交权。纯 `jev`、规则 `baseline` 和需显式配置的 `adaptive` 按需分析模式保留用于对照。
+
+专用 **DeepSeekProvider** 使用官方 Anthropic 兼容 Messages，每次分析尝试超时为 10 秒，GPT 与 Claude 不作为自动兜底。标准 Responses / Messages 适配器保留用于明确配置的实验。所有者已决定此目标；实际部署与线上验收状态另记[验证报告](docs/verification.md)。
 
 每手建立持久 session。输入包含截止当前决策的可见行动历史、带样本数的对手统计、最近已核实战绩和本手此前决策。回放保留当时保存的输入，不补入之后才知道的信息。
 
@@ -70,7 +72,7 @@ cp -n .env.example .env
 chmod 600 .env
 ```
 
-在私有 `.env` 填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY` 和推理服务配置。另设独立 `API_TOKEN` 用于内部管理；浏览器不会接收该凭证。协议、模型、超时和预算配置见[运行手册](docs/running.md)。
+在私有 `.env` 填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY` 与独立的 `DEEPSEEK_API_KEY`。另设独立 `API_TOKEN` 用于内部管理；浏览器不会接收该凭证。协议、模型、超时和预算配置见[运行手册](docs/running.md)。
 
 ```sh
 # 检查平台鉴权，不加入牌桌。
@@ -87,8 +89,17 @@ PUBLIC_HISTORY=true
 AUTO_START_BOT=true
 BOT_STRATEGY=jev-reasoning
 REASONING_MODE=always
-REASONING_EFFORT=high
+REASONING_PROVIDER=deepseek
+DEEPSEEK_API_BASE_URL=https://api.deepseek.com/anthropic
+DEEPSEEK_MODEL=deepseek-flash
+DEEPSEEK_THINKING=disabled
+REASONING_TIMEOUT_MS=10000
+REASONING_MAX_OUTPUT_TOKENS=4096
+HYBRID_TIMEOUT_MS=40000
+JEV_TIMEOUT_MS=3000
 ```
+
+复制 `.env.example` 后显式设置以上值，代码默认值不会自动选择这个部署目标。DeepSeek 使用独立密钥与型号配置；`DEEPSEEK_THINKING=disabled` 时不发送 effort 参数，即使旧环境保留 `REASONING_EFFORT=high` 也不会启用思考。详见[provider 合同](docs/transports.md#deepseek-messages-专用合同)。
 
 随后执行 `npm run build` 和 `npm run start`。未开启自动启动时只提供控制台页面。独立 `bot` 命令是另一运行入口，同一个 Bot 和数据库只运行一个 Runtime。真实模型调用产生费用，手数和时长上限不保证完成对应数量的牌局。
 

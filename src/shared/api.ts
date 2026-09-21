@@ -60,6 +60,7 @@ export interface DecisionView {
   model: string | null;
   routing?: Record<string, unknown>;
   attempts?: {
+    configuration?: { thinking: 'enabled' | 'disabled'; effort?: string };
     retryIndex?: number;
     maxRetries?: number;
     purpose?: string;

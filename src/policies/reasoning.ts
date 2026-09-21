@@ -18,7 +18,7 @@ export interface ReasoningConfig {
   allowedActualModels?: string[];
   timeoutMs?: number;
   maxOutputTokens?: number;
-  effort?: 'low' | 'medium' | 'high';
+  effort?: 'low' | 'medium' | 'high' | 'max';
   meter?: ProviderMeter;
   fetch?: typeof fetch;
   maxRetries?: number;
@@ -39,9 +39,19 @@ export interface ReasoningPolicy {
     options?: DecisionOptions,
   ): Promise<ReasoningResult>;
 }
+/** Provider-specific wire differences reuse cancellation, validation, retries and metering. */
+export interface ReasoningDialect {
+  provider: ProviderAttempt['provider'];
+  supportsMaxEffort?: boolean;
+  request(input: string, config: ReasoningConfig, maxOutputTokens: number): Record<string, unknown>;
+  normalizeResponse(raw: unknown): unknown;
+  configuration(config: ReasoningConfig): NonNullable<ProviderAttempt['configuration']>;
+}
 const usageSchema = z.object({
   input_tokens: z.number().int().nonnegative(),
   output_tokens: z.number().int().nonnegative(),
+  cache_read_input_tokens: z.number().int().nonnegative().optional(),
+  cache_creation_input_tokens: z.number().int().nonnegative().optional(),
 });
 const envelope = z.object({ model: z.string().min(1), usage: usageSchema.nullish() }).passthrough();
 const responsesSchema = envelope.extend({
@@ -68,13 +78,21 @@ export class ReasoningProvider implements ReasoningPolicy {
   private readonly timeoutMs: number;
   private readonly maxOutputTokens: number;
   private readonly fetcher: typeof fetch;
-  constructor(private readonly config: ReasoningConfig) {
+  constructor(
+    private readonly config: ReasoningConfig,
+    private readonly dialect?: ReasoningDialect,
+  ) {
     if (!config.apiKey.trim() || !config.model.trim())
       throw new Error('Reasoning key and model are required');
     this.url = endpoint(config.baseUrl, config.protocol === 'responses' ? 'responses' : 'messages');
-    this.timeoutMs = config.timeoutMs ?? 12000;
+    this.timeoutMs = config.timeoutMs ?? 10000;
     this.maxOutputTokens = config.maxOutputTokens ?? 4096;
-    if (config.effort && !['low', 'medium', 'high'].includes(config.effort))
+    if (
+      config.effort &&
+      !['low', 'medium', 'high', ...(dialect?.supportsMaxEffort ? ['max'] : [])].includes(
+        config.effort,
+      )
+    )
       throw new Error('Invalid reasoning effort');
     if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs <= 0)
       throw new Error('Invalid reasoning timeout');
@@ -116,7 +134,7 @@ export class ReasoningProvider implements ReasoningPolicy {
     if (input.length > 48000) throw new ProviderError('reasoning_input_too_large');
     const call = beginAttempt(
       {
-        provider: this.config.protocol,
+        provider: this.dialect?.provider ?? this.config.protocol,
         purpose: 'analysis',
         requestedModel: this.config.model,
         inputCharacters: input.length,
@@ -126,29 +144,32 @@ export class ReasoningProvider implements ReasoningPolicy {
     );
     call.attempt.retryIndex = retryIndex;
     call.attempt.maxRetries = this.config.maxRetries ?? MODEL_MAX_RETRIES;
+    if (this.dialect) call.attempt.configuration = this.dialect.configuration(this.config);
     const timeout = AbortSignal.timeout(this.timeoutMs);
     const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
     let receivedResponse = false;
     let completed: Omit<ReasoningResult, 'attempt' | 'attempts'>;
     try {
       const responses = this.config.protocol === 'responses';
-      const body = responses
-        ? {
-            model: this.config.model,
-            input,
-            reasoning: { effort: this.config.effort ?? 'high', summary: 'auto' },
-            max_output_tokens: this.maxOutputTokens,
-            store: false,
-            stream: false,
-          }
-        : {
-            model: this.config.model,
-            max_tokens: this.maxOutputTokens,
-            messages: [{ role: 'user', content: input }],
-            thinking: { type: 'adaptive' },
-            output_config: { effort: this.config.effort ?? 'high' },
-            stream: false,
-          };
+      const body =
+        this.dialect?.request(input, this.config, this.maxOutputTokens) ??
+        (responses
+          ? {
+              model: this.config.model,
+              input,
+              reasoning: { effort: this.config.effort ?? 'high', summary: 'auto' },
+              max_output_tokens: this.maxOutputTokens,
+              store: false,
+              stream: false,
+            }
+          : {
+              model: this.config.model,
+              max_tokens: this.maxOutputTokens,
+              messages: [{ role: 'user', content: input }],
+              thinking: { type: 'adaptive' },
+              output_config: { effort: this.config.effort ?? 'high' },
+              stream: false,
+            });
       const headers: Record<string, string> = responses
         ? { Authorization: `Bearer ${this.config.apiKey}` }
         : {
@@ -166,12 +187,21 @@ export class ReasoningProvider implements ReasoningPolicy {
       );
       receivedResponse = true;
       if (!response.ok) throw new ProviderError(`reasoning_http_${response.status}`);
-      const raw: unknown = await awaitWithAbort(signal, () => response.json());
+      const received: unknown = await awaitWithAbort(signal, () => response.json());
       signal.throwIfAborted();
+      const raw = this.dialect ? this.dialect.normalizeResponse(received) : received;
       const metadata = envelope.safeParse(raw);
       if (metadata.success) {
         call.attempt.actualModel = metadata.data.model;
-        call.attempt.usage = metadata.data.usage ?? null;
+        const usage = metadata.data.usage;
+        call.attempt.usage = usage
+          ? this.dialect
+            ? usage
+            : {
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+              }
+          : null;
       }
       const actualModel = metadata.success ? metadata.data.model : null;
       if (

@@ -6,7 +6,7 @@ import { Empty, ErrorNotice, Panel, Status } from './UI';
 import './decision-analysis.css';
 
 const phaseLabels = {
-  reasoning: 'Reasoning model is thinking',
+  reasoning: 'Analyzing the hand',
   jev: 'Jev is choosing the final action',
   completed: 'Decision recorded',
   fallback: 'Runtime selected a legal fallback',

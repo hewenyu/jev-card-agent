@@ -36,7 +36,7 @@ export function Live({
       : [];
   return (
     <>
-      <div className="page-heading">
+      <div className="page-heading spectator-heading">
         <div>
           <p className="eyebrow">AUTONOMOUS PLAY · OPEN OBSERVATION</p>
           <h1>The agent’s table.</h1>
@@ -53,7 +53,6 @@ export function Live({
               : 'Reconnecting live updates…'}
         </span>
       </div>
-      <AccountFunding runtime={runtime} history={fundingHistory} />
       <div className="spectator-layout">
         <Panel
           title="Live table"
@@ -69,10 +68,16 @@ export function Live({
           />
           <p className="annotation spectator-note">
             {runtime.table
-              ? 'The agent’s own cards are shown. Follow its recorded analysis and choices in the hand session below.'
+              ? 'The agent’s own cards are shown. Follow its recorded analysis and choices in the hand session.'
               : 'The agent is between tables. The next table will appear automatically.'}
           </p>
         </Panel>
+        <aside className="spectator-decisions" aria-label="Live decisions">
+          <HandSession runtime={runtime} />
+        </aside>
+      </div>
+      <div className="spectator-support">
+        <AccountFunding runtime={runtime} history={fundingHistory} />
         <Panel title="At the table" eyebrow="THE AGENT">
           <dl className="key-values">
             <div>
@@ -106,7 +111,6 @@ export function Live({
           </p>
         </Panel>
       </div>
-      <HandSession runtime={runtime} />
       <Panel title="Table activity" eyebrow="CONFIRMED ACTIONS">
         {!events.length ? (
           <Empty title="Waiting for the next action">

@@ -28,6 +28,26 @@ const render = (value: Partial<DecisionView> = {}) =>
   renderToStaticMarkup(createElement(Decision, { decision: { ...decision, ...value } }));
 
 describe('decision presentation distinguishes requests, retries and submissions', () => {
+  it('distinguishes explicitly disabled DeepSeek thinking from an absent provider summary', () => {
+    const output = render({
+      attempts: [
+        {
+          provider: 'deepseek',
+          purpose: 'analysis',
+          requestedModel: 'deepseek-flash',
+          actualModel: 'deepseek-flash',
+          status: 'succeeded',
+          latencyMs: 10,
+          configuration: { thinking: 'disabled' },
+        },
+      ],
+    });
+    expect(output).toContain('Thinking was disabled for this request.');
+    expect(output).toContain('Thinking disabled');
+    expect(output).toContain('deepseek');
+    expect(output).not.toContain('Effort high');
+    expect(output).not.toContain('No thinking text or summary was returned');
+  });
   it('labels the initial call and each bounded retry independently from the provider step number', () => {
     const output = render({
       attempts: [0, 1, 2, 3].map((retryIndex) => ({

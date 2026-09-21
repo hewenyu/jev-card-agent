@@ -110,15 +110,21 @@ export interface Proposal {
   attempts?: ProviderAttempt[];
 }
 export interface ProviderAttempt {
+  configuration?: { thinking: 'enabled' | 'disabled'; effort?: string };
   retryIndex?: number;
   maxRetries?: number;
   id: string;
-  provider: 'jev' | 'responses' | 'messages';
+  provider: 'jev' | 'responses' | 'messages' | 'deepseek';
   purpose: 'decision' | 'route_and_decision' | 'analysis' | 'reconsider';
   requestedModel: string;
   actualModel: string | null;
   status: 'succeeded' | 'failed' | 'cancelled' | 'model_mismatch';
-  usage: { input_tokens: number; output_tokens: number } | null;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  } | null;
   latencyMs: number;
   errorCode?: string;
   diagnostics?: RawMessage;

@@ -35,6 +35,9 @@ export function DecisionAnalysis({ decision }: { decision: DecisionView }) {
   const model = text(routing.actualModel);
   const errorCode = text(routing.errorCode);
   const cancelled = decision.status === 'cancelled';
+  const analysisConfiguration = [...(decision.attempts ?? [])]
+    .reverse()
+    .find((attempt) => attempt.purpose === 'analysis' && attempt.configuration)?.configuration;
   return (
     <div className="decision-analysis" aria-label="Decision analysis">
       <div className="analysis-session-meta">
@@ -68,7 +71,9 @@ export function DecisionAnalysis({ decision }: { decision: DecisionView }) {
             <p className="analysis-prose analysis-thinking-text">{thinking}</p>
           ) : (
             <p className="analysis-empty">
-              No thinking text or summary was returned in this record.
+              {analysisConfiguration?.thinking === 'disabled'
+                ? 'Thinking was disabled for this request.'
+                : 'No thinking text or summary was returned in this record.'}
             </p>
           )}
           {thinking && (
@@ -138,8 +143,15 @@ export function DecisionAnalysis({ decision }: { decision: DecisionView }) {
                   · {attempt.actualModel ?? 'Model not reported'}
                 </strong>
                 <small>
-                  Requested: {attempt.requestedModel} · {number(attempt.latencyMs)} ms
+                  {attempt.provider} · Requested: {attempt.requestedModel} ·{' '}
+                  {number(attempt.latencyMs)} ms
                 </small>
+                {attempt.configuration && (
+                  <small>
+                    Thinking {attempt.configuration.thinking}
+                    {attempt.configuration.effort && <> · Effort {attempt.configuration.effort}</>}
+                  </small>
+                )}
                 {retry && <small>{retry}</small>}
                 {failure && (
                   <small className="analysis-call-error">{failure.replaceAll('_', ' ')}</small>

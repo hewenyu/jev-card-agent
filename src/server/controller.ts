@@ -9,6 +9,7 @@ import { Queries } from '../storage/queries.js';
 import { LedgerMeter } from '../storage/provider-meter.js';
 import { HybridPolicy } from '../policies/hybrid.js';
 import { ReasoningProvider } from '../policies/reasoning.js';
+import { DeepSeekProvider } from '../policies/deepseek.js';
 import { Budget } from '../storage/budget.js';
 import { seedDemo } from '../storage/demo.js';
 import { json } from '../storage/database.js';
@@ -25,6 +26,17 @@ export interface RunRequest {
   autoRebuy: boolean;
 }
 export function reasoningFor(config: AppConfig, meter?: ProviderMeter): ReasoningProvider {
+  if (config.reasoningProvider === 'deepseek')
+    return new DeepSeekProvider({
+      apiKey: config.reasoningApiKey,
+      baseUrl: config.deepseekBaseUrl,
+      model: config.deepseekModel,
+      thinking: config.deepseekThinking,
+      timeoutMs: config.reasoningTimeoutMs,
+      effort: config.reasoningEffort,
+      maxOutputTokens: config.reasoningMaxOutputTokens,
+      meter,
+    });
   return new ReasoningProvider({
     apiKey: config.reasoningApiKey,
     baseUrl: config.reasoningBaseUrl,
@@ -49,6 +61,7 @@ export function ledgerFor(
     totalUsd: config.totalBudgetUsd,
     runUsd,
     reasoningInputPerMillion: config.reasoningInputPricePerMillion,
+    reasoningCacheReadInputPerMillion: config.reasoningCacheReadInputPricePerMillion,
     reasoningOutputPerMillion: config.reasoningOutputPricePerMillion,
   });
 }
@@ -111,7 +124,9 @@ export class Controller {
     if (request.strategy !== 'baseline' && !this.config.jevApiKey)
       throw new Error('JEV_API_KEY is required');
     if (request.strategy === 'jev-reasoning' && !this.config.reasoningApiKey)
-      throw new Error('REASONING_API_KEY is required');
+      throw new Error(
+        `${this.config.reasoningProvider === 'deepseek' ? 'DEEPSEEK_API_KEY' : 'REASONING_API_KEY'} is required`,
+      );
     if (this.starting || this.view().running) throw new Error('Runtime is already running');
     this.starting = true;
     try {
@@ -164,6 +179,34 @@ export class Controller {
       await this.runtime.start({
         runId,
         strategy: request.strategy,
+        ...(request.strategy === 'jev-reasoning'
+          ? {
+              reasoning: {
+                provider: this.config.reasoningProvider,
+                protocol: this.config.reasoningProtocol,
+                model:
+                  this.config.reasoningProvider === 'deepseek'
+                    ? this.config.deepseekModel
+                    : this.config.reasoningProtocol === 'messages'
+                      ? this.config.reasoningMessagesModel
+                      : this.config.reasoningModel,
+                ...(this.config.reasoningProvider === 'deepseek'
+                  ? { thinking: this.config.deepseekThinking }
+                  : {}),
+                ...(this.config.reasoningProvider !== 'deepseek' ||
+                this.config.deepseekThinking === 'enabled'
+                  ? {
+                      effort:
+                        this.config.reasoningProvider === 'deepseek' &&
+                        this.config.reasoningEffort === 'medium'
+                          ? 'high'
+                          : this.config.reasoningEffort,
+                    }
+                  : {}),
+                timeoutMs: this.config.reasoningTimeoutMs,
+              },
+            }
+          : {}),
         buyIn: request.buyIn,
         maxHands: request.maxHands,
         maxDurationMs: request.maxMinutes * 60_000,

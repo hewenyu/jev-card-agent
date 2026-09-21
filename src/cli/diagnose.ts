@@ -117,6 +117,8 @@ async function main(): Promise<void> {
       output({
         check: 'reasoning',
         status: 'ok',
+        provider: result.attempt.provider,
+        configuration: result.attempt.configuration,
         requestedModel: result.requestedModel,
         actualModel: result.actualModel,
         latencyMs: result.attempt.latencyMs,

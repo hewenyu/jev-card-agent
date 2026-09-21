@@ -61,7 +61,7 @@ flowchart TD
     R --> S[State Reducer]
     S --> C[Context + Opponent Stats]
     C --> A[Legal Candidates]
-    A --> M[Reasoning Analysis / high]
+    A --> M[DeepSeek Flash Analysis / thinking off]
     M --> J[Jev Final Choice]
     A --> B[Baseline]
     J --> G[Action Guard]
@@ -126,13 +126,13 @@ Jev 不生成自由文本推理。输入是局面、必要历史、对手统计�
 
 ## 推理分析与 Jev 最终选择
 
-正式运行配置使用 `jev-reasoning`，默认 `REASONING_MODE=always`、`REASONING_EFFORT=high`：每次有效行动先调用推理服务，再由 Jev 在冻结的合法候选中作最终选择。纯 Jev 与 baseline 保留为独立对照策略；旧的 Jev 先路由、按需分析流程仅在后台显式设置 `REASONING_MODE=adaptive` 时使用。
+本轮已选部署目标使用 `jev-reasoning`、`REASONING_MODE=always`，专用 DeepSeekProvider 请求 `deepseek-flash`（DeepSeek-V4.1-Flash），显式关闭 thinking。每次有效行动先请求分析，再由 Jev 在冻结的合法候选中作最终选择；`always` 不开启 thinking。纯 Jev 与 baseline 保留为独立对照策略；旧的 Jev 先路由、按需分析流程仅在后台显式设置 `REASONING_MODE=adaptive` 时使用。
 
 推理模型并不直接控制 OpenPoker 行动；最终守卫、回合授权、单次提交与持久化规则不变。全链路共享原行动预算。always 模式分析失败时，在剩余时间内交给 Jev 决策；无法及时取得合法模型结果时使用本地 fallback，并记录具体失败阶段。adaptive 模式可保留首次 Jev 合法选择，不增加回合时间。
 
-推理服务采用独立配置，支持 Responses 与 Messages 两种适配。用户已提供代理 endpoint 和凭据：Responses 请求模型为 gpt-6-astra，Messages 测试模型为 claude-opus-5。配置只保存在本地环境文件，公开样例使用占位值。必须验证返回模型与请求一致，不静默接受代理替换模型。Trace 区分 Jev 路由判断、推理分析、最终 Jev 选择与各次调用用量。
+推理服务采用独立配置：标准 provider 支持 Responses 与 Messages，DeepSeek 使用专用 Messages provider。provider 类型由后端配置明确选择，不根据模型名称或 URL 子串猜测，也不因某次测试成功自动改生产配置。凭据只保存在本地环境文件，公开样例使用占位值。必须验证返回模型与请求一致，不静默接受代理替换模型。Trace 区分 Jev 路由判断、推理分析、最终 Jev 选择与各次调用用量。
 
-分别验证每次分析、模型身份、同手会话信息截止、Jev 最终选择和故障降级。早期纯 Jev 及按需组合的历史验证保留原口径，不算作 always/high 新合同的通过证据；短期牌局输赢也不构成充分决策质量证据。未配置真实推理服务时只能验证本地 mock，不伪造真实调用结果。
+分别验证每次分析、模型身份、同手会话信息截止、Jev 最终选择和故障降级。早期纯 Jev、按需组合及 high 思考的历史验证保留原口径，不替代本轮 DeepSeek 关闭思考的集成验收；短期牌局输赢也不构成充分决策质量证据。未配置真实推理服务时只能验证本地 mock，不伪造真实调用结果。
 
 ## 持久化与评估
 
@@ -210,7 +210,7 @@ Live 页面展示公共牌、Bot 自己的当前手牌、座位、行动玩家�
 
 样式验收覆盖 Overview、Live、Replay 与 Evaluations 的 Run、结果筛选和决策选择框。选择框及系统原生弹层统一暗色背景与清晰文字，保留原生键盘操作和可见焦点；按钮、滑块与禁用状态使用一致的尺寸、边框和交互反馈。390px 下控件可换行、长模型名称和会话标识不撑宽卡片，表格与结构化上下文只在各自容器内滚动。用合成数据验证键盘切换、禁用按钮、长选项与移动端四页宽度，不调用模型或修改 Bot；原生下拉弹层的最终外观由浏览器和操作系统绘制，使用 `color-scheme`、明确选项颜色及系统高对比度兼容保证可读性。
 
-思考强度默认 `high`。Responses 使用 `reasoning.effort=high` 与 `summary=auto` 请求推理摘要；Messages 使用 `thinking.type=adaptive` 与 `output_config.effort=high`。实际支持与返回内容通过配置的代理验证，不能仅凭参数宣称模型已返回思考。Responses 摘要合同依据：[OpenAI reasoning guide](https://developers.openai.com/api/docs/guides/reasoning)。
+代码的可配置思考强度默认 `high`，仅在启用思考时生效；本轮 DeepSeek 目标显式关闭 thinking，不发送 effort。标准 Responses / Messages 保留作另行配置的适配器，分别支持 `reasoning.effort` / `summary` 与 `thinking.type=adaptive` / `output_config.effort`；不能把它们的参数套用到 DeepSeek。实际返回内容由服务响应证明，不能仅凭参数宣称模型已返回思考。Responses 摘要合同依据：[OpenAI reasoning guide](https://developers.openai.com/api/docs/guides/reasoning)。
 
 两类模型请求默认首次调用后最多重试 3 次，每次独立记录模型、状态、耗时和费用。仅重试临时网络错误、限流、服务端错误、单次超时或无效响应；鉴权、余额/总预算、模型不匹配和账本故障不盲目重复。全部尝试共享原回合 deadline，不延长 OpenPoker 行动窗口、不产生重复下注。取消和最终失败也保留已完成分析与已知调用记录。
 
@@ -218,6 +218,28 @@ Live 页面展示公共牌、Bot 自己的当前手牌、座位、行动玩家�
 <!-- Runtime cancellation contract -->
 
 模型调用在回合截止或行动权限变化时取消。Runtime 为供应商取消结算保留最多 75ms，且不越过行动提交期限；结算后冻结进度，迟到回调不能覆盖实时状态。取消回合仍保存已返回分析和全部已知调用记录，标记 `cancelled`，不创建或提交行动。关闭数据库前等待这些有界决策任务结束。
+
+## DeepSeek 专用推理 provider
+
+`DeepSeekProvider` 实现与标准推理服务相同的分析接口，交付分析、实际模型、供应商返回的思考内容和逐次 attempt；Hybrid 仍只把分析当作辅助信息，最终合法候选由 Jev 选择。标准 provider 继续服务既有 Responses / Messages，不以 DeepSeek 兼容分支改变原协议。
+
+使用 `REASONING_PROVIDER=deepseek` 明确选择；默认 `standard` 继续使用既有标准适配。专用凭据为 `DEEPSEEK_API_KEY`，不复用标准推理密钥。`DEEPSEEK_API_BASE_URL` 默认 `https://api.deepseek.com/anthropic`，`DEEPSEEK_MODEL` 默认 `deepseek-flash`，`DEEPSEEK_THINKING` 显式支持 `enabled|disabled`，默认 enabled。
+
+专用传输使用 `POST https://api.deepseek.com/anthropic/v1/messages`。请求明确发送 `thinking.type=enabled` 或 `disabled`；启用时通过 `output_config.effort` 指定强度。复用 `REASONING_EFFORT`：`low/medium/high/max` 在此映射为 `low/high/high/max`，其中 `max` 仅 DeepSeek provider 可用，不把 `medium` 当成一个独立的 DeepSeek 强度。关闭思考仍可返回决策分析，但不能称为启用思考验证；只保存与展示服务实际返回的内容。
+
+官方型号 `deepseek-flash` 对应 DeepSeek-V4.1-Flash。DeepSeek Anthropic 兼容入口会将未知型号自动映射到 Flash，也会把部分 Claude 名称映射到 DeepSeek；因此构造请求时拒绝未知名称，响应时继续严格核对实际型号，不能通过一个拼错型号的 HTTP 200 宣称指定模型验证成功。记录请求型号与返回型号，不在运行时静默接受别名替换。
+
+预算预留、10 秒单次探针期限、正式首次调用后最多 3 次重试，以及 Hybrid 总 deadline 沿用共同机制。DeepSeek Messages 的归一化输入为原 `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`；分别保存缓存字段，不能漏算或重复相加。读取缓存按独立费率计价，非缓存输入与缓存写入按普通输入费率计价。专属配置 `DEEPSEEK_INPUT_PRICE_PER_MILLION`、`DEEPSEEK_CACHE_READ_INPUT_PRICE_PER_MILLION`、`DEEPSEEK_OUTPUT_PRICE_PER_MILLION` 默认分别为保守峰值 $0.30、$0.006、$1.20。旧数据库的缓存价格及用量字段通过增量迁移保留兼容；超时或 usage 缺失仍保留预留，正式费用以供应商账单为准。
+
+所有者已根据比较选择 `deepseek-flash`、`thinking=disabled`，分析单次 10 秒、Hybrid 总计 40 秒。GPT 与 Claude 不作为自动兜底；DeepSeek 分析失败只进入 Jev 剩余时间决策或合法本地 fallback。部署目标已确定，实际集成与上线证据另记验证报告，不把配置选定当作上线成功。比较记录保留原协议、模式、deadline、输出上限、模型身份与费用。
+
+## Live 标签页内的牌桌与决策侧栏
+
+默认入口、导航顺序与品牌链接保持 Overview。进入 Live table 标签页后，首屏优先展示当前牌桌，压缩介绍标题，账户统计与运行元数据放到牌桌之后。
+
+桌面以主牌桌和右侧本手决策面板并排呈现，复用 HandSession 的定时刷新、错误处理与选中回合保持。新记录自动进入列表，已有选中回合不因刷新跳转；换手后重新建立会话，旧请求不能覆盖新手。分析阶段统一显示“Analyzing the hand”，关闭 thinking 时不称为正在思考。
+
+390px 手机布局首先展示牌桌，决策面板随后纵向排列，再显示账户与辅助信息；长 ID、分析和候选内容不能撑宽页面。侧栏不得遮挡牌桌，Live 标签页首屏可直接看到有效牌桌内容。通过真实浏览器检查既有默认导航、Live 自动刷新、选择保持及桌面/手机布局。
 
 ## 账户筹码与 rebuy 实时同步
 

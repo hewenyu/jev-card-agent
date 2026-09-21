@@ -40,15 +40,16 @@ REASONING_API_FORMAT=messages npm run evaluate -- --run RUN_ID --strategy jev-re
 
 每次评估从原记录读取冻结 context 与候选，不修改真实 Run。结果保存独立 ID、原 decision ID、新旧候选、成功/失败、平均延迟和估算成本。界面 Evaluations 仅查看已经生成的报告，不创建新调用。
 
-纯 Jev 每个样本调用一次 Jev。正式组合策略默认 `REASONING_MODE=always`、`REASONING_EFFORT=high`，每次先调用 Responses 或 Messages 分析，再交给 Jev 从冻结候选中作最终选择。只有显式 `REASONING_MODE=adaptive` 使用旧的 Jev 路由、按需分析及再次选择。全链路受总 deadline 和逐调用预算限制；always 模式分析失败后在剩余时间内调用 Jev，无法及时获得合法结果时由 Runtime 明确记录 fallback。推理模型不能直接向牌桌提交动作。
+纯 Jev 每个样本调用一次 Jev。本轮组合策略目标使用 `REASONING_MODE=always` 与专用 DeepSeekProvider，`deepseek-flash` 显式关闭 thinking，先分析再交给 Jev 从冻结候选中作最终选择。其他 provider 仅在明确配置的实验中使用，不作为自动兜底。只有显式 `REASONING_MODE=adaptive` 使用旧的 Jev 路由、按需分析及再次选择。全链路受总 deadline 和逐调用预算限制；always 模式分析失败后在剩余时间内调用 Jev，无法及时获得合法结果时由 Runtime 明确记录 fallback。分析模型不能直接向牌桌提交动作。
 
 重跑结果只统计选项一致数、错误数、延迟与费用；不会把原牌局结算赋给替代策略。不同 Run 的真实收益可以并列查看，但公开 Arena 的时段、对手和牌序不受控，不能据此做因果归因。
 
 ## API 协议与模型一致性
 
 - Jev：`POST https://api.typesafe.ai/v1/systemone`，固定请求 `jev-1.13.0`，Choice 必须属于候选，概率项齐全且有效，总和容差 1%，choice 与最高概率一致。
-- Responses：配置 `/v1` base URL 后调用 `/responses`，默认请求 `reasoning.effort=high` 与 `summary=auto`，保存实际返回的分析和推理摘要，拒绝静默模型替换。
-- Messages：调用 `/messages`，使用 `x-api-key`、`anthropic-version`、`thinking.type=adaptive` 与默认 `output_config.effort=high`，保存供应商实际返回的分析、thinking 文本及 usage。没有返回的思考内容不补写。
+- DeepSeek：专用 `POST /anthropic/v1/messages`，本轮使用 `deepseek-flash`、`thinking.type=disabled`，不发送 effort。保存分析、实际模型和含缓存分类的 usage；不将关闭思考的分析标作 thinking 返回。
+- 标准 Responses：配置 `/v1` base URL 后调用 `/responses`，默认请求 `reasoning.effort=high` 与 `summary=auto`，保存实际返回的分析和推理摘要，拒绝静默模型替换。
+- 标准 Messages：调用 `/messages`，使用 `x-api-key`、`anthropic-version`、`thinking.type=adaptive` 与默认 `output_config.effort=high`，保存供应商实际返回的分析、thinking 文本及 usage。没有返回的思考内容不补写。
 - 代理返回的模型名只能证明接口所报告的身份，不能独立审计其底层模型。
 
 当前实测曾出现请求 `gpt-6-astra` 而代理返回 `gpt-5.6-luna`。协议 HTTP 成功不等于 GPT-6 验证成功；严格校验将该结果标记为 `model_mismatch`。Claude Messages 探针请求和返回均为 `claude-opus-5`。完整记录见验证文档。

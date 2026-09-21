@@ -176,6 +176,49 @@ test('replay presents provider analysis, actual summary and evidence with sample
   expect(prose.scroll).toBeLessThanOrEqual(prose.width);
 });
 
+test('replay identifies disabled DeepSeek thinking while retaining analysis and the final Jev choice', async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  const decision: DecisionView = {
+    ...data.first,
+    routing: {
+      ...data.first.routing,
+      thinking: null,
+      thinkingSource: 'not_provided',
+      requestedModel: 'deepseek-flash',
+      actualModel: 'deepseek-flash',
+    },
+    attempts: [
+      {
+        ...data.first.attempts![0]!,
+        provider: 'deepseek',
+        requestedModel: 'deepseek-flash',
+        actualModel: 'deepseek-flash',
+        configuration: { thinking: 'disabled' },
+      },
+      data.first.attempts![1]!,
+    ],
+  };
+  await page.route('**/api/hands/*', (route) =>
+    route.fulfill({ json: { ...data.detail, decisions: [decision] } }),
+  );
+  await page.goto('/#replay');
+  await expect(
+    page.getByText('Thinking was disabled for this request.', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel('Provider trace')).toContainText('deepseek-flash');
+  await expect(page.getByLabel('Provider trace')).toContainText('Thinking disabled');
+  await expect(page.getByLabel('Provider trace')).not.toContainText('Effort');
+  await expect(page.getByLabel('Provider trace')).toContainText('Final Jev choice');
+  await expect(page.locator('.analysis-recommendation')).toContainText(
+    'A small raise is supported by the recorded opponent sample.',
+  );
+  await expect(
+    page.getByText('No thinking text or summary was returned in this record.', { exact: true }),
+  ).toHaveCount(0);
+});
+
 test('live displays the agent cards and progress, refreshes saved turns and preserves the selected turn', async ({
   page,
 }) => {
@@ -187,7 +230,7 @@ test('live displays the agent cards and progress, refreshes saved turns and pres
   });
   await page.goto('/#live');
   await expect(page.locator('.seat-0 .hero-hole .cards')).toHaveAttribute('aria-label', 'Ah, Kd');
-  await expect(page.locator('.hand-session-summary')).toContainText('Reasoning model is thinking');
+  await expect(page.locator('.hand-session-summary')).toContainText('Analyzing the hand');
   await expect(page.getByRole('group', { name: 'Session turns' }).getByRole('button')).toHaveCount(
     1,
   );
