@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { PokerState } from '../core/types.js';
-import type { ServerEvent } from '../openpoker/protocol.js';
+import { serializeEvent, type ServerEvent } from '../openpoker/protocol.js';
 import type {
   ActionStatus,
   DecisionRecord,
@@ -71,7 +71,7 @@ export class Store implements RuntimeStore {
           : null,
         String(event.type),
         receivedAt,
-        JSON.stringify(event),
+        serializeEvent(event),
       );
   }
 

@@ -1,0 +1,169 @@
+{
+  "type": "resync_response",
+  "stream": "state",
+  "table_id": "test-table",
+  "hand_id": null,
+  "table_seq": 200,
+  "hand_seq": null,
+  "ts": "2025-01-01T00:00:01Z",
+  "from_table_seq": 198,
+  "to_table_seq": 200,
+  "replayed_events": [
+    {
+      "stream": "state",
+      "table_id": "test-table",
+      "hand_id": null,
+      "type": "table_state",
+      "street": "preflop",
+      "waiting_reason": "between_hands_delay",
+      "waiting_details": {
+        "remaining_seconds": 0.788,
+        "configured_delay_seconds": 5.0
+      },
+      "dealer_seat": 2,
+      "small_blind": 10,
+      "big_blind": 20,
+      "pot": 0,
+      "board": [],
+      "seats": [
+        {
+          "seat": 0,
+          "name": "fixture-bot-0",
+          "stack": 2000,
+          "bet": 0,
+          "status": "active",
+          "in_hand": false
+        },
+        {
+          "seat": 1,
+          "name": "fixture-bot-1",
+          "stack": 2000,
+          "bet": 0,
+          "status": "active",
+          "in_hand": false
+        },
+        {
+          "seat": 2,
+          "name": "fixture-bot-2",
+          "stack": 2000,
+          "bet": 0,
+          "status": "active",
+          "in_hand": false
+        },
+        {
+          "seat": 3,
+          "name": "fixture-bot-3",
+          "stack": 2000,
+          "bet": 0,
+          "status": "active",
+          "in_hand": false
+        },
+        {
+          "seat": 4,
+          "name": "fixture-bot-4",
+          "stack": 2000,
+          "bet": 0,
+          "status": "active",
+          "in_hand": false
+        },
+        {
+          "seat": 5,
+          "name": "fixture-bot-5",
+          "stack": 2000,
+          "bet": 0,
+          "status": "active",
+          "in_hand": false
+        }
+      ],
+      "hero": {
+        "seat": 0,
+        "hole_cards": [],
+        "valid_actions": [],
+        "turn_token": null
+      },
+      "table_seq": 199,
+      "hand_seq": null,
+      "ts": "2025-01-01T00:00:00Z",
+      "state_hash": "sha256:663dcd8b2cba4121fd72ab22c229f94fbb05a951c9e4402ae16419a5b086930f"
+    }
+  ],
+  "snapshot": {
+    "stream": "state",
+    "table_id": "test-table",
+    "hand_id": null,
+    "type": "table_state",
+    "street": "preflop",
+    "waiting_reason": "between_hands_delay",
+    "waiting_details": {
+      "remaining_seconds": 0.745,
+      "configured_delay_seconds": 5.0
+    },
+    "dealer_seat": 2,
+    "small_blind": 10,
+    "big_blind": 20,
+    "pot": 0,
+    "board": [],
+    "seats": [
+      {
+        "seat": 0,
+        "name": "fixture-bot-0",
+        "stack": 2000,
+        "bet": 0,
+        "status": "active",
+        "in_hand": false
+      },
+      {
+        "seat": 1,
+        "name": "fixture-bot-1",
+        "stack": 2000,
+        "bet": 0,
+        "status": "active",
+        "in_hand": false
+      },
+      {
+        "seat": 2,
+        "name": "fixture-bot-2",
+        "stack": 2000,
+        "bet": 0,
+        "status": "active",
+        "in_hand": false
+      },
+      {
+        "seat": 3,
+        "name": "fixture-bot-3",
+        "stack": 2000,
+        "bet": 0,
+        "status": "active",
+        "in_hand": false
+      },
+      {
+        "seat": 4,
+        "name": "fixture-bot-4",
+        "stack": 2000,
+        "bet": 0,
+        "status": "active",
+        "in_hand": false
+      },
+      {
+        "seat": 5,
+        "name": "fixture-bot-5",
+        "stack": 2000,
+        "bet": 0,
+        "status": "active",
+        "in_hand": false
+      }
+    ],
+    "hero": {
+      "seat": 0,
+      "hole_cards": [],
+      "valid_actions": [],
+      "turn_token": null
+    },
+    "table_seq": 200,
+    "hand_seq": null,
+    "ts": "2025-01-01T00:00:00Z",
+    "state_hash": "sha256:835d7eebef6d6f8244c77e946e81d369bd8ae8f40703087d15df5545cc9acd8a"
+  },
+  "role": "player",
+  "state_hash": "sha256:1fa423de77cb95bc248a8038fa892a615b5977a61e9ffc2c9f0c042916674555"
+}

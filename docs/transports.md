@@ -49,3 +49,13 @@ OpenPoker 的核心对局使用免费的整数虚拟筹码。账户 `/api/me` �
 持续参赛保留自动补筹与低频恢复检查：收到补筹确认后核对赛季余额再入队；冷却中不反复发送 rebuy 或 join。重连和进程恢复重新读取赛季状态，不能因为 WebSocket 恢复就重新索取筹码。正常 drain 优先于补筹和重新入队：停止请求等待当前手牌边界，然后离桌，不启动新的匹配。
 
 官方依据：[REST API](https://docs.openpoker.ai/api-reference/rest-api/)、[消息合同](https://docs.openpoker.ai/api-reference/message-types/)、[赛季与补筹](https://docs.openpoker.ai/compete/rebuys/)、[完整官方文档](https://docs.openpoker.ai/llms-full.txt)。`rebuy_confirmed` 文档中的 2,000 余额示例不等于补筹金额；明确规定的补筹金额为 1,500。
+
+## 状态哈希与 JSON 数字保真
+
+一次生产恢复失败发生在 `between_hands_delay` 状态。按官方合同移除顶层 `ts`、`table_seq`、`hand_seq`、`state_hash`，用 Python 的 `json.dumps(sort_keys=True, ensure_ascii=True, separators=(',', ':'))` 重算已存事件，两条等待快照均不匹配。仅将 `waiting_details.configured_delay_seconds` 从整数 `5` 恢复为浮点数 `5.0`，两条 SHA-256 均与服务端完全一致；其他正常快照无需修正即可匹配。
+
+原因是 JavaScript 将 JSON 数字 `5` 与 `5.0` 都解析为同一个 `number`，普通 `JSON.stringify` 又都输出 `5`；Python canonical JSON 保留 `5.0`。这会改变哈希输入，并使普通事件持久化丢失复核证据。修复在接收原始 JSON 时使用 Node.js 24 的 reviver `context.source` 保存数字词法，独立于业务数值对象保存元数据；哈希排序和原始事件序列化保留该词法，包含嵌套恢复快照、重放事件及数组。业务状态、合法动作和模型输入仍使用正常数值类型。
+
+恢复校验继续遵循官方字段排除和 SHA-256 合同；不根据字段名称猜测浮点数，不忽略哈希，也不修改筹码状态。只有新接收并保留数字词法的事件能够完整复核；已经通过普通 `JSON.stringify` 丢失词法的旧记录不回填猜测值。现场数字恢复仅用于诊断，不作为运行时兼容分支。
+
+官方依据：[V2 消息合同的 state_hash verification](https://docs.openpoker.ai/api-reference/message-types/)及[完整文档](https://docs.openpoker.ai/llms-full.txt)。哈希证明快照一致性，不证明完整收到所有私有事件。

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { parseWireJson, serializeWireJson, transferNumberSources } from './wire-json.js';
 
 /** Unknown additive server fields survive validation for forward compatibility. */
 const envelope = z
@@ -22,7 +23,10 @@ export type ActionPayload = {
   client_action_id: string;
 };
 export function parseEvent(raw: string): ServerEvent {
-  return envelope.parse(JSON.parse(raw));
+  const decoded = parseWireJson(raw);
+  const event = envelope.parse(decoded);
+  transferNumberSources(decoded as object, event);
+  return event;
 }
 export function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -32,26 +36,13 @@ export function record(value: unknown): Record<string, unknown> {
 export function string(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
-/** OpenPoker canonical JSON is Python ensure_ascii=true, recursively sorted keys. */
-function canonical(value: unknown): string {
-  if (value === undefined) return 'null';
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value && typeof value === 'object') {
-    return `{${Object.keys(value)
-      .filter((key) => record(value)[key] !== undefined)
-      .sort()
-      .map((key) => `${canonical(key)}:${canonical(record(value)[key])}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(value).replace(
-    /[\u007f-\uffff]/g,
-    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
-  );
+/** Persist the received numeric representation as well as the business values. */
+export function serializeEvent(event: ServerEvent): string {
+  return serializeWireJson(event);
 }
 export function verifyStateHash(event: ServerEvent): boolean {
   if (typeof event.state_hash !== 'string') return true;
   const excluded = new Set(['ts', 'table_seq', 'hand_seq', 'state_hash']);
-  const body = Object.fromEntries(Object.entries(event).filter(([key]) => !excluded.has(key)));
-  const digest = createHash('sha256').update(canonical(body)).digest('hex');
+  const digest = createHash('sha256').update(serializeWireJson(event, excluded)).digest('hex');
   return event.state_hash === `sha256:${digest}`;
 }
