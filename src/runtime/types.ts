@@ -2,6 +2,8 @@ import type { Candidate, DecisionContext, PokerState, Policy, Proposal } from '.
 import type { OpponentCheckpoint } from '../core/opponents.js';
 import type { ActionPayload, ServerEvent } from '../openpoker/protocol.js';
 import type { HistoricalOutcome } from '../core/index.js';
+import type { SessionTurn } from '../core/session.js';
+import type { LiveDecisionProgress } from '../shared/api.js';
 
 export type RuntimePhase =
   | 'idle'
@@ -14,6 +16,7 @@ export type RuntimePhase =
   | 'stopped'
   | 'failed';
 export interface RuntimeStatus {
+  decision?: LiveDecisionProgress | null;
   runId: string | null;
   phase: RuntimePhase;
   connected: boolean;
@@ -42,6 +45,7 @@ export interface StartOptions {
   gracefulStopTimeoutMs?: number;
 }
 export interface DecisionRecord {
+  status?: 'proposed' | 'cancelled';
   id: string;
   runId: string;
   handId: string;
@@ -70,6 +74,7 @@ export interface RuntimeCheckpoint {
 }
 /** Synchronous methods are SQLite transactions. Throw on failure: no unrecorded action is sent. */
 export interface RuntimeStore {
+  sessionTurns?(tableId: string, handId: string, asOf: string, beforeSeq: number): SessionTurn[];
   recentOutcomes?(asOf: string, excludeHandId: string): HistoricalOutcome[];
   /** Fence every paid call and submission against lease expiry or ownership transfer. */
   assertRuntimeLease?(): void;

@@ -1,0 +1,278 @@
+/* Native controls keep their keyboard behavior; the closed field and popup share a dark palette. */
+:root {
+  color-scheme: dark;
+  --control-surface: #111d16;
+  --control-border: #4b6350;
+  --control-text: #e1ebdc;
+}
+select,
+input:not([type='checkbox'], [type='range']) {
+  color-scheme: dark;
+  min-height: 40px;
+  max-width: 100%;
+  border: 1px solid var(--control-border);
+  border-radius: 7px;
+  background-color: var(--control-surface);
+  color: var(--control-text);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+select {
+  appearance: none;
+  cursor: pointer;
+  padding-inline-end: 38px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23bfd3b5' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: right 12px center;
+  background-repeat: no-repeat;
+  background-size: 16px;
+  text-overflow: ellipsis;
+}
+select option,
+select optgroup {
+  background-color: #17251b;
+  color: #e8f0e3;
+  font-size: 13px;
+}
+select option:checked {
+  background-color: #344b2d;
+  color: #e8ffd4;
+}
+select option:disabled {
+  color: #91a28c;
+}
+select:hover:not(:disabled),
+input:not([type='checkbox'], [type='range']):hover:not(:disabled) {
+  border-color: #799269;
+  background-color: #18271c;
+}
+:is(button, a, input, select, summary):focus-visible {
+  outline: 2px solid #b7f78a;
+  outline-offset: 3px;
+}
+select:focus-visible,
+input:not([type='checkbox'], [type='range']):focus-visible {
+  border-color: #b7f78a;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px #b7f78a16;
+}
+.hand-item:focus-visible,
+.evaluation-item:focus-visible {
+  outline-offset: -3px;
+}
+button:disabled,
+select:disabled,
+input:disabled {
+  opacity: 1;
+  color: #91a28e;
+  border-color: #334436;
+  background-color: #18221b;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+input[type='range'] {
+  min-height: 28px;
+  accent-color: #b7f78a;
+}
+input[type='range']:disabled {
+  opacity: 0.55;
+  background: transparent;
+}
+.button,
+.icon-button,
+summary,
+.row-link,
+.text-link {
+  -webkit-user-select: none;
+  user-select: none;
+}
+.button {
+  min-height: 40px;
+}
+.button.compact {
+  min-height: 36px;
+  font-size: 11px;
+}
+.topbar {
+  height: auto;
+  min-height: 76px;
+  padding-block: 14px;
+}
+.topbar-controls {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.run-selector {
+  position: relative;
+  display: block;
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 300px;
+}
+.run-selector select {
+  max-width: 100%;
+  min-height: 40px;
+  padding: 10px 38px 10px 12px;
+  font-size: 12px;
+  background-color: var(--control-surface);
+}
+.sr-select {
+  position: relative;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  font-size: 11px;
+  gap: 6px;
+  color: #a5bc9b;
+}
+.sr-select select {
+  max-width: 220px;
+  font-size: 12px;
+}
+.field {
+  min-width: 0;
+  font-size: 11px;
+}
+.panel-header {
+  flex-wrap: wrap;
+  row-gap: 14px;
+}
+.panel-header > div,
+.decision-heading > div,
+.candidate-label > span,
+.key-values dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.panel > .annotation {
+  padding-inline: 22px;
+  padding-bottom: 12px;
+}
+.candidate-label strong,
+.decision-heading > .status-pill {
+  flex-shrink: 0;
+}
+.key-values dd {
+  text-align: right;
+}
+.decision-heading h3,
+.decision-detail > .subtle,
+.metric > strong {
+  overflow-wrap: anywhere;
+}
+.decision-stats,
+.evaluation-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.evaluation-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.decision-stats strong,
+.evaluation-metrics strong {
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.table-scroll,
+.hand-list,
+pre {
+  scrollbar-color: #526b48 #111b14;
+  scrollbar-width: thin;
+  overscroll-behavior-inline: contain;
+}
+summary {
+  cursor: pointer;
+  padding-block: 5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .hand-filter {
+    flex-wrap: wrap;
+    font-size: 11px;
+  }
+  .hand-filter select {
+    max-width: 190px;
+    font-size: 12px;
+  }
+}
+@media (max-width: 540px) {
+  .topbar {
+    min-height: 64px;
+    padding-block: 10px;
+  }
+  .topbar-controls {
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .run-selector {
+    flex: 1 1 200px;
+    max-width: none;
+  }
+  .run-selector select,
+  .sr-select select,
+  .hand-filter select {
+    min-height: 44px;
+    font-size: 13px;
+  }
+  .sr-select {
+    font-size: 10px;
+    flex: 1 1 170px;
+  }
+  .sr-select select {
+    max-width: 100%;
+    flex: 1 1 130px;
+  }
+  .panel-header > .sr-select {
+    justify-content: space-between;
+  }
+  .button,
+  .button.compact,
+  .icon-button,
+  .row-link,
+  .text-link,
+  summary {
+    min-height: 44px;
+  }
+  .row-link {
+    display: inline-flex;
+    align-items: center;
+  }
+  .icon-button {
+    min-width: 44px;
+  }
+  .replay-buttons {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .replay-buttons .button {
+    padding-inline: 10px;
+  }
+  .panel > .annotation {
+    padding-inline: 17px;
+  }
+  .evaluation-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 16px;
+  }
+}
+@media (forced-colors: active) {
+  select {
+    appearance: auto;
+    background-image: none;
+    border-color: ButtonText;
+  }
+  :is(button, a, input, select, summary):focus-visible {
+    outline-color: Highlight;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  select,
+  input {
+    transition: none;
+  }
+}

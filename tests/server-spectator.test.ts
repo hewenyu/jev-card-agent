@@ -64,7 +64,7 @@ describe('public spectator projection', () => {
     const snapshot = feed.current();
     expect(snapshot.runtime.table?.board).toEqual(['2h', '3h', '4h']);
     expect(snapshot.runtime.table?.actorSeat).toBe(2);
-    expect(snapshot.runtime.table?.heroCards).toEqual([]);
+    expect(snapshot.runtime.table?.heroCards).toEqual(['As', 'Ad']);
     expect(snapshot.runtime.error).toBeNull();
     expect(snapshot.recentEvents.map((event) => event.movements.map((m) => m.amount))).toEqual([
       [50],
@@ -202,7 +202,7 @@ describe('spectator SSE lifecycle', () => {
       reader = response.body!.getReader();
       const initial = new TextDecoder().decode((await reader.read()).value);
       expect(initial).toContain('event: snapshot');
-      expect(initial).toContain('"heroCards":[]');
+      expect(initial).toContain('"heroCards":["Qh","Qs"]');
       expect(feed.subscriberCount).toBe(1);
       feed.update(view(), [action(1, { contribution_delta: 50 })]);
       const next = new TextDecoder().decode((await reader.read()).value);
@@ -216,7 +216,7 @@ describe('spectator SSE lifecycle', () => {
       reader = reconnect.body!.getReader();
       const reloaded = new TextDecoder().decode((await reader.read()).value);
       expect(reloaded).toContain(snapshot.recentEvents[0]!.id);
-      expect(reloaded).toContain('"heroCards":[]');
+      expect(reloaded).toContain('"heroCards":["As","Ad"]');
       await app.close();
       expect(feed.subscriberCount).toBe(0);
     } finally {
@@ -339,7 +339,7 @@ describe('spectator SSE lifecycle', () => {
         const snapshot = app.controller.spectator.current();
         expect(snapshot.runtime.table?.pot).toBe(75);
         expect(snapshot.runtime.table?.seats[0]?.stack).toBe(1925);
-        expect(snapshot.runtime.table?.heroCards).toEqual([]);
+        expect(snapshot.runtime.table?.heroCards).toEqual(['As', 'Ad']);
         expect(
           snapshot.recentEvents.flatMap((event) => event.movements).map((m) => m.amount),
         ).toEqual([75]);

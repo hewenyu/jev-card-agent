@@ -435,10 +435,15 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
         send(ws, { type: 'hand_result', table_id: 't1', hand_id: 'h2', table_seq: 220 });
       }
     });
-    const { runtime } = createRuntime(urls, undefined, policy);
+    const { runtime, store } = createRuntime(urls, undefined, policy);
     await runtime.start({ maxHands: 1 });
     await vi.waitFor(() => expect(runtime.status().phase).toBe('stopped'));
+    await runtime.settleDecisions();
     expect(urls.messages.filter((message) => message.type === 'action')).toHaveLength(1);
+    expect(store.decisions.find((decision) => decision.handId === 'h1')?.status).toBe('cancelled');
+    expect([...store.actions.values()].every((action) => action.payload.hand_id === 'h2')).toBe(
+      true,
+    );
   });
   it('requeues after table closure and a season change, then cleanly leaves when busted with auto-rebuy disabled', async () => {
     let joins = 0;

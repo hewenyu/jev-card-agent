@@ -10,6 +10,8 @@ import type {
 } from '../core/types.js';
 import { beginAttempt, endpoint, ProviderError } from './metering.js';
 import { STRATEGY_VERSIONS } from '../core/index.js';
+import { MODEL_MAX_RETRIES, withProviderRetries } from './retry.js';
+import { awaitWithAbort } from './abort.js';
 
 export const QUESTION_VERSION = STRATEGY_VERSIONS.prompt;
 export interface JevConfig {
@@ -19,6 +21,7 @@ export interface JevConfig {
   timeoutMs?: number;
   fetch?: typeof fetch;
   meter?: ProviderMeter;
+  maxRetries?: number;
 }
 const choiceSchema = z.object({
   type: z.literal('choice'),
@@ -110,6 +113,31 @@ export class JevProvider implements RoutingJev {
     route: boolean,
     advisory?: string,
   ): Promise<Proposal> {
+    const started = performance.now();
+    const { value, attempts } = await withProviderRetries(
+      async (retryIndex) => {
+        const value = await this.evaluateOnce(
+          context,
+          candidates,
+          options,
+          route,
+          advisory,
+          retryIndex,
+        );
+        return { value, attempt: value.attempts![0]! };
+      },
+      { ...options, phase: 'jev', maxRetries: this.config.maxRetries },
+    );
+    return { ...value, attempts, latencyMs: Math.round(performance.now() - started) };
+  }
+  private async evaluateOnce(
+    context: DecisionContext,
+    candidates: Candidate[],
+    options: DecisionOptions,
+    route: boolean,
+    advisory?: string,
+    retryIndex = 0,
+  ): Promise<Proposal> {
     options.signal?.throwIfAborted();
     if (!candidates.length || new Set(candidates.map((c) => c.id)).size !== candidates.length)
       throw new Error('Unique nonempty candidates required');
@@ -150,7 +178,34 @@ export class JevProvider implements RoutingJev {
       state: advisory === undefined ? context : { ...context, untrusted_advisory: advisory },
       questions,
     };
+    let advisoryMetadata:
+      { originalCharacters: number; usedCharacters: number; truncated: boolean } | undefined;
+    if (advisory !== undefined) {
+      const prepare = (length: number) => {
+        advisoryMetadata = {
+          originalCharacters: advisory.length,
+          usedCharacters: length,
+          truncated: length < advisory.length,
+        };
+        request.state = {
+          ...context,
+          untrusted_advisory: advisory.slice(0, length),
+          advisory_metadata: advisoryMetadata,
+        };
+        return JSON.stringify(request).length;
+      };
+      if (prepare(0) > 48000) throw new ProviderError('jev_input_too_large');
+      let low = 0;
+      let high = advisory.length;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        if (prepare(middle) <= 48000) low = middle;
+        else high = middle - 1;
+      }
+      prepare(low);
+    }
     const serialized = JSON.stringify(request);
+    if (serialized.length > 48000) throw new ProviderError('jev_input_too_large');
     const call = beginAttempt(
       {
         provider: 'jev',
@@ -161,19 +216,26 @@ export class JevProvider implements RoutingJev {
       },
       this.config.meter,
     );
+    call.attempt.retryIndex = retryIndex;
+    call.attempt.maxRetries = this.config.maxRetries ?? MODEL_MAX_RETRIES;
+    let receivedResponse = false;
+    let completed: Omit<Proposal, 'latencyMs' | 'attempts'>;
     try {
-      const response = await this.fetcher(this.url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.config.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: serialized,
-        signal,
-        redirect: 'error',
-      });
+      const response = await awaitWithAbort(signal, () =>
+        this.fetcher(this.url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.config.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: serialized,
+          signal,
+          redirect: 'error',
+        }),
+      );
+      receivedResponse = true;
       if (!response.ok) throw new ProviderError(`Jev API returned HTTP ${response.status}`);
-      const raw: unknown = await response.json();
+      const raw: unknown = await awaitWithAbort(signal, () => response.json());
       signal.throwIfAborted();
       const metadata = metadataSchema.safeParse(raw);
       if (metadata.success) {
@@ -192,8 +254,7 @@ export class JevProvider implements RoutingJev {
       const gate = parsed.answers.needs_analysis;
       if (route && !gate) throw new ProviderError('Jev route answer missing');
       if (gate) validateChoice(gate, new Set(['yes', 'no']));
-      const attempt = call.finish('succeeded');
-      return {
+      completed = {
         candidateId: answer.choice,
         selected: answer.choice,
         source: 'jev',
@@ -203,19 +264,29 @@ export class JevProvider implements RoutingJev {
         confidence: answer.confidence,
         model: parsed.model,
         usage: parsed.usage,
-        latencyMs: attempt.latencyMs,
         request,
         response: parsed as unknown as RawMessage,
-        attempts: [attempt],
-        ...(route ? { routing: { needsReasoning: gate?.choice === 'yes', gate } } : {}),
+        ...(route || advisoryMetadata
+          ? {
+              routing: {
+                ...(route ? { needsReasoning: gate?.choice === 'yes', gate } : {}),
+                ...(advisoryMetadata ? { advisory: advisoryMetadata } : {}),
+              },
+            }
+          : {}),
       };
     } catch (error) {
       const code = signal.aborted
         ? 'jev_cancelled'
         : error instanceof ProviderError
           ? error.code
-          : 'jev_invalid_response';
+          : receivedResponse
+            ? 'jev_invalid_response'
+            : 'jev_network_error';
       throw new ProviderError(code, call.finish(signal.aborted ? 'cancelled' : 'failed', code));
     }
+    // Settlement failures are storage errors, never a reason for another paid request.
+    const attempt = call.finish('succeeded');
+    return { ...completed, latencyMs: attempt.latencyMs, attempts: [attempt] };
   }
 }

@@ -12,6 +12,8 @@ import { isLoopback } from './config.js';
 import { Controller, policyFor, ledgerFor } from './controller.js';
 import { publicRuntime } from './spectator.js';
 import { openSpectatorStream } from './spectator-stream.js';
+import { sessionId } from '../core/session.js';
+import type { LiveDecisions } from '../shared/api.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -120,6 +122,24 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
       reply.raw.once('close', () => streams.delete(close));
     }
   });
+  app.get('/api/live/decisions', (): LiveDecisions => {
+    const runtime = controller.view();
+    const table = runtime.table;
+    if (!table?.tableId || !table.handId) return { session: null, decisions: [] };
+    const decisions = redact(
+      controller.queries.handDecisions(table.tableId, table.handId),
+    ) as LiveDecisions['decisions'];
+    return {
+      session: {
+        id: sessionId(table.tableId, table.handId),
+        tableId: table.tableId,
+        handId: table.handId,
+        runId: runtime.runId,
+        turnCount: decisions.length,
+      },
+      decisions,
+    };
+  });
   app.get('/api/overview', (request) => {
     const overview = controller.overview();
     if (!publicViewers.has(request)) return overview;
@@ -200,7 +220,7 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
       return reply.code(400).send({ error: 'REASONING_API_KEY is required' });
     const evaluationId = randomUUID();
     const meter =
-      input.strategy === 'jev-reasoning'
+      input.strategy !== 'baseline'
         ? ledgerFor(config, store, `evaluation-${evaluationId}`)
         : undefined;
     evaluating = true;
@@ -211,7 +231,7 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
         input.strategy,
         input.limit,
         policyFor(config, input.strategy, meter),
-        input.strategy === 'jev' ? controller.budget : undefined,
+        undefined,
         {
           id: evaluationId,
           timeoutMs:

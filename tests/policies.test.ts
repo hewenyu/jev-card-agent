@@ -103,7 +103,7 @@ describe('policies', () => {
       new JevProvider({ apiKey: 'fixture-key', baseUrl }).decide(context, candidates),
     ).rejects.toThrow('sum to one');
   });
-  it('makes one attempt on 429 and does not leak the response body into errors', async () => {
+  it('caps 429 retries at four attempts and does not leak the response body into errors', async () => {
     let requests = 0;
     const baseUrl = await serve((_req, res) => {
       requests++;
@@ -113,7 +113,7 @@ describe('policies', () => {
     await expect(
       new JevProvider({ apiKey: 'fixture-key', baseUrl }).decide(context, candidates),
     ).rejects.toThrow('HTTP 429');
-    expect(requests).toBe(1);
+    expect(requests).toBe(4);
   });
   it('obeys a global abort even while the HTTP response is pending', async () => {
     const baseUrl = await serve(() => {});

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createInitialState } from '../src/core/index.js';
-import { ProviderError } from '../src/policies/metering.js';
+import { ProviderError, ProviderLedgerError } from '../src/policies/metering.js';
+import type { DecisionOptions, ProviderAttempt } from '../src/core/types.js';
 import { authorityKey, decide, type DecisionTask } from '../src/runtime/decision.js';
 import type { RuntimeStore } from '../src/runtime/types.js';
 
@@ -25,6 +26,111 @@ function task(): DecisionTask {
 }
 
 describe('decision failure accounting', () => {
+  it('collects delayed cancellation attempts, preserves analysis, and freezes late progress', async () => {
+    let callback: DecisionOptions['onProgress'];
+    const phases: string[] = [];
+    const attempt: ProviderAttempt = {
+      id: 'cancelled-call',
+      provider: 'jev',
+      purpose: 'reconsider',
+      requestedModel: 'jev-test',
+      actualModel: null,
+      status: 'cancelled',
+      latencyMs: 15,
+      usage: null,
+    };
+    const result = await decide(
+      task(),
+      {
+        apiKey: 'unused',
+        store: {} as RuntimeStore,
+        policy: {
+          decide: async (_context, _candidates, options) => {
+            callback = options?.onProgress;
+            callback?.({
+              phase: 'jev',
+              analysis: 'Completed advisory',
+              thinking: 'Returned summary',
+              thinkingSource: 'summary',
+            });
+            await new Promise<void>((_resolve, reject) =>
+              options?.signal?.addEventListener(
+                'abort',
+                () => {
+                  setTimeout(() => {
+                    callback?.({ phase: 'jev', attempts: [attempt] });
+                    reject(new ProviderError('jev_cancelled', attempt));
+                  }, 10);
+                },
+                { once: true },
+              ),
+            );
+            throw new Error('unreachable');
+          },
+        },
+      },
+      'run',
+      15,
+      (progress) => phases.push(progress.phase),
+    );
+    expect(result?.action?.payload.action).toBe('check');
+    expect(result?.decision.proposal.attempts).toEqual([attempt]);
+    expect(result?.decision.proposal.routing?.analysis).toBe('Completed advisory');
+    expect(result?.decision.proposal.routing?.thinking).toBe('Returned summary');
+    expect(phases).toEqual(['jev', 'fallback']);
+    callback?.({
+      phase: 'jev',
+      analysis: 'Late overwrite',
+      attempts: [{ ...attempt, id: 'late' }],
+    });
+    expect(phases).toEqual(['jev', 'fallback']);
+    expect(result?.decision.proposal.attempts).toHaveLength(1);
+  });
+
+  it('returns a cancelled trace with no action and bounds uncooperative policies', async () => {
+    const current = task();
+    const promise = decide(
+      current,
+      {
+        apiKey: 'unused',
+        store: {} as RuntimeStore,
+        policy: {
+          decide: async (_context, _candidates, options) => {
+            options?.onProgress?.({ phase: 'reasoning', analysis: 'Partial provider result' });
+            return await new Promise(() => {});
+          },
+        },
+      },
+      'run',
+      10000,
+    );
+    current.controller.abort();
+    const result = await promise;
+    expect(result?.decision.status).toBe('cancelled');
+    expect(result?.action).toBeNull();
+    expect(result?.decision.proposal.candidateId).toBe('');
+    expect(result?.decision.proposal.routing?.analysis).toBe('Partial provider result');
+  });
+
+  it('propagates provider ledger failures instead of submitting a fallback', async () => {
+    await expect(
+      decide(
+        task(),
+        {
+          apiKey: 'unused',
+          store: {} as RuntimeStore,
+          policy: {
+            decide: async () => {
+              throw new ProviderLedgerError(new Error('ledger failed'));
+            },
+          },
+        },
+        'run',
+        1000,
+      ),
+    ).rejects.toThrow('ledger failed');
+  });
+
   it('settles known failed-provider usage and preserves diagnostics in the legal fallback trace', async () => {
     const attempt = {
       id: 'attempt1',
@@ -54,7 +160,7 @@ describe('decision failure accounting', () => {
       'run1',
       1000,
     );
-    expect(result?.action.payload.action).toBe('check');
+    expect(result?.action?.payload.action).toBe('check');
     expect(result?.decision.proposal.source).toBe('fallback');
     expect(result?.decision.proposal.attempts).toEqual([attempt]);
     expect(result?.decision.fallbackReason).toBe('invalid_choice');

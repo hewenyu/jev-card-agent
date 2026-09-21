@@ -1,5 +1,6 @@
 import type { RecentOutcome } from './history.js';
 import type { StrategyVersions } from './versions.js';
+import type { DecisionSession } from './session.js';
 
 export type RawMessage = Record<string, unknown>;
 export type Action = 'fold' | 'check' | 'call' | 'raise' | 'all_in';
@@ -69,6 +70,7 @@ export interface OpponentStats {
   lastTableSeq: number;
 }
 export interface DecisionContext {
+  session?: DecisionSession;
   version: string;
   strategyVersions: StrategyVersions;
   lastTableSeq: number;
@@ -108,6 +110,8 @@ export interface Proposal {
   attempts?: ProviderAttempt[];
 }
 export interface ProviderAttempt {
+  retryIndex?: number;
+  maxRetries?: number;
   id: string;
   provider: 'jev' | 'responses' | 'messages';
   purpose: 'decision' | 'route_and_decision' | 'analysis' | 'reconsider';
@@ -130,8 +134,17 @@ export interface ProviderMeter {
   before(call: ProviderCall): string | null;
   after(attempt: ProviderAttempt, reservationId: string): void;
 }
+export interface DecisionProgress {
+  attempts?: ProviderAttempt[];
+  phase: 'reasoning' | 'jev' | 'completed';
+  analysis?: string;
+  thinking?: string | null;
+  thinkingSource?: 'summary' | 'thinking' | 'not_provided';
+  outcome?: string;
+}
 export interface DecisionOptions {
   signal?: AbortSignal;
+  onProgress?: (progress: DecisionProgress) => void;
 }
 export interface Policy {
   decide(

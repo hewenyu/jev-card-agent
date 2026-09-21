@@ -3,7 +3,6 @@ import { evaluateRun } from '../evaluation/service.js';
 import { loadConfig } from '../server/config.js';
 import { policyFor, ledgerFor } from '../server/controller.js';
 import { Store } from '../storage/store.js';
-import { Budget } from '../storage/budget.js';
 import { argumentsFor, fail, numberArg } from './args.js';
 
 async function main(): Promise<void> {
@@ -21,7 +20,7 @@ async function main(): Promise<void> {
   try {
     const evaluationId = randomUUID();
     const meter =
-      args.strategy === 'jev-reasoning'
+      args.strategy !== 'baseline'
         ? ledgerFor(config, store, `evaluation-${evaluationId}`)
         : undefined;
     const result = await evaluateRun(
@@ -30,9 +29,7 @@ async function main(): Promise<void> {
       args.strategy,
       numberArg(args.limit, 50, 'limit'),
       policyFor(config, args.strategy, meter),
-      args.strategy === 'jev'
-        ? new Budget(store, config.totalBudgetUsd, config.runBudgetUsd)
-        : undefined,
+      undefined,
       {
         id: evaluationId,
         timeoutMs: args.strategy === 'jev-reasoning' ? config.hybridTimeoutMs : config.jevTimeoutMs,

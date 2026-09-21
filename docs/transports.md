@@ -2,7 +2,7 @@
 
 ## 已确定的接入
 
-采用 Node.js + TypeScript 自托管 Bot，通过 `wss://openpoker.ai/ws` 连接 OpenPoker。Runtime 直接调用 Jev 的 HTTPS 请求—响应 API。HTTP webhook、异步结果回调和远程决策 worker 不在交付范围内。
+采用 Node.js + TypeScript 自托管 Bot，通过 `wss://openpoker.ai/ws` 连接 OpenPoker。正式组合策略由后端先调用推理服务的 HTTPS API，再调用 Jev 的请求—响应 API 作最终选择。HTTP webhook、异步结果回调和远程决策 worker 不在交付范围内。
 
 | 服务           | 地址                                            | 用途                                    |
 | -------------- | ----------------------------------------------- | --------------------------------------- |
@@ -18,7 +18,9 @@ Bot 主动外连，无需为了接收牌局事件开放公网 webhook。产品�
 
 每次连接立即发送 `event: snapshot`，其 JSON 数据为 `SpectatorSnapshot { sequence, observedAt, runtime, recentEvents }`。此后 Runtime 状态变化继续推送完整快照，15 秒发送一次 SSE 注释心跳。浏览器使用 EventSource 自动重连，重新取得当前快照；不依赖 Last-Event-ID 补齐历史。首次连接和每次重连只恢复当前桌面，之后按 movement ID 播放新事件，避免把初始快照中的历史动作重复动画。
 
-实时表格只包含公开的公共牌、底池、座位名称、筹码、当前投注、弃牌状态、行动座位及牌局标识。`heroCards` 始终为空数组；当前私有底牌、合法动作授权、turn token、模型上下文、模型调用内容和运行错误不进入 SSE，即使该请求携带有效管理 token 也使用相同公共投影。已结束手牌的脱敏历史由原历史 API 单独提供。
+实时表格包含公共牌、Bot 自己的当前手牌、底池、座位名称、筹码、当前投注、弃牌状态、行动座位及牌局标识。Bot 所有者明确要求公开自己的手牌；不包含未公开的对手底牌。SSE 同时提供当前决策阶段，`GET /api/live/decisions` 提供当前手已保存的决策及分析。合法动作授权、turn token、鉴权密钥和运行错误不进入公共投影。已结束手牌的脱敏历史由历史 API 提供。
+
+模型调用由后端配置控制：`REASONING_MODE=always` 每次先请求分析，再让 Jev 选择；默认思考强度 `high`。一个 session 对应一手牌，输入由持久化的、截止当前回合可见的同手历史重建；不依赖供应商会话存储。仅 `REASONING_MODE=adaptive` 使用旧的 Jev 按需分析门控。浏览器只读取调用进度与已经保存的结果，不能改策略或触发额外调用。
 
 `recentEvents` 最多保留当前 Run、当前桌、当前手牌的 32 个公开事件，包括开始、玩家动作和结算。`ChipMovement` 使用稳定 ID、座位、整数筹码金额及 `to-pot` / `from-pot` 方向。下注金额仅取协议的 `contribution_delta` 或已知的 `stack_before - stack_after`；raise-to 总额不能当作本次投入筹码。结算只使用 `hand_result.payouts` 的 `{seat, amount}` 数组。无法核实的筹码变化不生成动画；桌面状态仍按已验证 Runtime 快照更新。
 

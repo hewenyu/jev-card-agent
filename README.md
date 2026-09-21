@@ -6,7 +6,7 @@ An autonomous poker agent and decision-model evaluation platform powered by Jev,
 
 OpenPoker 提供游戏服务器、匹配和结算；本项目负责 Agent 的持续运行、决策、恢复和评估。最终接入方式为自托管 WebSocket Bot。
 
-公开观战与决策回放：**https://openpoker.zve.ccwu.cc**。访客无需登录即可实时观战、查看已结束的真实牌局和决策回放。网站只读，Agent 在后台自主参赛。
+公开观战与决策回放：**https://openpoker.zve.ccwu.cc**。访客无需登录即可实时查看 Bot 自己的手牌、本手已保存分析和行动，以及已结束的真实牌局回放。网站只读，Agent 在后台自主参赛。
 
 ## 本地演示
 
@@ -18,13 +18,13 @@ npm run demo
 需要 Node.js `24.x`。打开 **http://127.0.0.1:8787**。演示无需 API Key，不加入真实比赛，也不调用付费模型；它构建前后端并以合成数据启动完整应用，默认使用 `data/demo.sqlite`。
 
 - **Overview**：按 Run 查看已结算收益、bb/100、决策数和费用估算。
-- **Live table**：通过 SSE 自动更新公共牌、座位、筹码、底池和行动流，观察下注及派奖动画。
+- **Live table**：实时查看公共牌、Bot 自己手牌、筹码与行动动画，以及本手已保存的分析和决策阶段。
 - **Replay & decisions**：逐事件回放，检查当时输入、候选分布、动作及执行确认。
-- **Experiments**：浏览已保存且允许公开的策略比较结果，追溯具体差异。
+- **Evaluations**：浏览已保存且允许公开的策略比较结果，追溯具体差异。
 
 界面区分 **Demo / Recorded / Live Arena**。合成战绩不进入真实收益，历史结果不能代表替代动作的收益，Jev 选项概率也不是扑克胜率。
 
-历史按每页 100 条增量读取。通过 **Load older runs** 选择早期运行，在 Replay 中使用 **Load older hands** 继续查看较早牌局；不会一次下载全部长期历史。结果筛选作用于已加载牌局，Overview 曲线明确标注已加载样本，顶部收益指标覆盖整个 Run。设置 `PUBLIC_HISTORY=true` 后，访客可匿名观战并查看完整的已结束脱敏历史。当前私有底牌、行动授权和未完成决策不会出现在公开实时流中。
+历史按每页 100 条增量读取。通过 **Load older runs** 选择早期运行，在 Replay 中使用 **Load older hands** 继续查看较早牌局；不会一次下载全部长期历史。结果筛选作用于已加载牌局，Overview 曲线明确标注已加载样本，顶部收益指标覆盖整个 Run。设置 `PUBLIC_HISTORY=true` 后，按所有者要求公开 Bot 自己的当前手牌、决策阶段和本手已保存分析，完整已结束历史也可匿名读取。未公开的对手底牌、行动授权和鉴权凭据不公开。
 
 ## 真实 Bot
 
@@ -39,15 +39,15 @@ chmod 600 .env
 # 检查平台鉴权，不加入匹配队列
 npm run diagnose
 
-# 正式入队并自动打牌；默认策略为纯 Jev
-npm run bot -- --strategy jev --max-hands 10 --max-minutes 30 --budget-usd 1
+# 正式入队并自动打牌；先推理分析，再由 Jev 选择行动
+npm run bot -- --strategy jev-reasoning --max-hands 10 --max-minutes 30 --budget-usd 1
 ```
 
-展示网站执行 `npm run build` 和 `npm run start`；在 `.env` 配置 `PUBLIC_HISTORY=true`、`AUTO_START_BOT=true`、`BOT_STRATEGY=jev`，即可在服务启动后自动参赛并开放匿名观战。未启用自动启动时仅提供展示页面和读取服务。`npm run bot` 是独立无界面入口，同一个数据库和 Bot 选择一种运行入口。
+展示网站执行 `npm run build` 和 `npm run start`；在 `.env` 配置 `PUBLIC_HISTORY=true`、`AUTO_START_BOT=true`、`BOT_STRATEGY=jev-reasoning`，即可在服务启动后自动参赛并开放匿名观战。未启用自动启动时仅提供展示页面和读取服务。`npm run bot` 是独立无界面入口，同一个数据库和 Bot 选择一种运行入口。
 
 真实 Jev 请求产生费用。手数、时长和费用限制分别生效；这些停止上限不保证在指定时间内完成指定手数。
 
-策略包括 `jev`、本地规则 `baseline` 和显式启用的 `jev-reasoning`。组合模式由 Jev 判断是否请求推理分析，再由 Jev 从原合法候选集重新决策。默认仍用纯 Jev，先运行纯 Jev 并保留记录，再据此比较组合模式。配置与模型身份校验见[运行手册](docs/running.md#jev-与推理模型组合)。
+正式运行使用 `BOT_STRATEGY=jev-reasoning`、`REASONING_MODE=always` 和 `REASONING_EFFORT=high`：每次有效行动先请求推理分析，再由 Jev 从合法候选中作最终选择。需要配置独立推理服务凭据；纯 Jev `jev` 与规则 `baseline` 保留用于对照，旧按需分析模式通过后台 `REASONING_MODE=adaptive` 显式启用。每手保留独立 session，同手各次决策共享截止当时的已保存历史。配置、超时降级与模型身份校验见[运行手册](docs/running.md#jev-与推理模型组合)。
 
 网站不提供 Bot 启停、策略配置、模型密钥输入或实验触发。Jev 与推理模型的分析、选择和调用都在后端完成；管理通过服务器 Compose、CLI 或受保护的内部 API 执行。
 

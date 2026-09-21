@@ -23,6 +23,8 @@ CONSOLE_PORT=8787
 PUBLIC_HISTORY=true
 AUTO_START_BOT=true
 BOT_STRATEGY=jev-reasoning
+REASONING_MODE=always
+REASONING_EFFORT=high
 REASONING_API_FORMAT=messages
 REASONING_MESSAGES_MODEL=claude-opus-5
 REASONING_TIMEOUT_MS=30000
@@ -84,7 +86,7 @@ BIND_ADDRESS=127.0.0.1
 PUBLIC_HISTORY=true
 ```
 
-公开网站匿名展示实时公共牌、座位、筹码、底池和行动流，使用 SSE 自动更新并重连。当前私有底牌、合法行动授权和未完成决策保留在后台；已结束牌局提供完整已记录的脱敏历史与决策复盘。原始 SQLite 和原始 turn token 不公开下载。Jev、推理模型、密钥与自动运行配置都由后端管理，页面只执行读取。
+公开网站匿名展示公共牌、Bot 自己的当前手牌、座位、筹码、底池和行动流，使用 SSE 自动更新并重连。按所有者要求，当前手的决策阶段及已保存分析通过只读接口同步展示；已结束牌局保留完整已记录的脱敏历史与决策复盘。未公开的对手底牌、合法行动授权、鉴权凭据及原始 SQLite 不公开下载。正式策略每次先请求 high 强度分析，再由 Jev 选择；密钥、模型配置与自主运行都由后端管理，页面只执行读取。
 
 HTTPS 代理的 `location /` 使用 `limit_except GET { deny all; }`，允许 GET 及隐含允许的 HEAD，拒绝公网管理写请求，即使携带有效内部令牌也不会放行。`proxy_buffering off` 使 SSE 及时到达浏览器；`GET /api/live` 发送 `snapshot` 事件，后端每 15 秒发送注释心跳，代理读超时维持 60 秒。Compose 管理脚本从容器内访问受保护 API，不经过公网代理，因此仍可安全排空和更新。
 

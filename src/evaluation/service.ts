@@ -22,8 +22,7 @@ export async function evaluateRun(
     throw new Error('Evaluation limit must be 1–100');
   const queries = new Queries(store);
   if (!queries.runs().some((run) => run.id === runId)) throw new Error('Run not found');
-  if (strategy === 'jev' && (!policy || !budget))
-    throw new Error('Jev evaluation requires a provider and budget');
+  if (strategy === 'jev' && !policy) throw new Error('Jev evaluation requires a metered provider');
   if (strategy === 'jev-reasoning' && !policy)
     throw new Error('Combined evaluation requires a metered provider');
   const selected = policy ?? new BaselinePolicy();
@@ -54,8 +53,8 @@ export async function evaluateRun(
     let proposal: Proposal | null = null;
     const started = performance.now();
     try {
-      if (strategy === 'jev') {
-        reservation = budget!.reserve(`evaluation-${result.id}`, context, candidates);
+      if (strategy === 'jev' && budget) {
+        reservation = budget.reserve(`evaluation-${result.id}`, context, candidates);
         if (reservation === null) throw new Error('Evaluation budget exhausted');
       }
       proposal = await selected.decide(context, candidates, {
@@ -83,7 +82,7 @@ export async function evaluateRun(
           latencyMs: error.attempt.latencyMs,
           model: error.attempt.actualModel ?? undefined,
           usage: error.attempt.usage ?? undefined,
-          attempts: [error.attempt],
+          attempts: error.attempts ?? [error.attempt],
         };
         result.costUsd += proposalCost(store, proposal);
       }
@@ -99,7 +98,7 @@ export async function evaluateRun(
     }
     result.samples++;
     totalLatency += performance.now() - started;
-    if (strategy === 'jev' && reservation === null) break;
+    if (strategy === 'jev' && budget && reservation === null) break;
   }
   result.meanLatencyMs = totalLatency / result.samples;
   const ledger = store.db

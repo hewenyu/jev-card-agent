@@ -34,6 +34,8 @@ export function reasoningFor(config: AppConfig, meter?: ProviderMeter): Reasonin
         ? config.reasoningMessagesModel
         : config.reasoningModel,
     timeoutMs: config.reasoningTimeoutMs,
+    effort: config.reasoningEffort,
+    maxOutputTokens: config.reasoningMaxOutputTokens,
     meter,
   });
 }
@@ -69,6 +71,7 @@ export function policyFor(
       jev,
       reasoning: reasoningFor(config, meter),
       totalBudgetMs: config.hybridTimeoutMs,
+      reasoningMode: config.reasoningMode,
     });
   }
   return jev;
@@ -81,6 +84,7 @@ export class Controller {
   runtime: PokerRuntime | null = null;
   private strategy: StrategyName = 'jev';
   private starting = false;
+  private closing = false;
   private leaseTimer?: ReturnType<typeof setInterval>;
   private controllerError: string | null = null;
   private demoSelected: boolean;
@@ -100,6 +104,7 @@ export class Controller {
     this.spectator = new SpectatorFeed(this.view());
   }
   async start(request: RunRequest): Promise<RuntimeView> {
+    if (this.closing) throw new Error('Controller is closing');
     if (this.config.readOnlyDemo || this.config.demo)
       throw new Error('Live runtime is disabled in demo mode');
     if (!this.config.openPokerApiKey) throw new Error('OPENPOKER_API_KEY is required');
@@ -110,6 +115,8 @@ export class Controller {
     if (this.starting || this.view().running) throw new Error('Runtime is already running');
     this.starting = true;
     try {
+      await this.runtime?.settleDecisions();
+      if (this.closing) throw new Error('Controller is closing');
       if (!this.store.acquireLease()) throw new Error('Another runtime owns this database lease');
       // Acquiring the exclusive lease is the evidence that these prior runs have no owner.
       this.store.db
@@ -131,17 +138,21 @@ export class Controller {
         policy: policyFor(
           this.config,
           request.strategy,
-          request.strategy === 'jev-reasoning'
+          request.strategy !== 'baseline'
             ? ledgerFor(this.config, this.store, runId, request.budgetUsd)
             : undefined,
         ),
         store: this.store,
-        ...(request.strategy === 'jev' ? { budget: this.budget } : {}),
         wsUrl: this.config.openPokerWsUrl,
         restUrl: this.config.openPokerRestUrl,
       });
       this.observeRuntime(this.runtime);
-      this.runtime.once('stopped', () => this.releaseLease());
+      const runtime = this.runtime;
+      runtime.once('stopped', () => {
+        void runtime.settleDecisions().then(() => {
+          if (this.runtime === runtime) this.releaseLease();
+        });
+      });
       this.leaseTimer = setInterval(() => {
         try {
           if (!this.store.acquireLease()) throw new Error('Runtime database lease was lost');
@@ -185,6 +196,7 @@ export class Controller {
       : null;
     return {
       running,
+      decision: status?.decision ?? null,
       status: this.starting
         ? 'connecting'
         : (status?.phase ?? (this.demoSelected ? 'demo' : 'idle')),
@@ -237,15 +249,15 @@ export class Controller {
     this.spectator.update(this.view());
   }
   async close(): Promise<void> {
+    this.closing = true;
     if (this.view().running && this.runtime) {
       const runtime = this.runtime;
       await new Promise<void>((resolve) => {
         runtime.once('stopped', resolve);
         runtime.stop(false);
       });
-      // Allow the cancelled policy's budget settlement to drain before closing SQLite.
-      await new Promise<void>((resolve) => setImmediate(resolve));
     }
+    await this.runtime?.settleDecisions();
     this.releaseLease();
     this.detachSpectator?.();
     this.spectator.close();

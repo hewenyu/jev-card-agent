@@ -1,0 +1,287 @@
+import { expect, test, type Page } from '@playwright/test';
+import type {
+  DecisionView,
+  HandDetail,
+  LiveDecisions,
+  Overview,
+  RuntimeView,
+} from '../../src/shared/api';
+
+async function fixture(page: Page) {
+  const overview = (await (await page.request.get('/api/overview')).json()) as Overview;
+  const hand = overview.recentHands[0]!;
+  const detail = (await (await page.request.get(`/api/hands/${hand.id}`)).json()) as HandDetail;
+  const first: DecisionView = {
+    ...detail.decisions[0]!,
+    context: {
+      ...detail.decisions[0]!.context,
+      holeCards: ['Ah', 'Kd'],
+      opponents: [
+        { name: 'Observed rival', hands: 10, vpip: 4, pfr: 2, facedBet: 5, foldedToBet: 1 },
+      ],
+      session: {
+        id: 'fixture-session',
+        decisionId: detail.decisions[0]!.id,
+        turn: 2,
+        previousTurns: [
+          {
+            decisionId: 'prior-turn',
+            street: 'preflop',
+            status: 'accepted',
+            action: { kind: 'raise', raiseToChips: 80 },
+            analysis: 'Earlier analysis used only preflop information.',
+          },
+        ],
+        truncated: false,
+      },
+      recentOutcomes: [
+        {
+          handId: 'earlier-verified-hand',
+          profitBb: 2.5,
+          decisions: [{ street: 'preflop', action: 'call' }],
+          decisionsTruncated: false,
+        },
+      ],
+    },
+    routing: {
+      outcome: 'reasoned_jev_final',
+      reasoningMode: 'always',
+      analysis:
+        'A small raise is supported by the recorded opponent sample. ' + 'uncertain_'.repeat(55),
+      thinking:
+        'The provider returned this concise summary: consider position, pot odds, and the small observed sample.',
+      thinkingSource: 'summary',
+      requestedModel: 'fixture-reasoning-model',
+      actualModel: 'fixture-reasoning-model',
+    },
+    attempts: [
+      {
+        provider: 'messages',
+        purpose: 'analysis',
+        requestedModel: 'fixture-reasoning-model',
+        actualModel: 'fixture-reasoning-model',
+        status: 'succeeded',
+        latencyMs: 120,
+      },
+      {
+        provider: 'jev',
+        purpose: 'reconsider',
+        requestedModel: 'jev-1.13.0',
+        actualModel: 'jev-1.13.0',
+        status: 'succeeded',
+        latencyMs: 60,
+      },
+    ],
+  };
+  return { overview, hand, detail, first };
+}
+
+async function liveFixture(page: Page) {
+  const base = await fixture(page);
+  const runtime: RuntimeView = {
+    ...base.overview.runtime,
+    running: true,
+    status: 'playing',
+    mode: 'live',
+    runId: base.first.runId,
+    strategy: 'jev-reasoning',
+    table: {
+      tableId: base.hand.tableId,
+      handId: base.hand.id,
+      street: 'flop',
+      pot: 120,
+      board: ['2h', '3d', '4s'],
+      heroCards: ['Ah', 'Kd'],
+      heroSeat: 0,
+      dealerSeat: 1,
+      actorSeat: 0,
+      seats: [{ seat: 0, name: 'Agent', stack: 1900, bet: 20, folded: false, status: 'active' }],
+    },
+    decision: {
+      id: 'working-turn',
+      sessionId: 'fixture-session',
+      tableId: base.hand.tableId,
+      handId: base.hand.id,
+      phase: 'reasoning',
+      startedAt: base.first.createdAt,
+      updatedAt: base.first.createdAt,
+    },
+  };
+  const state = {
+    runtime,
+    data: {
+      session: {
+        id: 'fixture-session',
+        tableId: base.hand.tableId,
+        handId: base.hand.id,
+        runId: base.first.runId,
+        turnCount: 1,
+      },
+      decisions: [base.first],
+    } as LiveDecisions,
+    reads: 0,
+  };
+  const writes: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.startsWith('/api/') && request.method() !== 'GET')
+      writes.push(request.method());
+  });
+  // Runtime data is supplied through the existing overview fallback; no real arena connection.
+  await page.route('**/api/live', (route) => route.abort());
+  await page.route('**/api/overview', (route) =>
+    route.fulfill({ json: { ...base.overview, runtime: state.runtime } }),
+  );
+  return { ...base, state, writes };
+}
+
+test('replay presents provider analysis, actual summary and evidence with sample denominators', async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  await page.route('**/api/hands/*', (route) =>
+    route.fulfill({ json: { ...data.detail, decisions: [data.first] } }),
+  );
+  await page.goto('/#replay');
+  await expect(
+    page.getByRole('heading', { name: 'Provider recommendation', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByText('A small raise is supported by the recorded opponent sample.', { exact: false })
+      .first(),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Provider thinking summary', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText('The provider returned this concise summary:', { exact: false }).first(),
+  ).toBeVisible();
+  await expect(page.getByLabel('Opponent statistics')).toContainText('40% · 4/10');
+  await expect(page.getByLabel('Opponent statistics')).toContainText('20% · 2/10');
+  await expect(page.getByLabel('Opponent statistics')).toContainText('20% · 1/5');
+  await page.getByText('Earlier turns in this session · 1 included', { exact: true }).click();
+  await expect(
+    page.getByText('Earlier analysis used only preflop information.', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText('preflop · raise to 80 · accepted', { exact: true })).toBeVisible();
+  await page.getByText('Verified historical outcomes · 1 included', { exact: true }).click();
+  await expect(page.getByText('+2.5 bb', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Provider trace')).toContainText('Reasoning analysis');
+  await expect(page.getByLabel('Provider trace')).toContainText('Final Jev choice');
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  const prose = await page
+    .locator('.analysis-recommendation > .analysis-prose')
+    .evaluate((element) => ({ width: element.clientWidth, scroll: element.scrollWidth }));
+  expect(prose.scroll).toBeLessThanOrEqual(prose.width);
+});
+
+test('live displays the agent cards and progress, refreshes saved turns and preserves the selected turn', async ({
+  page,
+}) => {
+  const data = await liveFixture(page);
+  await page.route('**/api/live/decisions', (route) => {
+    data.state.reads++;
+    expect(route.request().headers().authorization).toBeUndefined();
+    return route.fulfill({ json: data.state.data });
+  });
+  await page.goto('/#live');
+  await expect(page.locator('.seat-0 .hero-hole .cards')).toHaveAttribute('aria-label', 'Ah, Kd');
+  await expect(page.locator('.hand-session-summary')).toContainText('Reasoning model is thinking');
+  await expect(page.getByRole('group', { name: 'Session turns' }).getByRole('button')).toHaveCount(
+    1,
+  );
+  data.state.data = {
+    ...data.state.data,
+    session: { ...data.state.data.session!, turnCount: 2 },
+    decisions: [
+      data.first,
+      { ...data.first, id: 'newer-live-turn', routing: undefined, attempts: [] },
+    ],
+  };
+  data.state.runtime = {
+    ...data.state.runtime,
+    decision: { ...data.state.runtime.decision!, phase: 'submitted' },
+  };
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('group', { name: 'Session turns' }).getByRole('button')).toHaveCount(
+    2,
+    { timeout: 10_000 },
+  );
+  await expect(page.getByRole('button', { name: /^Turn 1 / })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(page.locator('.hand-session-summary')).toContainText('Action submitted');
+  await page.getByRole('button', { name: /^Turn 2 / }).click();
+  await expect(
+    page.getByText('This record does not include a provider analysis.', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText('No thinking text or summary was returned in this record.', { exact: true }),
+  ).toBeVisible();
+  const reads = data.state.reads;
+  await expect.poll(() => data.state.reads, { timeout: 10_000 }).toBeGreaterThan(reads);
+  await expect(page.getByRole('button', { name: /^Turn 2 / })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  expect(data.writes).toEqual([]);
+});
+
+test('a previous hand response cannot replace the new live decision session', async ({ page }) => {
+  const data = await liveFixture(page);
+  let releaseOld!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    releaseOld = resolve;
+  });
+  let held = false;
+  await page.route('**/api/live/decisions', async (route) => {
+    data.state.reads++;
+    const response = structuredClone(data.state.data);
+    if (data.state.reads === 2) {
+      held = true;
+      await pending;
+    }
+    await route.fulfill({ json: response });
+  });
+  try {
+    await page.goto('/#live');
+    await expect(
+      page.getByRole('heading', { name: 'Provider recommendation', exact: true }),
+    ).toBeVisible();
+    await expect.poll(() => held, { timeout: 10_000 }).toBe(true);
+    const nextHand = 'next-live-hand';
+    data.state.runtime = {
+      ...data.state.runtime,
+      table: { ...data.state.runtime.table!, handId: nextHand },
+      decision: null,
+    };
+    data.state.data = {
+      session: { ...data.state.data.session!, id: 'next-session', handId: nextHand, turnCount: 1 },
+      decisions: [
+        {
+          ...data.first,
+          id: 'next-hand-choice',
+          handId: nextHand,
+          context: { ...data.first.context, session: { id: 'next-session', turn: 1 } },
+          routing: { analysis: 'Analysis for the new hand only.' },
+        },
+      ],
+    };
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.getByText('Analysis for the new hand only.', { exact: true })).toBeVisible();
+    const response = page.waitForResponse((item) => item.url().endsWith('/api/live/decisions'));
+    releaseOld();
+    await response;
+    await expect(page.getByText('Analysis for the new hand only.', { exact: true })).toBeVisible();
+    await expect(page.locator('.hand-session-summary')).toContainText('next-session');
+    await expect(
+      page.getByText('A small raise is supported by the recorded opponent sample.', {
+        exact: false,
+      }),
+    ).toHaveCount(0);
+  } finally {
+    releaseOld();
+  }
+});

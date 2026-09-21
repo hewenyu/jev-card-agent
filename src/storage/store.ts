@@ -13,6 +13,7 @@ import type {
 import { json, openDatabase } from './database.js';
 import { proposalCost } from './cost.js';
 import { recentOutcomes } from './history.js';
+import { sessionTurns } from './session.js';
 import { STRATEGY_VERSIONS } from '../core/index.js';
 
 export class Store implements RuntimeStore {
@@ -56,6 +57,10 @@ export class Store implements RuntimeStore {
     return recentOutcomes(this, asOf, excludeHandId);
   }
 
+  sessionTurns(tableId: string, handId: string, asOf: string, beforeSeq: number) {
+    return sessionTurns(this, tableId, handId, asOf, beforeSeq);
+  }
+
   appendEvent(runId: string, event: ServerEvent, receivedAt: string): void {
     this.db
       .prepare(
@@ -94,7 +99,7 @@ export class Store implements RuntimeStore {
         JSON.stringify(decision.proposal),
         decision.proposal.source,
         decision.proposal.candidateId,
-        'proposed',
+        decision.status ?? 'proposed',
         decision.proposal.latencyMs,
         cost,
         decision.fallbackReason,

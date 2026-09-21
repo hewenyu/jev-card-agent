@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ProviderAttempt, ProviderCall, ProviderMeter } from '../core/types.js';
 
 export class ProviderError extends Error {
+  attempts?: ProviderAttempt[];
   constructor(
     public readonly code: string,
     public readonly attempt?: ProviderAttempt,
@@ -10,8 +11,19 @@ export class ProviderError extends Error {
     this.name = 'ProviderError';
   }
 }
+export class ProviderLedgerError extends Error {
+  constructor(error: unknown) {
+    super(error instanceof Error ? error.message : 'Provider ledger failed', { cause: error });
+    this.name = 'ProviderLedgerError';
+  }
+}
 export function beginAttempt(call: ProviderCall, meter?: ProviderMeter) {
-  const reservationId = meter ? meter.before(call) : undefined;
+  let reservationId: string | null | undefined;
+  try {
+    reservationId = meter ? meter.before(call) : undefined;
+  } catch (error) {
+    throw new ProviderLedgerError(error);
+  }
   if (reservationId === null) throw new ProviderError('provider_budget_exhausted');
   const started = performance.now();
   const attempt: ProviderAttempt = {
@@ -33,7 +45,13 @@ export function beginAttempt(call: ProviderCall, meter?: ProviderMeter) {
       attempt.latencyMs = Math.round(performance.now() - started);
       if (!settled) {
         settled = true;
-        if (meter && reservationId !== undefined) meter.after(attempt, reservationId);
+        if (meter && reservationId !== undefined) {
+          try {
+            meter.after(attempt, reservationId);
+          } catch (error) {
+            throw new ProviderLedgerError(error);
+          }
+        }
       }
       return structuredClone(attempt);
     },

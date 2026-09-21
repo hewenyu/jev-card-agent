@@ -2,6 +2,7 @@ import type { RunSummary, RuntimeView, SpectatorEvent } from '../../../src/share
 import { number, policyLabel, time } from '../api';
 import type { LiveSpectator } from '../live';
 import { PokerTable } from '../components/PokerTable';
+import { HandSession } from '../components/HandSession';
 import { Empty, Panel, SourceBadge, Status } from '../components/UI';
 import './live.css';
 
@@ -63,7 +64,7 @@ export function Live({
           />
           <p className="annotation spectator-note">
             {runtime.table
-              ? 'Public table view. Private cards and decision details appear in completed hand replays.'
+              ? 'The agent’s own cards are shown. Follow its recorded analysis and choices in the hand session below.'
               : 'The agent is between tables. The next table will appear automatically.'}
           </p>
         </Panel>
@@ -100,6 +101,7 @@ export function Live({
           </p>
         </Panel>
       </div>
+      <HandSession runtime={runtime} />
       <Panel title="Table activity" eyebrow="CONFIRMED ACTIONS">
         {!events.length ? (
           <Empty title="Waiting for the next action">

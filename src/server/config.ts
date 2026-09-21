@@ -23,6 +23,9 @@ export interface AppConfig {
   reasoningModel: string;
   reasoningMessagesModel: string;
   reasoningTimeoutMs: number;
+  reasoningMode: 'always' | 'adaptive';
+  reasoningEffort: 'low' | 'medium' | 'high';
+  reasoningMaxOutputTokens: number;
   hybridTimeoutMs: number;
   reasoningInputPricePerMillion: number;
   reasoningOutputPricePerMillion: number;
@@ -42,6 +45,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
   const readOnlyDemo = env.READ_ONLY_DEMO === 'true';
   const synthetic = demo || readOnlyDemo;
   const botStrategy = env.BOT_STRATEGY || 'jev';
+  const reasoningMode = env.REASONING_MODE || 'always';
+  const reasoningEffort = env.REASONING_EFFORT || 'high';
+  if (!['always', 'adaptive'].includes(reasoningMode))
+    throw new Error('REASONING_MODE must be always or adaptive');
+  if (!['low', 'medium', 'high'].includes(reasoningEffort))
+    throw new Error('REASONING_EFFORT must be low, medium or high');
   if (!['jev', 'baseline', 'jev-reasoning'].includes(botStrategy))
     throw new Error('BOT_STRATEGY must be jev, baseline or jev-reasoning');
   if (env.AUTO_START_BOT && !['true', 'false'].includes(env.AUTO_START_BOT))
@@ -73,6 +82,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
     reasoningModel: env.REASONING_MODEL || 'gpt-6-astra',
     reasoningMessagesModel: env.REASONING_MESSAGES_MODEL || 'claude-opus-5',
     reasoningTimeoutMs: numeric(env.REASONING_TIMEOUT_MS, 12000, 'REASONING_TIMEOUT_MS', 1),
+    reasoningMode: reasoningMode as AppConfig['reasoningMode'],
+    reasoningEffort: reasoningEffort as AppConfig['reasoningEffort'],
+    reasoningMaxOutputTokens: numeric(
+      env.REASONING_MAX_OUTPUT_TOKENS,
+      4096,
+      'REASONING_MAX_OUTPUT_TOKENS',
+      1,
+    ),
     hybridTimeoutMs: numeric(env.HYBRID_TIMEOUT_MS, 15000, 'HYBRID_TIMEOUT_MS', 1),
     reasoningInputPricePerMillion: numeric(
       env.REASONING_INPUT_PRICE_PER_MILLION,
@@ -93,6 +110,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
     throw new Error('REASONING_API_FORMAT must be responses or messages');
   if (config.hybridTimeoutMs > 40_000)
     throw new Error('HYBRID_TIMEOUT_MS must leave submission time below the 45-second turn');
+  if (
+    !Number.isSafeInteger(config.reasoningMaxOutputTokens) ||
+    config.reasoningMaxOutputTokens > 32768
+  )
+    throw new Error('REASONING_MAX_OUTPUT_TOKENS must be an integer from 1 to 32768');
   if (!Number.isInteger(config.port) || config.port > 65535) throw new Error('Invalid PORT');
   if (!isLoopback(config.host) && !config.apiToken && !config.readOnlyDemo) {
     throw new Error('A non-loopback HOST requires API_TOKEN or READ_ONLY_DEMO=true');

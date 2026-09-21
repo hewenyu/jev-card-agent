@@ -1,7 +1,7 @@
 import type { ServerEvent } from '../openpoker/protocol.js';
 import type { RuntimeView, SpectatorEvent, SpectatorSnapshot } from '../shared/api.js';
 
-/** Whitelist public table fields; even an authenticated SSE consumer gets no private cards. */
+/** Whitelist public table fields; the owner explicitly publishes the agent’s own cards, never action authority. */
 export function publicRuntime(view: RuntimeView): RuntimeView {
   const table = view.table;
   return {
@@ -11,6 +11,20 @@ export function publicRuntime(view: RuntimeView): RuntimeView {
     runId: view.runId,
     strategy: view.strategy,
     error: null,
+    decision:
+      view.decision &&
+      view.decision.handId === table?.handId &&
+      view.decision.tableId === table?.tableId
+        ? {
+            id: view.decision.id,
+            sessionId: view.decision.sessionId,
+            tableId: view.decision.tableId,
+            handId: view.decision.handId,
+            phase: view.decision.phase,
+            startedAt: view.decision.startedAt,
+            updatedAt: view.decision.updatedAt,
+          }
+        : null,
     table: table
       ? {
           tableId: table.tableId,
@@ -18,7 +32,7 @@ export function publicRuntime(view: RuntimeView): RuntimeView {
           street: table.street,
           pot: table.pot,
           board: table.board.slice(0, 5),
-          heroCards: [],
+          heroCards: table.heroCards.slice(0, 2),
           heroSeat: table.heroSeat,
           dealerSeat: table.dealerSeat,
           actorSeat: table.actorSeat ?? null,

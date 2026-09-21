@@ -60,6 +60,10 @@ export interface DecisionView {
   model: string | null;
   routing?: Record<string, unknown>;
   attempts?: {
+    retryIndex?: number;
+    maxRetries?: number;
+    purpose?: string;
+    errorCode?: string;
     provider: string;
     requestedModel: string;
     actualModel: string | null;
@@ -117,7 +121,27 @@ export interface SpectatorSnapshot {
   recentEvents: SpectatorEvent[];
 }
 
+export interface LiveDecisionProgress {
+  id: string;
+  sessionId: string;
+  tableId: string;
+  handId: string;
+  phase: 'reasoning' | 'jev' | 'completed' | 'fallback' | 'submitted';
+  startedAt: string;
+  updatedAt: string;
+}
+export interface LiveDecisions {
+  session: {
+    id: string;
+    tableId: string;
+    handId: string;
+    runId: string | null;
+    turnCount: number;
+  } | null;
+  decisions: DecisionView[];
+}
 export interface RuntimeView {
+  decision?: LiveDecisionProgress | null;
   running: boolean;
   status: string;
   mode: 'idle' | 'live' | 'demo';

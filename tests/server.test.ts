@@ -52,7 +52,7 @@ describe('console API and security boundaries', () => {
       )
       .run('private-routing-turn-token', 'private-routing-authorization', 'demo-jev-hand-1-flop');
     const overview = (await app.inject('/api/overview')).json<Overview>();
-    expect(overview.runtime.table?.heroCards).toEqual([]);
+    expect(overview.runtime.table?.heroCards).toEqual(['Qh', 'Qs']);
     expect(overview.runtime.table?.seats).toHaveLength(6);
     expect(overview.capabilities).toEqual({
       canControl: false,
@@ -193,7 +193,7 @@ describe('console API and security boundaries', () => {
       .run('demo-jev-hand-4');
     for (const prefix of ['/%61pi', '/a%70i']) {
       const overview = (await app.inject(`${prefix}/overview`)).json<Overview>();
-      expect(overview.runtime.table?.heroCards).toEqual([]);
+      expect(overview.runtime.table?.heroCards).toEqual(['Qh', 'Qs']);
       expect(overview.capabilities.canControl).toBe(false);
       expect((await app.inject(`${prefix}/hands/demo-jev-hand-4`)).statusCode).toBe(404);
       expect((await app.inject(`${prefix}/decisions/demo-jev-hand-4-flop`)).statusCode).toBe(404);
@@ -238,57 +238,67 @@ describe('console API and security boundaries', () => {
     expect((await app.inject('/api/hands/missing')).statusCode).toBe(404);
   });
 
-  it('routes hybrid offline evaluation through one provider ledger without an outer duplicate reservation', async () => {
-    const { app, store } = await fixture({
-      demo: false,
-      jevApiKey: 'test-jev',
-      reasoningApiKey: 'test-reasoning',
-    });
-    app.controller.resetDemo();
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn(async (_url, options) => {
-      const request = JSON.parse(String(options?.body)) as {
-        questions: { action: { criteria: Record<string, unknown> }; needs_analysis?: unknown };
-      };
-      const ids = Object.keys(request.questions.action.criteria);
-      const choice = ids[0]!;
-      return new Response(
-        JSON.stringify({
-          model: 'jev-1.13.0',
-          usage: { input_tokens: 100, output_tokens: 0 },
-          answers: {
-            action: {
-              type: 'choice',
-              choice,
-              confidence: 0.8,
-              probabilities: Object.fromEntries(ids.map((id) => [id, id === choice ? 1 : 0])),
-            },
-            needs_analysis: {
-              type: 'choice',
-              choice: 'no',
-              confidence: 0.9,
-              probabilities: { yes: 0, no: 1 },
-            },
-          },
-        }),
-        { status: 200 },
-      );
-    });
-    try {
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/evaluations',
-        payload: { runId: 'demo-jev', strategy: 'jev-reasoning', limit: 1 },
+  it.each(['jev', 'jev-reasoning'] as const)(
+    'meters each %s evaluation retry without an outer duplicate reservation',
+    async (strategy) => {
+      const { app, store } = await fixture({
+        demo: false,
+        jevApiKey: 'test-jev',
+        reasoningApiKey: 'test-reasoning',
+        reasoningMode: 'adaptive',
       });
-      expect(response.statusCode).toBe(200);
-      expect(response.json<EvaluationView>().errors).toBe(0);
-      expect(store.db.prepare('SELECT COUNT(*) AS n FROM usage').get()?.n).toBe(1);
-      expect(store.db.prepare('SELECT COUNT(*) AS n FROM provider_usage').get()?.n).toBe(1);
-      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
+      app.controller.resetDemo();
+      const originalFetch = globalThis.fetch;
+      let requests = 0;
+      globalThis.fetch = vi.fn(async (_url, options) => {
+        if (++requests === 1) return new Response('', { status: 503 });
+        const request = JSON.parse(String(options?.body)) as {
+          questions: { action: { criteria: Record<string, unknown> }; needs_analysis?: unknown };
+        };
+        const ids = Object.keys(request.questions.action.criteria);
+        const choice = ids[0]!;
+        return new Response(
+          JSON.stringify({
+            model: 'jev-1.13.0',
+            usage: { input_tokens: 100, output_tokens: 0 },
+            answers: {
+              action: {
+                type: 'choice',
+                choice,
+                confidence: 0.8,
+                probabilities: Object.fromEntries(ids.map((id) => [id, id === choice ? 1 : 0])),
+              },
+              needs_analysis: {
+                type: 'choice',
+                choice: 'no',
+                confidence: 0.9,
+                probabilities: { yes: 0, no: 1 },
+              },
+            },
+          }),
+          { status: 200 },
+        );
+      });
+      try {
+        const response = await app.inject({
+          method: 'POST',
+          url: '/api/evaluations',
+          payload: { runId: 'demo-jev', strategy, limit: 1 },
+        });
+        expect(response.statusCode).toBe(200);
+        expect(response.json<EvaluationView>().errors).toBe(0);
+        expect(store.db.prepare('SELECT COUNT(*) AS n FROM usage').get()?.n).toBe(2);
+        expect(store.db.prepare('SELECT COUNT(*) AS n FROM provider_usage').get()?.n).toBe(2);
+        expect(
+          store.db.prepare("SELECT COUNT(*) AS n FROM usage WHERE status='unknown'").get()?.n,
+        ).toBe(1);
+        expect(response.json<EvaluationView>().costUsd).toBeCloseTo(0.002688 + 0.0000042, 9);
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+  );
 
   it('public read-only demo exposes synthetic data and denies every write', async () => {
     const { app } = await fixture({ host: '0.0.0.0', readOnlyDemo: true });

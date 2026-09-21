@@ -101,6 +101,17 @@ export class Queries {
       .all(runId, Math.min(500, Math.max(1, limit)))
       .map(decisionView);
   }
+  handDecisions(tableId: string, handId: string): DecisionView[] {
+    return this.store.db
+      .prepare('SELECT * FROM decisions WHERE hand_id=? ORDER BY created_at,id')
+      .all(handId)
+      .filter(
+        (row) =>
+          json<Partial<import('../core/types.js').DecisionContext>>(row.context, {}).tableId ===
+          tableId,
+      )
+      .map(decisionView);
+  }
   hand(id: string): HandDetail | null {
     const row = this.store.db.prepare('SELECT * FROM hands WHERE id=?').get(id);
     if (!row) return null;

@@ -56,6 +56,7 @@ export class PokerRuntime extends EventEmitter {
   private leaveVerification = false;
   private stopRequested = false;
   private activeTask: DecisionTask | null = null;
+  private decisionTasks = new Set<Promise<void>>();
   private knownTurns = new Set<string>();
   private completedHands = new Set<string>();
   private observedHands = new Set<string>();
@@ -104,8 +105,18 @@ export class PokerRuntime extends EventEmitter {
       fail: (error) => this.fail(error),
     });
   }
+  async settleDecisions(): Promise<void> {
+    await Promise.allSettled([...this.decisionTasks]);
+  }
   status(): RuntimeStatus {
-    return structuredClone(this.snapshot);
+    const value = structuredClone(this.snapshot);
+    if (
+      value.decision &&
+      (value.decision.handId !== value.state.handId ||
+        value.decision.tableId !== value.state.tableId)
+    )
+      value.decision = null;
+    return value;
   }
   get state(): PokerState {
     return structuredClone(this.snapshot.state);
@@ -552,17 +563,39 @@ export class PokerRuntime extends EventEmitter {
         deadlineAt - Date.now() - this.options.submissionReserveMs,
       ),
     );
-    void decide(task, this.dependencies, this.snapshot.runId!, budget)
-      .then((result) => {
+    const pendingDecision = decide(
+      task,
+      this.dependencies,
+      this.snapshot.runId!,
+      budget,
+      (progress) => {
         if (
-          !result ||
+          this.activeTask !== task ||
+          task.controller.signal.aborted ||
+          authorityKey(this.snapshot.state) !== task.key
+        )
+          return;
+        this.snapshot.decision = progress;
+        this.publish();
+      },
+    )
+      .then((result) => {
+        if (!result) return;
+        if (
+          !result.action ||
+          result.decision.status === 'cancelled' ||
           this.activeTask !== task ||
           task.controller.signal.aborted ||
           !this.running ||
           !this.snapshot.connected ||
           authorityKey(this.snapshot.state) !== task.key
-        )
+        ) {
+          result.decision.status = 'cancelled';
+          result.decision.fallbackReason = 'decision_cancelled';
+          this.dependencies.store.saveDecision(result.decision);
+          if (this.activeTask === task) this.activeTask = null;
           return;
+        }
         const selected = result.decision.candidates.find(
           (candidate) => candidate.id === result.decision.proposal.candidateId,
         );
@@ -579,7 +612,9 @@ export class PokerRuntime extends EventEmitter {
         this.activeTask = null;
         this.publish();
       })
-      .catch((error) => this.fail(error));
+      .catch((error) => this.fail(error))
+      .finally(() => this.decisionTasks.delete(pendingDecision));
+    this.decisionTasks.add(pendingDecision);
   }
 
   private submit(action: StoredAction): void {
@@ -597,6 +632,13 @@ export class PokerRuntime extends EventEmitter {
       this.attempts.set(action.id, attempts + 1);
       action.status = 'sent';
       this.dependencies.store.updateAction(action.id, 'sent');
+      if (this.snapshot.decision?.id === action.decisionId) {
+        this.snapshot.decision = {
+          ...this.snapshot.decision,
+          phase: 'submitted',
+          updatedAt: new Date().toISOString(),
+        };
+      }
       if (this.ackTimer) clearTimeout(this.ackTimer);
       this.ackTimer = setTimeout(() => {
         if (this.pending.has(action.id)) this.resync();

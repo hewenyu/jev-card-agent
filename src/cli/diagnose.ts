@@ -4,7 +4,6 @@ import { buildCandidates, buildContext, createInitialState } from '../core/index
 import { loadConfig, type AppConfig } from '../server/config.js';
 import { ledgerFor, policyFor, reasoningFor } from '../server/controller.js';
 import { Store } from '../storage/store.js';
-import { Budget } from '../storage/budget.js';
 import { argumentsFor, fail } from './args.js';
 
 const output = (value: Record<string, unknown>) =>
@@ -96,24 +95,19 @@ async function main(): Promise<void> {
     const candidates = buildCandidates(state);
     const runId = `diagnostic-${randomUUID()}`;
     if (args.jev) {
-      const budget = new Budget(store, config.totalBudgetUsd, config.runBudgetUsd);
-      const reservation = budget.reserve(runId, context, candidates);
-      try {
-        if (!reservation) throw new Error('Diagnostic model budget exhausted');
-        const result = await policyFor(config, 'jev').decide(context, candidates);
-        budget.settle(reservation, result);
-        output({
-          check: 'jev',
-          status: 'ok',
-          model: result.model,
-          candidate: result.candidateId,
-          latencyMs: result.latencyMs,
-          usage: result.usage,
-        });
-      } catch (error) {
-        if (reservation) budget.settle(reservation, null);
-        throw error;
-      }
+      const result = await policyFor(config, 'jev', ledgerFor(config, store, runId)).decide(
+        context,
+        candidates,
+      );
+      output({
+        check: 'jev',
+        status: 'ok',
+        model: result.model,
+        candidate: result.candidateId,
+        latencyMs: result.latencyMs,
+        usage: result.usage,
+        attempts: result.attempts?.length,
+      });
     }
     if (args.reasoning) {
       const result = await reasoningFor(config, ledgerFor(config, store, runId)).analyze(
