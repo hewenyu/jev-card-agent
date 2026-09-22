@@ -9,6 +9,7 @@ import {
   snapshotHash,
 } from './validator.js';
 import type { AuditView, KnowledgeSnapshot } from './types.js';
+import { connectionRevision } from '../storage/connection-revision.js';
 
 export function baselineSnapshot(): KnowledgeSnapshot {
   const content: Omit<KnowledgeSnapshot, 'contentHash'> = {
@@ -28,6 +29,7 @@ export function baselineSnapshot(): KnowledgeSnapshot {
 }
 export class KnowledgeStore {
   readonly db: DatabaseSync;
+  private cachedLatest?: { key: string; snapshot: KnowledgeSnapshot };
   constructor(path: string, options: { readOnly?: boolean } = {}) {
     if (!options.readOnly && path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path, { readOnly: options.readOnly ?? false });
@@ -72,16 +74,23 @@ export class KnowledgeStore {
   latest(asOf = new Date().toISOString()): KnowledgeSnapshot {
     const row = this.db
       .prepare(
-        'SELECT payload FROM knowledge_versions WHERE published_ms<=? ORDER BY watermark DESC LIMIT 1',
+        'SELECT version,hash FROM knowledge_versions WHERE published_ms<=? ORDER BY watermark DESC LIMIT 1',
       )
       .get(Date.parse(asOf));
-    const snapshot = row
-      ? (JSON.parse(String(row.payload)) as KnowledgeSnapshot)
-      : baselineSnapshot();
-    new KnowledgeValidator().validate(snapshot);
+    if (!row) return baselineSnapshot();
+    const key = `${connectionRevision(this.db)}:${row.version}:${row.hash}`;
+    if (this.cachedLatest?.key !== key) {
+      const payload = this.db
+        .prepare('SELECT payload FROM knowledge_versions WHERE version=?')
+        .get(String(row.version))!;
+      const snapshot = JSON.parse(String(payload.payload)) as KnowledgeSnapshot;
+      new KnowledgeValidator().validate(snapshot);
+      this.cachedLatest = { key, snapshot };
+    }
+    const snapshot = this.cachedLatest.snapshot;
     return snapshot.expiresAt && Date.parse(snapshot.expiresAt) <= Date.parse(asOf)
       ? baselineSnapshot()
-      : snapshot;
+      : structuredClone(snapshot);
   }
   get(version: string): KnowledgeSnapshot | null {
     if (version === baselineSnapshot().version) return baselineSnapshot();

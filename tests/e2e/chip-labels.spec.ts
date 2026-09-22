@@ -1,3 +1,4 @@
+import { mockOverview } from './dashboard-fixture';
 import { expect, test, type Page } from '@playwright/test';
 import type { Overview, RuntimeView, SpectatorSnapshot } from '../../src/shared/api';
 
@@ -63,7 +64,7 @@ async function fixture(page: Page) {
     }
     window.EventSource = TestEventSource as unknown as typeof EventSource;
   });
-  await page.route('**/api/overview', (route) => {
+  await mockOverview(page, (route) => {
     state.reads++;
     return route.fulfill({
       json: {

@@ -1,3 +1,4 @@
+import { mockOverview } from './dashboard-fixture';
 import { expect, test, type Page } from '@playwright/test';
 import type {
   HandDetail,
@@ -59,7 +60,7 @@ async function fixture(page: Page) {
     }
     window.EventSource = DealerStream as unknown as typeof EventSource;
   });
-  await page.route('**/api/overview', (route) =>
+  await mockOverview(page, (route) =>
     route.fulfill({ json: { ...original, runtime, runs: [run] } }),
   );
   await page.route('**/api/runs?*', (route) => route.fulfill({ json: [run] }));

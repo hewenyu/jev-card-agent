@@ -1,3 +1,4 @@
+import { mockOverview, mockPerformance } from './dashboard-fixture';
 import { expect, test, type Page } from '@playwright/test';
 import type {
   DecisionView,
@@ -67,7 +68,7 @@ async function historyFixture(page: Page) {
       ? { hands: 2, settledHands: 2, netChips: state.revision === 1 ? 80 : 95, decisions: 3 }
       : {}),
   });
-  await page.route('**/api/overview', (route) =>
+  await mockOverview(page, (route) =>
     route.fulfill({
       json: {
         ...original,
@@ -77,7 +78,7 @@ async function historyFixture(page: Page) {
     }),
   );
   await page.route('**/api/runs?*', (route) => route.fulfill({ json: [currentRun(), otherRun] }));
-  await page.route('**/api/runs/*/performance', (route) => {
+  await mockPerformance(page, (route) => {
     const current = currentRun();
     return route.fulfill({
       json: {
@@ -196,13 +197,13 @@ test('a delayed detail refresh cannot overwrite a newly selected run', async ({ 
     await page.goto('/#replay');
     await expect(page.getByRole('heading', { name: 'Hand #001', exact: true })).toBeVisible();
     await expect.poll(() => oldRequested, { timeout: 10_000 }).toBe(true);
+    const cancelled = page.waitForEvent('requestfailed', {
+      predicate: (request) => request.url().endsWith(`/api/hands/${fixture.hand.id}`),
+    });
     await page.getByLabel('Selected run').selectOption(fixture.otherRun.id);
     await expect(page.getByRole('heading', { name: 'Hand #201', exact: true })).toBeVisible();
-    const returned = page.waitForResponse((response) =>
-      response.url().endsWith(`/api/hands/${fixture.hand.id}`),
-    );
     releaseOld();
-    await returned;
+    await cancelled;
     await expect(page.getByLabel('Selected run')).toHaveValue(fixture.otherRun.id);
     await expect(page.getByRole('heading', { name: 'Hand #201', exact: true })).toBeVisible();
     await expect(page.getByLabel('Decision', { exact: true })).toHaveValue('other-choice');

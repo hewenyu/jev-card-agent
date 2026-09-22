@@ -1,3 +1,4 @@
+import { mockOverview, mockPerformance } from './dashboard-fixture';
 import { expect, test, type Page } from '@playwright/test';
 import type { Overview, PerformanceView } from '../../src/shared/api';
 
@@ -40,13 +41,13 @@ async function fixture(page: Page) {
   }));
   const state = { value: performance(runId), reads: 0, failed: false };
   await page.route('**/api/live', (route) => route.abort());
-  await page.route('**/api/overview', (route) =>
+  await mockOverview(page, (route) =>
     route.fulfill({ json: { ...original, runs, recentHands: [] } }),
   );
   await page.route('**/api/runs?*', (route) => route.fulfill({ json: runs }));
   // No loaded hand page is needed to compute the complete-run statistics or curves.
   await page.route('**/api/hands?*', (route) => route.fulfill({ json: [] }));
-  await page.route('**/api/runs/*/performance', (route) => {
+  await mockPerformance(page, (route) => {
     state.reads++;
     return state.failed
       ? route.fulfill({ status: 503, json: { error: 'Temporary statistics failure' } })
@@ -152,7 +153,7 @@ test('late statistics from an old run cannot replace the newly selected run', as
   let oldReads = 0;
   let oldRequested = false;
   let newRequested = false;
-  await page.route('**/api/runs/*/performance', async (route) => {
+  await mockPerformance(page, async (route) => {
     const selectedId = decodeURIComponent(
       new URL(route.request().url()).pathname.split('/').at(-2)!,
     );
@@ -180,17 +181,19 @@ test('late statistics from an old run cannot replace the newly selected run', as
     await expect(page.getByTestId('overview-net')).toHaveText('+1,250');
     await focus();
     await expect.poll(() => oldRequested).toBe(true);
+    const cancelled = page.waitForEvent('requestfailed', {
+      predicate: (request) =>
+        request.url().includes('/api/dashboard?') &&
+        !new URL(request.url()).searchParams.get('runId'),
+    });
     await page.getByLabel('Selected run').selectOption(otherRunId);
     await expect.poll(() => newRequested).toBe(true);
     await expect(page.getByTestId('overview-net')).toHaveText('—');
     await expect(page.getByRole('img', { name: /Cumulative net profit/ })).toHaveCount(0);
     releaseNew();
     await expect(page.getByTestId('overview-net')).toHaveText('-200');
-    const returned = page.waitForResponse((response) =>
-      response.url().endsWith(`/api/runs/${runId}/performance`),
-    );
     releaseOld();
-    await returned;
+    await cancelled;
     await expect(page.getByLabel('Selected run')).toHaveValue(otherRunId);
     await expect(page.getByTestId('overview-net')).toHaveText('-200');
     await expect(page.getByTestId('overview-win-rate')).toHaveText('0%');

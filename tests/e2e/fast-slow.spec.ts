@@ -1,3 +1,4 @@
+import { mockOverview } from './dashboard-fixture';
 import { expect, test, type Page } from '@playwright/test';
 import type {
   DecisionView,
@@ -93,7 +94,7 @@ test('replay refresh appends an audit while preserving pinned knowledge and actu
   page,
 }) => {
   const data = await fixture(page);
-  let decision = data.decision;
+  let decision = { ...data.decision, status: 'sent' };
   await page.route('**/api/hands/*', (route) =>
     route.fulfill({ json: { ...data.detail, decisions: [decision] } }),
   );
@@ -115,7 +116,7 @@ test('replay refresh appends an audit while preserving pinned knowledge and actu
     .filter({ has: page.getByText('Actual Jev input', { exact: true }) })
     .locator('pre');
   const before = await actual.textContent();
-  decision = completedAudit(decision);
+  decision = { ...completedAudit(decision), status: 'accepted' };
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(audit.getByRole('status')).toHaveText('Complete');
   await expect(audit).toContainText('62.5%');
@@ -173,9 +174,7 @@ test('live keeps the table first and refreshes worker progress independently of 
       writes.push(request.method());
   });
   await page.route('**/api/live', (route) => route.abort());
-  await page.route('**/api/overview', (route) =>
-    route.fulfill({ json: { ...data.overview, runtime } }),
-  );
+  await mockOverview(page, (route) => route.fulfill({ json: { ...data.overview, runtime } }));
   await page.route('**/api/live/decisions', (route) => {
     expect(route.request().headers().authorization).toBeUndefined();
     const json: LiveDecisions = {

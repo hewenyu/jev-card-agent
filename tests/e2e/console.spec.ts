@@ -1,3 +1,4 @@
+import { mockOverview, mockPerformance } from './dashboard-fixture';
 import { expect, test } from '@playwright/test';
 
 test('public site supports overview, historical replay, and recorded evaluation results', async ({
@@ -87,7 +88,7 @@ test('all public pages issue anonymous reads and expose no bot controls even wit
       requests.push({ method: request.method(), authorization: request.headers().authorization });
   });
   // A local backend may allow controls; the public frontend must still expose none.
-  await page.route('**/api/overview', async (route) => {
+  await mockOverview(page, async (route) => {
     const response = await route.fetch();
     const data = await response.json();
     await route.fulfill({
@@ -139,7 +140,7 @@ test('mobile console keeps navigation and replay usable without horizontal overf
 });
 
 test('unavailable public data offers retry without a login prompt', async ({ page }) => {
-  await page.route('**/api/overview', (route) =>
+  await mockOverview(page, (route) =>
     route.fulfill({
       status: 401,
       contentType: 'application/json',
@@ -185,7 +186,7 @@ test('public replay displays reasoning provider provenance and failures', async 
 test('unverified ended hands do not appear as zero profit or inflate the displayed metric sample', async ({
   page,
 }) => {
-  await page.route('**/api/runs/*/performance', (route) =>
+  await mockPerformance(page, (route) =>
     route.fulfill({
       json: {
         runId: decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-2)!),
@@ -201,7 +202,7 @@ test('unverified ended hands do not appear as zero profit or inflate the display
       },
     }),
   );
-  await page.route('**/api/overview', async (route) => {
+  await mockOverview(page, async (route) => {
     const response = await route.fetch();
     const data = await response.json();
     await route.fulfill({

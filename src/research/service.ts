@@ -152,6 +152,16 @@ export class SlowLoopService extends EventEmitter {
   status(): SlowLoopStatus {
     return { ...this.current };
   }
+  revision(asOf: string): string {
+    const cutoff = Date.parse(asOf);
+    if (
+      Number.isFinite(cutoff) &&
+      Date.parse(this.snapshot.publishedAt) <= cutoff &&
+      (!this.snapshot.expiresAt || Date.parse(this.snapshot.expiresAt) > cutoff)
+    )
+      return this.snapshot.contentHash;
+    return this.latest(asOf).contentHash;
+  }
   latest(asOf?: string): KnowledgeSnapshot {
     const cutoff = asOf === undefined ? Date.now() : Date.parse(asOf);
     if (!Number.isFinite(cutoff)) return baselineSnapshot();

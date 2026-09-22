@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { ProviderAttempt, ProviderCall, ProviderMeter } from '../core/types.js';
 import type { ResearchBatchV2 } from './contracts.js';
 import type { AsyncResearchConfig } from './config.js';
+import { connectionRevision } from '../storage/connection-revision.js';
 import {
   ResearchScheduler,
   preservesPendingTriggers,
@@ -39,6 +40,7 @@ export interface ResearchQueueStatus {
 export class ResearchQueue {
   readonly db: DatabaseSync;
   readonly scheduler: ResearchScheduler;
+  private cachedStatus?: { revision: string; value: ResearchQueueStatus };
   constructor(path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
@@ -320,6 +322,10 @@ export class ResearchQueue {
       .run(id);
   }
   status(): ResearchQueueStatus {
+    const revision = connectionRevision(this.db);
+    const cacheable = !this.db.isTransaction;
+    if (cacheable && this.cachedStatus?.revision === revision)
+      return structuredClone(this.cachedStatus.value);
     const counts = Object.fromEntries(
       this.db
         .prepare('SELECT state,COUNT(*) AS n FROM research_jobs GROUP BY state')
@@ -331,7 +337,7 @@ export class ResearchQueue {
         "SELECT COUNT(*) AS n,SUM(CASE WHEN attempt IS NULL OR json_extract(attempt,'$.usage') IS NULL THEN 1 ELSE 0 END) AS unknown,SUM(cost_usd) AS cost,COUNT(cost_usd) AS priced FROM research_attempts",
       )
       .get()!;
-    return {
+    const value: ResearchQueueStatus = {
       schedules: this.scheduler.entries(),
       pending: counts.pending ?? 0,
       runningJobs: counts.running ?? 0,
@@ -350,6 +356,8 @@ export class ResearchQueue {
         .prepare("SELECT MAX(completed_at) AS t FROM research_jobs WHERE state='completed'")
         .get()?.t as string | null,
     };
+    if (cacheable) this.cachedStatus = { revision, value };
+    return structuredClone(value);
   }
   close(): void {
     this.db.close();

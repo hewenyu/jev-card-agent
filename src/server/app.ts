@@ -7,6 +7,7 @@ import { z, ZodError } from 'zod';
 import { evaluateRun } from '../evaluation/service.js';
 import { Store } from '../storage/store.js';
 import { runPerformance } from '../storage/performance.js';
+import { readSnapshot } from '../storage/read-cache.js';
 import { redact } from '../storage/database.js';
 import type { AppConfig } from './config.js';
 import { isLoopback } from './config.js';
@@ -14,7 +15,7 @@ import { Controller, policyFor, ledgerFor } from './controller.js';
 import { publicRuntime } from './spectator.js';
 import { openSpectatorStream } from './spectator-stream.js';
 import { sessionId } from '../core/session.js';
-import type { LiveDecisions } from '../shared/api.js';
+import type { Dashboard, DashboardOverview, LiveDecisions, Overview } from '../shared/api.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -61,6 +62,31 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
   const streams = new Set<() => void>();
   const completedHand = (id: string) =>
     store.db.prepare("SELECT id FROM hands WHERE id=? AND status='complete'").get(id) !== undefined;
+  const visibleDashboardOverview = (
+    overview: DashboardOverview,
+    anonymous: boolean,
+  ): DashboardOverview => {
+    if (!anonymous) return overview;
+    return redact({
+      ...overview,
+      runtime: publicRuntime(overview.runtime),
+      runs: overview.runs.map((run) => ({ ...run, reason: null })),
+      capabilities: {
+        canControl: false,
+        liveConfigured: false,
+        jevConfigured: false,
+        reasoningConfigured: false,
+      },
+    }) as DashboardOverview;
+  };
+  const visibleOverview = (overview: Overview, anonymous: boolean): Overview => {
+    if (!anonymous) return overview;
+    return redact({
+      ...overview,
+      ...visibleDashboardOverview(overview, true),
+      recentHands: overview.recentHands.filter((hand) => hand.status === 'complete'),
+    }) as Overview;
+  };
   app.addHook('onRequest', async (request, reply) => {
     // Fastify matches decoded paths, so authorize the matched route rather than the raw URL.
     const isApi = request.routeOptions.url?.startsWith('/api/') ?? false;
@@ -153,19 +179,35 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
     };
   });
   app.get('/api/overview', (request) => {
-    const overview = controller.overview();
-    if (!publicViewers.has(request)) return overview;
-    return redact({
-      ...overview,
-      runtime: publicRuntime(overview.runtime),
-      runs: overview.runs.map((run) => ({ ...run, reason: null })),
-      recentHands: overview.recentHands.filter((hand) => hand.status === 'complete'),
-      capabilities: {
-        canControl: false,
-        liveConfigured: false,
-        jevConfigured: false,
-        reasoningConfigured: false,
-      },
+    return visibleOverview(controller.overview(), publicViewers.has(request));
+  });
+  app.get('/api/dashboard', (request): Dashboard => {
+    const query = z
+      .object({
+        runId: z.string().min(1).optional(),
+        view: z.enum(['overview', 'live', 'replay', 'experiments']).default('overview'),
+      })
+      .parse(request.query);
+    // One SQLite snapshot keeps funding, settlement and aggregate views consistent,
+    // including when a separate writer commits during the response construction.
+    return readSnapshot(store.db, () => {
+      const overview = visibleDashboardOverview(
+        controller.dashboardOverview(),
+        publicViewers.has(request),
+      );
+      const runId = query.runId ?? overview.runtime.runId ?? overview.runs[0]?.id;
+      const result: Dashboard = {
+        overview,
+        performance: null,
+      };
+      if (query.view === 'overview' && runId) {
+        try {
+          result.performance = runPerformance(store, runId);
+        } catch {
+          result.performanceError = 'Statistics refresh unavailable';
+        }
+      }
+      return result;
     });
   });
   app.get('/api/runs', (request) => {
@@ -194,6 +236,14 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
         ? redact(result)
         : result
       : reply.code(404).send({ error: 'Hand not found' });
+  });
+  app.get('/api/hands/:id/audits', (request, reply) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params);
+    if (publicViewers.has(request) && !completedHand(id))
+      return reply.code(404).send({ error: 'Hand not found' });
+    if (!store.db.prepare('SELECT id FROM hands WHERE id=?').get(id))
+      return reply.code(404).send({ error: 'Hand not found' });
+    return redact(controller.queries.handAudits(id));
   });
   app.get('/api/decisions/:id', (request, reply) => {
     const { id } = z.object({ id: z.string() }).parse(request.params);

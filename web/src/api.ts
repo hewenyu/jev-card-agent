@@ -5,10 +5,12 @@ try {
   // Reading public data also works when browser storage is unavailable.
 }
 
-export async function api<T>(path: string): Promise<T> {
+export async function api<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/api${path}`, {
     method: 'GET',
-    signal: AbortSignal.timeout(15_000),
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
+      : AbortSignal.timeout(15_000),
     credentials: 'omit',
     headers: { Accept: 'application/json' },
   });

@@ -32,6 +32,7 @@ export function openDatabase(filename: string): DatabaseSync {
     CREATE INDEX IF NOT EXISTS hands_run ON hands(run_id, started_at);
     CREATE INDEX IF NOT EXISTS hands_page ON hands(started_at DESC,id DESC);
     CREATE INDEX IF NOT EXISTS runs_page ON runs(started_at DESC,id DESC);
+    CREATE INDEX IF NOT EXISTS runs_mode ON runs(mode,id);
     CREATE TABLE IF NOT EXISTS decisions (
       id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), hand_id TEXT NOT NULL,
       street TEXT NOT NULL, created_at TEXT NOT NULL, context TEXT NOT NULL,
@@ -40,6 +41,9 @@ export function openDatabase(filename: string): DatabaseSync {
       fallback_reason TEXT, model TEXT
     );
     CREATE INDEX IF NOT EXISTS decisions_hand ON decisions(hand_id, created_at);
+    CREATE INDEX IF NOT EXISTS decisions_run ON decisions(run_id, created_at);
+    CREATE INDEX IF NOT EXISTS decisions_metrics
+      ON decisions(run_id,latency_ms,source,status,cost_usd);
     CREATE TABLE IF NOT EXISTS actions (
       id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), decision_id TEXT NOT NULL,
       table_id TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL,
@@ -53,6 +57,9 @@ export function openDatabase(filename: string): DatabaseSync {
     CREATE TABLE IF NOT EXISTS evaluations (
       id TEXT PRIMARY KEY, created_at TEXT NOT NULL, result TEXT NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS usage_run ON usage(run_id);
+    CREATE INDEX IF NOT EXISTS hands_run_settled
+      ON hands(run_id,status,complete,COALESCE(ended_at,started_at),id);
     CREATE TABLE IF NOT EXISTS leases (
       name TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at INTEGER NOT NULL
     );

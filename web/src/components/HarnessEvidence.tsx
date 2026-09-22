@@ -1,3 +1,4 @@
+import { JsonDetails } from './JsonDetails';
 import { number } from '../api';
 import { asRecord, cards, finite, text } from './analysis-data';
 import './harness-evidence.css';
@@ -154,19 +155,22 @@ export function HarnessEvidence({ context }: { context: Record<string, unknown> 
           </p>
         </div>
       )}
-      <details className="analysis-evidence-details">
-        <summary>Inspect calculated evidence and opponent guidance</summary>
-        <pre>{JSON.stringify(harness, null, 2)}</pre>
-      </details>
+      <JsonDetails
+        className="analysis-evidence-details"
+        title="Inspect calculated evidence and opponent guidance"
+        value={harness}
+      />
       {hasMemory && (
-        <details className="analysis-evidence-details">
-          <summary>Opponent memory available at this turn</summary>
+        <JsonDetails
+          className="analysis-evidence-details"
+          title="Opponent memory available at this turn"
+          value={context.opponentMemory}
+        >
           <p className="annotation">
             Only observations available before this decision are eligible. Sample sizes and missing
             information remain part of the evidence.
           </p>
-          <pre>{JSON.stringify(context.opponentMemory, null, 2)}</pre>
-        </details>
+        </JsonDetails>
       )}
     </section>
   );

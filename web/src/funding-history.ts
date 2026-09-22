@@ -12,7 +12,7 @@ export interface FundingHistoryState {
 const PAGE_SIZE = 8;
 
 /** One app-level reader for Live funding history, retained across view switches. */
-export function useFundingHistory(): FundingHistoryState {
+export function useFundingHistory(enabled = true): FundingHistoryState {
   const [state, setState] = useState<Omit<FundingHistoryState, 'loadMore'>>({
     events: [],
     loading: true,
@@ -68,6 +68,7 @@ export function useFundingHistory(): FundingHistoryState {
     }
   }, []);
   useEffect(() => {
+    if (!enabled) return;
     const currentGeneration = ++generation.current;
     pending.current = false;
     void refresh();
@@ -79,7 +80,7 @@ export function useFundingHistory(): FundingHistoryState {
       clearInterval(timer);
       window.removeEventListener('focus', focus);
     };
-  }, [refresh]);
+  }, [refresh, enabled]);
   return {
     ...state,
     loadMore: () => void refresh(state.error ? failedOlder.current : initialized.current),

@@ -19,6 +19,7 @@ import { STRATEGY_VERSIONS } from '../core/index.js';
 import type { FundingEventView } from '../shared/api.js';
 import {
   initializeDecisionEvidence,
+  knowledgeSourceRevision,
   pinKnowledge,
   refreshKnowledge,
   type AdviceSource,
@@ -41,6 +42,7 @@ export class Store implements RuntimeStore {
   adviceSource?: AdviceSource;
   private handKnowledge: KnowledgeBinding | null = null;
   private archivedKnowledgeKey?: string;
+  private archivedSourceRevision?: string;
   constructor(
     readonly filename: string,
     readonly model = 'jev-1.13.0',
@@ -131,14 +133,22 @@ export class Store implements RuntimeStore {
     return this.handKnowledge;
   }
   refreshKnowledge(at = new Date().toISOString()): void {
-    if (this.adviceSource)
-      this.archivedKnowledgeKey = refreshKnowledge(
+    if (this.adviceSource) {
+      const revision = knowledgeSourceRevision(this.knowledgeSource, this.adviceSource, at);
+      const cacheable = !this.db.isTransaction;
+      if (cacheable && revision !== undefined && revision === this.archivedSourceRevision) return;
+      const contentKey = refreshKnowledge(
         this.db,
         this.knowledgeSource,
         this.adviceSource,
         at,
-        this.archivedKnowledgeKey,
+        cacheable ? this.archivedKnowledgeKey : undefined,
       );
+      if (cacheable) {
+        this.archivedKnowledgeKey = contentKey;
+        this.archivedSourceRevision = revision;
+      }
+    }
   }
   saveDecisionTiming(decisionId: string, timing: DecisionTiming): void {
     this.db

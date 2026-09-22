@@ -237,6 +237,16 @@ export interface HandDetail {
   events: { id: string; type: string; receivedAt: string; payload: Record<string, unknown> }[];
 }
 
+export type DashboardOverview = Pick<Overview, 'runtime' | 'runs' | 'capabilities'>;
+
+export interface Dashboard {
+  overview: DashboardOverview;
+  performance: PerformanceView | null;
+  performanceError?: string;
+}
+
+export type HandAudits = { decisionId: string; audit: AuditView | null }[];
+
 export interface EvaluationView {
   id: string;
   createdAt: string;

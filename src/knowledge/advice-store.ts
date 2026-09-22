@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { ResearchBatchV2, ResearchModelMetadata } from '../research/contracts.js';
 import { ADVICE_LIMITS } from './advice-selector.js';
+import { AdviceReadModel, migrateAdviceReadModel } from './advice-read-model.js';
 import {
   GUIDANCE_RECIPE_ID,
   GUIDANCE_SMALL_SAMPLE_HANDS,
@@ -43,10 +44,19 @@ interface OperatorNote {
   note: string;
 }
 
+interface BundleOptions {
+  mode: AsyncLlmMode;
+  basePolicyVersion: string;
+  admissibleAt: string;
+  maxItems?: number;
+}
+
 /** A separate derived database; no access to runtime controls or arena credentials. */
 export class AdviceStore {
   readonly db: DatabaseSync;
   private readonly clock: () => Date;
+  private readonly readModel: AdviceReadModel;
+  private readonly bundleCache = new Map<string, AdviceBundle>();
   constructor(path: string, options: { readOnly?: boolean; clock?: () => Date } = {}) {
     this.clock = options.clock ?? (() => new Date());
     if (!options.readOnly && path !== ':memory:')
@@ -55,6 +65,7 @@ export class AdviceStore {
     if (!options.readOnly && path !== ':memory:') chmodSync(path, 0o600);
     if (options.readOnly) {
       this.db.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=0;');
+      this.readModel = new AdviceReadModel(this.db);
       return;
     }
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=250;
@@ -86,6 +97,8 @@ export class AdviceStore {
         BEGIN SELECT RAISE(ABORT,'immutable support snapshot'); END;
       CREATE TRIGGER IF NOT EXISTS advice_metric_snapshots_no_delete BEFORE DELETE ON advice_metric_snapshots
         BEGIN SELECT RAISE(ABORT,'immutable support snapshot'); END;`);
+    migrateAdviceReadModel(this.db);
+    this.readModel = new AdviceReadModel(this.db);
   }
   private now(): string {
     return this.clock().toISOString();
@@ -459,15 +472,36 @@ export class AdviceStore {
         details: JSON.parse(String(row.details)) as Record<string, unknown>,
       }));
   }
-  bundle(options: {
-    mode: AsyncLlmMode;
-    basePolicyVersion: string;
-    admissibleAt: string;
-    maxItems?: number;
-  }): AdviceBundle {
+  /** A cheap admission token; unchanged tokens can reuse their already prepared bundle. */
+  bundleRevision(options: BundleOptions): string {
     const at = Date.parse(options.admissibleAt);
     if (!Number.isFinite(at) || at > Date.parse(this.now()))
       throw new Error('Invalid advice admission boundary');
+    return JSON.stringify([
+      options.mode,
+      options.basePolicyVersion,
+      options.maxItems ?? null,
+      options.mode === 'live' ? this.readModel.revision(at) : 'empty',
+    ]);
+  }
+  bundle(options: BundleOptions): AdviceBundle {
+    // Pin revision, heads and payloads to one SQLite snapshot while another worker publishes.
+    const ownsTransaction = !this.db.isTransaction;
+    if (ownsTransaction) this.db.exec('BEGIN');
+    try {
+      const result = this.prepareBundle(options, ownsTransaction);
+      if (ownsTransaction) this.db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      if (ownsTransaction) this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  private prepareBundle(options: BundleOptions, cacheable: boolean): AdviceBundle {
+    const key = this.bundleRevision(options);
+    const cached = cacheable ? this.bundleCache.get(key) : undefined;
+    if (cached) return cached;
+    const at = Date.parse(options.admissibleAt);
     const rows =
       options.mode === 'live'
         ? this.db
@@ -486,18 +520,7 @@ export class AdviceStore {
         (item) =>
           item.basePolicyVersion === options.basePolicyVersion && Date.parse(item.expiresAt) > at,
       );
-    const supportRows =
-      options.mode === 'live'
-        ? this.db
-            .prepare(
-              `SELECT s.* FROM advice_metric_snapshots s
-      WHERE s.available_ms<=? AND NOT EXISTS (SELECT 1 FROM advice_metric_snapshots newer
-        WHERE newer.scope_key=s.scope_key AND newer.available_ms<=? AND
-        (newer.watermark>s.watermark OR (newer.watermark=s.watermark AND newer.rowid>s.rowid)))
-      ORDER BY s.watermark DESC LIMIT 64`,
-            )
-            .all(at, at)
-        : [];
+    const supportRows = options.mode === 'live' ? this.readModel.support(at) : [];
     const relevantMetricIds = new Set(
       publications.flatMap((item) => item.metrics.map((metric) => metric.id)),
     );
@@ -546,6 +569,12 @@ export class AdviceStore {
     };
     const bundle = { ...content, bundleHash: hashAdviceBundle(content) };
     validateAdviceBundle(bundle);
+    // A caller-owned write transaction can roll back and reuse its revision number later.
+    // Only commit-backed read snapshots may populate the shared prepared-bundle cache.
+    if (cacheable) {
+      this.bundleCache.set(key, bundle);
+      if (this.bundleCache.size > 8) this.bundleCache.delete(this.bundleCache.keys().next().value!);
+    }
     return bundle;
   }
   close(): void {

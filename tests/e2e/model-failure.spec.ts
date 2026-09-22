@@ -1,3 +1,4 @@
+import { mockOverview } from './dashboard-fixture';
 import { expect, test, type Page } from '@playwright/test';
 import type {
   DecisionView,
@@ -127,7 +128,7 @@ test('live failure refresh pauses the displayed session without exposing a publi
     } as LiveDecisions,
   };
   await page.route('**/api/live', (route) => route.abort());
-  await page.route('**/api/overview', (route) =>
+  await mockOverview(page, (route) =>
     route.fulfill({ json: { ...data.overview, runtime: state.runtime } }),
   );
   await page.route('**/api/live/decisions', (route) => {
