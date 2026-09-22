@@ -10,7 +10,7 @@ import {
   effectiveResearchMode,
   type ResearchMode,
 } from '../research/control.js';
-import { AdviceStore, APPROVED_RECIPE_ID } from '../knowledge/advice-store.js';
+import { AdviceStore, APPROVED_RECIPE_ID, GUIDANCE_RECIPE_ID } from '../knowledge/advice-store.js';
 import { AdviceValidator } from '../knowledge/advice-validator.js';
 import { ResearchQueue } from '../research/queue.js';
 import { LlmResearchProvider } from '../research/llm-provider.js';
@@ -217,6 +217,9 @@ async function main(): Promise<void> {
         note: required('note'),
       });
       emit({ withdrawn: args.publication });
+    } else if (args.op === 'approve-guidance') {
+      advice.approveGuidance({ actor: required('actor'), note: required('note') });
+      emit({ approvedRecipe: GUIDANCE_RECIPE_ID });
     } else if (args.op === 'approve-recipe') {
       advice.approveRecipe({ actor: required('actor'), note: required('note') });
       emit({ approvedRecipe: APPROVED_RECIPE_ID });
@@ -280,7 +283,7 @@ async function main(): Promise<void> {
       }
     } else
       throw new Error(
-        'Unknown --op. Use prepare, diagnose, status, inspect, approve, publish, reject, withdraw, approve-recipe, mode, pair-prepare or pair-run.',
+        'Unknown --op. Use prepare, diagnose, status, inspect, approve, publish, reject, withdraw, approve-recipe, approve-guidance, mode, pair-prepare or pair-run.',
       );
   } finally {
     advice.close();

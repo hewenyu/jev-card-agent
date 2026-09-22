@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import type { ResearchPublicView, ResearchSummary } from '../../../src/shared/research';
 import { api, dollars, number, time } from '../api';
 import { Panel, Status } from './UI';
+import { ResearchActivity } from './ResearchActivity';
+import { ResearchSchedule } from './ResearchSchedule';
 import './fast-slow.css';
 
 export function AsyncResearch({ summary }: { summary?: ResearchSummary }) {
@@ -58,10 +60,15 @@ export function AsyncResearch({ summary }: { summary?: ResearchSummary }) {
             Research needs attention. Current actions continue with their fixed knowledge.
           </p>
         )}
+        <ResearchActivity activity={status.activity} />
+        <ResearchSchedule schedules={status.schedules} mode={status.mode} />
         <dl className="fast-slow-facts">
           <div>
             <dt>Research worker</dt>
-            <dd>{status.running ? 'Running' : 'Idle'}</dd>
+            <dd>
+              {status.running ? 'Online' : 'Offline'} ·{' '}
+              {status.executing ? 'Calling model' : 'No request in flight'}
+            </dd>
           </div>
           <div>
             <dt>Queued / executing</dt>
@@ -89,22 +96,27 @@ export function AsyncResearch({ summary }: { summary?: ResearchSummary }) {
             <dt>Last completed research</dt>
             <dd>{status.lastCompletedAt ? time(status.lastCompletedAt) : 'None recorded'}</dd>
           </div>
-          <div>
-            <dt>Advice adopted in actual requests</dt>
-            <dd>
-              {number(status.adoptedDecisions)} / {number(status.evaluatedDecisions)} live decisions
-            </dd>
-          </div>
-          <div>
-            <dt>Live decisions without a matching suggestion</dt>
-            <dd>{number(status.unmatchedDecisions)}</dd>
-          </div>
-          <div>
-            <dt>Research calls / unknown usage</dt>
-            <dd>
-              {number(status.attempts)} / {number(status.unknownUsageCalls)}
-            </dd>
-          </div>
+          {!status.activity && (
+            <>
+              <div>
+                <dt>Advice adopted in actual requests · all history</dt>
+                <dd>
+                  {number(status.adoptedDecisions)} / {number(status.evaluatedDecisions)} live
+                  decisions
+                </dd>
+              </div>
+              <div>
+                <dt>Live decisions without a matching suggestion</dt>
+                <dd>{number(status.unmatchedDecisions)}</dd>
+              </div>
+              <div>
+                <dt>Research attempts / unknown usage · all history</dt>
+                <dd>
+                  {number(status.attempts)} / {number(status.unknownUsageCalls)}
+                </dd>
+              </div>
+            </>
+          )}
           <div>
             <dt>Known research cost estimate</dt>
             <dd>
@@ -130,10 +142,14 @@ export function AsyncResearch({ summary }: { summary?: ResearchSummary }) {
                   <p>
                     <Status>{item.status}</Status> <strong>Revision {item.revision}</strong>
                   </p>
+                  {item.observation && <p className="annotation">{item.observation}</p>}
                   <p>{item.guidance}</p>
+                  {!!item.limitations?.length && (
+                    <p className="annotation">Limitations: {item.limitations.join(' · ')}</p>
+                  )}
                   <p className="annotation">
-                    {item.approvalSource} · Published {time(item.publishedAt)} · Expires{' '}
-                    {time(item.expiresAt)}
+                    {item.recipeId ?? item.approvalSource} · Published {time(item.publishedAt)} ·
+                    Expires {time(item.expiresAt)}
                   </p>
                   <p className="annotation">Evidence cutoff {time(item.evidenceCutoff)}</p>
                 </article>

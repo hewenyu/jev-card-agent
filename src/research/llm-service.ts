@@ -142,6 +142,7 @@ export class AsyncResearchService extends EventEmitter {
       maxRetries: c.maxRetries,
       maxConcurrency: c.maxConcurrency,
       maxPending: c.maxPending,
+      initialMinHands: c.initialMinHands,
       minNewHands: c.minNewHands,
       leakMinNewHands: c.leakMinNewHands,
       intervalMs: c.intervalMs,

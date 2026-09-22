@@ -515,10 +515,17 @@ describe('bounded research model transport and independent ledger', () => {
           });
           expect(call.request?.body).toBe(body);
           expect(call.request?.sha256).toBe(createHash('sha256').update(body).digest('hex'));
+          const sentInput = JSON.parse(body).messages[0].content as string;
           expect(call.request?.inputSha256).toBe(
-            createHash('sha256').update(researchInput(batch)).digest('hex'),
+            createHash('sha256').update(sentInput).digest('hex'),
           );
-          expect(JSON.parse(body).messages[0].content).toBe(researchInput(batch));
+          const { validationFeedback, ...original } = JSON.parse(sentInput);
+          expect(original).toEqual(JSON.parse(researchInput(batch)));
+          if (outcome === 'invalid' && sent.length > 1)
+            expect(validationFeedback).toMatchObject({
+              category: 'structured_contract_invalid',
+            });
+          else expect(validationFeedback).toBeUndefined();
           expect(call.request?.body).not.toContain(f.config.apiKey);
           expect(call.request).not.toHaveProperty('headers');
         } finally {
@@ -849,9 +856,13 @@ describe('research execution isolation', () => {
       attempts: [],
       insufficient: false,
     }));
-    const engine = new ResearchEngine(f.path, { ...f.config, minNewHands: 100 }, () => ({
-      propose: calls,
-    }));
+    const engine = new ResearchEngine(
+      f.path,
+      { ...f.config, initialMinHands: 100, minNewHands: 100 },
+      () => ({
+        propose: calls,
+      }),
+    );
     cleanup.push(() => engine.close());
     await engine.tick();
     expect(calls).not.toHaveBeenCalled();

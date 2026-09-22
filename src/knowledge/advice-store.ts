@@ -4,6 +4,12 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { ResearchBatchV2, ResearchModelMetadata } from '../research/contracts.js';
 import { ADVICE_LIMITS } from './advice-selector.js';
+import {
+  GUIDANCE_RECIPE_ID,
+  GUIDANCE_SMALL_SAMPLE_HANDS,
+  GUIDANCE_SMALL_SAMPLE_TTL_MS,
+} from './advice-guidance.js';
+export { GUIDANCE_RECIPE_ID } from './advice-guidance.js';
 import type {
   AdviceAudit,
   AdviceBundle,
@@ -257,17 +263,33 @@ export class AdviceStore {
       });
     });
   }
+  approveGuidance(note: OperatorNote): void {
+    this.note(note);
+    this.transaction(() => {
+      this.db
+        .prepare('INSERT OR IGNORE INTO advice_recipes(id,actor,approved_ms,note) VALUES(?,?,?,?)')
+        .run(GUIDANCE_RECIPE_ID, note.actor, Date.parse(this.now()), note.note);
+      this.audit('recipe_approved', GUIDANCE_RECIPE_ID, note.actor, {
+        note: note.note,
+        contract:
+          'Evidence-bound conditional model guidance; validation does not prove profitability.',
+        smallSampleTtlMs: GUIDANCE_SMALL_SAMPLE_TTL_MS,
+      });
+    });
+  }
   publishApprovedRecipe(id: string, options: PublishOptions): PublishedAdvice {
     return this.transaction(() => {
-      if (!this.db.prepare('SELECT id FROM advice_recipes WHERE id=?').get(APPROVED_RECIPE_ID))
-        throw new Error('Recipe requires prior operator approval');
       const record = this.requireProposal(id);
+      const recipeId = record.proposal.proposedRecipeId;
       if (
         record.status !== 'pending' ||
         record.proposal.kind !== 'opponent_brief' ||
-        record.proposal.proposedRecipeId !== APPROVED_RECIPE_ID
+        !recipeId ||
+        ![APPROVED_RECIPE_ID, GUIDANCE_RECIPE_ID].includes(recipeId)
       )
         throw new Error('Only eligible pending opponent recipes may auto-publish');
+      if (!this.db.prepare('SELECT id FROM advice_recipes WHERE id=?').get(recipeId))
+        throw new Error('Recipe requires prior operator approval');
       return this.publishRecord(record, options, 'approved_recipe');
     });
   }
@@ -319,6 +341,14 @@ export class AdviceStore {
       this.db.prepare('SELECT COALESCE(MAX(seq),0)+1 AS next FROM advice_publications').get()!.next,
     );
     const proposal = record.proposal;
+    const fixedTemplate =
+      source === 'approved_recipe' && proposal.proposedRecipeId === APPROVED_RECIPE_ID;
+    const scopedGuidance =
+      source === 'approved_recipe' && proposal.proposedRecipeId === GUIDANCE_RECIPE_ID;
+    const ttlMs =
+      scopedGuidance && record.batch.eligibleHandIds.length < GUIDANCE_SMALL_SAMPLE_HANDS
+        ? Math.min(options.ttlMs, GUIDANCE_SMALL_SAMPLE_TTL_MS)
+        : options.ttlMs;
     const content: Omit<PublishedAdvice, 'contentHash'> = {
       publicationId: randomUUID(),
       publicationSeq: seq,
@@ -331,21 +361,18 @@ export class AdviceStore {
       publishedAt: now,
       availableAt: now,
       expiresAt: new Date(
-        Math.min(
-          Date.parse(now) + options.ttlMs,
-          Date.parse(record.batch.cutoff) + MAX_EVIDENCE_AGE_MS,
-        ),
+        Math.min(Date.parse(now) + ttlMs, Date.parse(record.batch.cutoff) + MAX_EVIDENCE_AGE_MS),
       ).toISOString(),
       basePolicyVersion: proposal.basePolicyVersion,
       scope: structuredClone(proposal.scope),
       priority: options.priority ?? 0,
-      hypothesis:
-        source === 'approved_recipe' ? 'Conditional action frequencies only.' : proposal.hypothesis,
-      guidance: source === 'approved_recipe' ? RECIPE_GUIDANCE : proposal.suggestedGuidance,
-      limitations: source === 'approved_recipe' ? [RECIPE_LIMITATION] : proposal.limitations,
+      hypothesis: fixedTemplate ? 'Conditional action frequencies only.' : proposal.hypothesis,
+      guidance: fixedTemplate ? RECIPE_GUIDANCE : proposal.suggestedGuidance,
+      limitations: fixedTemplate ? [RECIPE_LIMITATION] : proposal.limitations,
       metrics: record.batch.metrics.filter((metric) => proposal.metricRefs.includes(metric.id)),
       invalidateWhen: proposal.invalidateWhen,
       approvalSource: source,
+      ...(scopedGuidance ? { recipeId: GUIDANCE_RECIPE_ID } : {}),
     };
     if (source === 'approved_recipe') {
       // Match the selector's Unicode character accounting before making an immutable publication.

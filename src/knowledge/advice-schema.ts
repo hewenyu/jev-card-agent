@@ -28,6 +28,7 @@ export const PublishedAdviceSchema = z.strictObject({
   metrics: z.array(EvidenceMetricSchema).min(1).max(32),
   invalidateWhen: z.array(InvalidationConditionSchema).max(8),
   approvalSource: z.enum(['manual', 'approved_recipe']),
+  recipeId: id.optional(),
 });
 export const AdviceBundleSchema = z.strictObject({
   schemaVersion: z.literal('advice-bundle-v1'),

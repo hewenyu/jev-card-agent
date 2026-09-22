@@ -3,14 +3,23 @@ import type { DatabaseSync } from 'node:sqlite';
 import { AdviceStore } from '../knowledge/advice-store.js';
 import type { AsyncResearchStatus } from '../research/engine.js';
 import type { ResearchPublicView, ResearchSummary } from '../shared/research.js';
+import { opponentKey } from '../knowledge/advice-validator.js';
+import {
+  emptyDecisionCounts,
+  researchActivity,
+  ResearchActivityCounter,
+  type DecisionCounts,
+} from './research-activity.js';
 
-/** Bounded public projection; full model text, evidence and operator notes stay private. */
+/** Bounded approved summaries are public; raw responses, evidence and operator notes stay private. */
 export class ResearchMonitor {
   private reader: AdviceStore | null = null;
   private cursor = 0;
   private evaluated = 0;
   private adopted = 0;
   private unmatched = 0;
+  private readonly byRun = new Map<string, DecisionCounts>();
+  private readonly activityCounter = new ResearchActivityCounter();
   private view: ResearchPublicView;
   constructor(
     private readonly path: string,
@@ -52,7 +61,7 @@ export class ResearchMonitor {
     // Incremental scan, never inside a live action or spectator event. All source decisions remain intact.
     const rows = this.raw
       .prepare(
-        'SELECT rowid AS cursor,context,proposal FROM decisions WHERE rowid>? ORDER BY rowid LIMIT 500',
+        'SELECT rowid AS cursor,run_id,context,proposal FROM decisions WHERE rowid>? ORDER BY rowid LIMIT 500',
       )
       .all(this.cursor);
     for (const row of rows) {
@@ -63,9 +72,18 @@ export class ResearchMonitor {
         request?: { state?: { approvedAdvice?: unknown[] } };
       };
       if (context.advice?.mode === 'live') {
+        const run = this.byRun.get(String(row.run_id)) ?? emptyDecisionCounts();
+        this.byRun.set(String(row.run_id), run);
         this.evaluated++;
-        if (proposal.request?.state?.approvedAdvice?.length) this.adopted++;
-        if (!context.advice.items?.length) this.unmatched++;
+        run.evaluated++;
+        if (proposal.request?.state?.approvedAdvice?.length) {
+          this.adopted++;
+          run.adopted++;
+        }
+        if (!context.advice.items?.length) {
+          this.unmatched++;
+          run.unmatched++;
+        }
       }
       this.cursor = Number(row.cursor);
     }
@@ -74,6 +92,33 @@ export class ResearchMonitor {
       evaluatedDecisions: this.evaluated,
       unmatchedDecisions: this.unmatched,
     });
+    summary.activity = researchActivity(
+      this.raw,
+      this.reader?.db ?? null,
+      { evaluated: this.evaluated, adopted: this.adopted, unmatched: this.unmatched },
+      this.byRun,
+      !this.raw.prepare('SELECT 1 FROM decisions WHERE rowid>? LIMIT 1').get(this.cursor),
+      this.activityCounter,
+    );
+    const latest = this.raw
+      .prepare('SELECT context FROM decisions ORDER BY rowid DESC LIMIT 1')
+      .get();
+    const currentSeats = latest
+      ? (JSON.parse(String(latest.context)) as { seats?: Array<{ name?: string; seat: number }> })
+          .seats
+      : [];
+    const names = new Map(
+      (currentSeats ?? [])
+        .filter((seat) => typeof seat.name === 'string' && seat.name.length > 0)
+        .map((seat) => [opponentKey(seat.name!), seat.name!.slice(0, 80)]),
+    );
+    summary.schedules = (status.schedules ?? []).map((schedule) => ({
+      ...schedule,
+      label:
+        schedule.taskType === 'leak_review'
+          ? 'Global decision review'
+          : (names.get(schedule.scopeKey) ?? `Opponent ${schedule.scopeKey.slice(-8)}`),
+    }));
     let proposals: ResearchPublicView['proposals'] = [],
       publications: ResearchPublicView['publications'] = [];
     if (this.reader) {
@@ -131,6 +176,9 @@ export class ResearchMonitor {
         expiresAt: p.expiresAt,
         evidenceCutoff: p.evidenceCutoff,
         guidance: p.guidance,
+        observation: p.hypothesis,
+        limitations: p.limitations,
+        ...(p.recipeId ? { recipeId: p.recipeId } : {}),
         approvalSource: p.approvalSource,
       }));
       summary.latestPublicationAt = publications[0]?.publishedAt ?? null;

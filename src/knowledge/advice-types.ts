@@ -37,6 +37,7 @@ export interface PublishedAdvice {
   metrics: EvidenceMetric[];
   invalidateWhen: ResearchProposalV2['invalidateWhen'];
   approvalSource: 'manual' | 'approved_recipe';
+  recipeId?: string;
 }
 export interface AdviceBundle {
   schemaVersion: 'advice-bundle-v1';

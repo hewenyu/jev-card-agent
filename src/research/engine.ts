@@ -43,8 +43,8 @@ export class ResearchEngine {
         realpathSync(rawPath) === realpathSync(config.databasePath))
     )
       throw new Error('Research database must be separate from raw history');
-    this.evidence = new EvidenceBuilder(rawPath);
     this.queue = new ResearchQueue(config.databasePath);
+    this.evidence = new EvidenceBuilder(rawPath, config.databasePath);
     this.advice = new AdviceStore(config.databasePath);
     this.controls = new AsyncControlStore(config.databasePath);
   }
@@ -73,12 +73,31 @@ export class ResearchEngine {
           batch.taskType === 'opponent_brief'
             ? this.config.minNewHands
             : this.config.leakMinNewHands;
-        if (this.queue.shouldSchedule(batch, threshold))
-          this.queue.enqueue(
+        const evaluation = this.queue.scheduler.evaluate(
+          batch,
+          threshold,
+          batch.taskType === 'opponent_brief'
+            ? (this.config.initialMinHands ?? Math.min(10, threshold))
+            : threshold,
+        );
+        if (evaluation.eligible) {
+          const id = this.queue.enqueue(
             batch,
             `${this.config.provider}:${this.config.model}`,
             this.config.maxPending,
+            evaluation.entry.updatedAt,
+            evaluation.priority,
           );
+          if (!id)
+            evaluation.entry.reason = this.queue.db
+              .prepare(
+                "SELECT 1 FROM research_jobs WHERE task_type=? AND scope_key=? AND state='pending'",
+              )
+              .get(batch.taskType, batch.scopeKey)
+              ? 'pending_evidence_preserved'
+              : 'queue_capacity';
+        }
+        this.queue.scheduler.save(evaluation.entry);
       }
       const job = this.queue.claim(this.owner, this.config.jobTimeoutMs);
       if (!job) return this.status();

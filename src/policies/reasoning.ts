@@ -25,6 +25,8 @@ export interface ReasoningConfig {
   maxRetries?: number;
   /** Caller-owned structured output validation stays inside the same bounded attempt loop. */
   validateOutput?: (text: string) => void;
+  /** Research opt-in: preserve input evidence and append only trusted validation feedback. */
+  repairValidationInput?: (originalInput: string, error: unknown) => string | undefined;
   /** Research only: archive exact request JSON in the private meter before issuing a network call. */
   captureRequest?: boolean;
 }
@@ -126,9 +128,12 @@ export class ReasoningProvider implements ReasoningPolicy {
   }
   /** Bounded text transport shared with background research, without a forged decision context. */
   async complete(input: string, options: DecisionOptions = {}): Promise<ReasoningResult> {
+    let attemptInput = input;
     const { value, attempts } = await withProviderRetries(
       async (retryIndex) => {
-        const value = await this.completeOnce(input, options, retryIndex);
+        const value = await this.completeOnce(attemptInput, options, retryIndex, (error) => {
+          attemptInput = this.config.repairValidationInput?.(input, error) ?? input;
+        });
         return { value, attempt: value.attempt };
       },
       { ...options, phase: 'reasoning', maxRetries: this.config.maxRetries },
@@ -139,6 +144,7 @@ export class ReasoningProvider implements ReasoningPolicy {
     input: string,
     options: DecisionOptions,
     retryIndex: number,
+    invalidOutput?: (error: unknown) => void,
   ): Promise<ReasoningResult> {
     options.signal?.throwIfAborted();
     if (input.length > 48000) throw new ProviderError('reasoning_input_too_large');
@@ -284,7 +290,12 @@ export class ReasoningProvider implements ReasoningPolicy {
       if (!analysis || analysis.length > 30000)
         throw new ProviderError('reasoning_invalid_analysis');
       if (!actualModel) throw new ProviderError('reasoning_missing_model');
-      this.config.validateOutput?.(analysis);
+      try {
+        this.config.validateOutput?.(analysis);
+      } catch (error) {
+        invalidOutput?.(error);
+        throw error;
+      }
       signal.throwIfAborted();
       completed = {
         analysis,

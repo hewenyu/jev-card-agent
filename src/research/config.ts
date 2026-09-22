@@ -18,6 +18,7 @@ export interface AsyncResearchConfig {
   maxRetries: number;
   maxConcurrency: number;
   maxPending: number;
+  initialMinHands?: number;
   minNewHands: number;
   leakMinNewHands: number;
   intervalMs: number;
@@ -104,9 +105,16 @@ export function loadAsyncResearchConfig(
     maxRetries: integer(env, 'LLM_RESEARCH_MAX_RETRIES', 3, 0, 3),
     maxConcurrency: integer(env, 'LLM_RESEARCH_MAX_CONCURRENCY', 1, 1, 1),
     maxPending: integer(env, 'LLM_RESEARCH_MAX_PENDING', 8, 1, 64),
-    minNewHands: integer(env, 'LLM_RESEARCH_MIN_NEW_HANDS', 30, 1, 100),
-    leakMinNewHands: integer(env, 'LLM_RESEARCH_LEAK_MIN_NEW_HANDS', 100, 1, 100),
-    intervalMs: integer(env, 'LLM_RESEARCH_INTERVAL_MS', 60000, 10, 3600000),
+    initialMinHands: integer(
+      env,
+      'LLM_RESEARCH_INITIAL_HANDS',
+      Math.min(10, integer(env, 'LLM_RESEARCH_MIN_NEW_HANDS', 10, 1, 100)),
+      1,
+      100,
+    ),
+    minNewHands: integer(env, 'LLM_RESEARCH_MIN_NEW_HANDS', 10, 1, 100),
+    leakMinNewHands: integer(env, 'LLM_RESEARCH_LEAK_MIN_NEW_HANDS', 25, 1, 100),
+    intervalMs: integer(env, 'LLM_RESEARCH_INTERVAL_MS', 15000, 10, 3600000),
     inputPricePerMillion: price(env, 'LLM_RESEARCH_INPUT_PRICE_PER_MILLION'),
     outputPricePerMillion: price(env, 'LLM_RESEARCH_OUTPUT_PRICE_PER_MILLION'),
     cacheReadPricePerMillion: price(env, 'LLM_RESEARCH_CACHE_READ_PRICE_PER_MILLION'),
