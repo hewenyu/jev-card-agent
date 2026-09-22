@@ -84,6 +84,7 @@ function newHand(state: PokerState, handId: string, knownStart: boolean): PokerS
     validActions: [],
     complete: false,
     historyIncomplete: !knownStart,
+    waitingReason: null,
     handStartStacks: knownStart
       ? Object.fromEntries(state.seats.filter((s) => s.name !== null).map((s) => [s.seat, s.stack]))
       : {},
@@ -249,6 +250,7 @@ export function reduceMessage(previous: PokerState, message: RawMessage): PokerS
         heroSeat: chips(message.seat) ?? state.heroSeat,
         dealerSeat: dealerSeat(message, state.dealerSeat),
         complete: false,
+        waitingReason: null,
         smallBlind: chips(blinds.small_blind) ?? state.smallBlind,
         bigBlind: chips(blinds.big_blind) ?? state.bigBlind,
       };
@@ -319,10 +321,33 @@ export function reduceMessage(previous: PokerState, message: RawMessage): PokerS
       };
     }
     case 'player_joined': {
-      const updated = parseSeats([message], [], true) ?? [];
+      const seat = chips(message.seat);
+      if (seat === undefined) return state;
+      const occupant = state.seats.find((s) => s.seat === seat);
+      const name = string(message.name) ?? (message.name === undefined ? occupant?.name : null);
+      const newcomer = name != null && name !== occupant?.name;
+      const handInProgress =
+        !differentTable &&
+        state.handId !== null &&
+        state.handId === previous.handId &&
+        state.street !== 'idle' &&
+        !state.complete &&
+        ![
+          'between_hands_delay',
+          'awaiting_hand_start',
+          'insufficient_players',
+          'table_closing',
+        ].includes(state.waitingReason ?? '');
+      // A seat acquired after the deal joins the next hand. Resolve this before
+      // your_turn so its later in_hand=false snapshot cannot invalidate a decision.
+      // Duplicate occupancy notices are partial updates, not a new player/deal.
+      const update =
+        newcomer && handInProgress && typeof message.in_hand !== 'boolean'
+          ? { ...message, in_hand: false }
+          : message;
       return {
         ...state,
-        seats: [...state.seats.filter((s) => s.seat !== message.seat), ...updated],
+        seats: parseSeats([update], state.seats, false) ?? state.seats,
       };
     }
     case 'player_left':

@@ -311,3 +311,15 @@ The regression scope includes differing official score and chip totals, signed/a
 The official table control stays visible and shows a waiting state when no current live table is available. Active table links use the current table ID and open in a new tab. This interface update does not change Jev decisions, account reconciliation, or stored history.
 
 发布前本地 `npm run check` 全部通过（395 项 Vitest、lint、格式、类型、构建及仓库检查）；57 项 Playwright 通过，包含官方链接换桌、恢复/收尾状态、新标签目标地址、无桌等待与 390px 紧凑排版。5 个配置私有值在 144 个构建产物中零匹配。跳转测试拦截官方目标页面，仅验证实际点击的 URL，不宣称验证了第三方直播内容。
+
+## 1.2.4 中途入座导致停牌 / Mid-hand seating stop
+
+2026-09-22 UTC 的两次 `decision_state_changed` 停牌均已通过原始事件重现。新玩家在开局后入座，`player_joined` 未带 `in_hand`；Jev 请求开始后 20–24 ms，`table_state` 补齐该玩家 `in_hand=false`。当次行动授权、底池、合法动作及其他参战玩家未变。旧 reducer 将这名等待下一手的玩家短暂视作参战者，提交前指纹因此变化并写入持久停牌。最近一次 Jev 请求本身成功，耗时 433 ms，没有提交 Bot 动作，45 秒后官方记录超时 fold。
+
+修复前先更新运行合同。新版按同桌同手已开局的证据，将缺少明确参与状态的新入座者记为等待下一手；同名重复通知保留已有参与、下注和弃牌信息，服务端显式字段优先。开新手时重新确定参与状态。提交前的授权、金额、真实参战状态校验保持严格。
+
+两组冻结原始事件分别为 1,824 和 115 条；旧代码重建的座位与原决策 context 一致，且均重现指纹变化；新代码在相同授权下保持指纹一致。传入 Jev 的参战对手计数分别从错误的 5、3 修正为 4、2。回放只计算状态与输入，不重新调用模型，不改写历史，也不将替代动作计为实际收益。
+
+Both recorded failures came from occupancy metadata being treated as current-hand participation. The repair resolves this before building Jev input; it does not weaken action authorization or replace Jev with a local decision. Regression coverage includes arrivals before and during a pending request, server membership confirmation, participation in the next hand, and rejection of genuinely changed pots, stacks or turn authority.
+
+发布前本地完整 `npm run check` 通过：54 个文件、419 项 Vitest，包含新增 18 项状态回归及 6 项真实本地 WebSocket 集成测试；57 项 Playwright 全部通过。lint、格式、类型、构建及每文件千行限制检查通过，最长文件仍为 991 行；5 个私有配置值在 144 个构建文件中零匹配。真实 Arena 的模型执行与历史保留在部署后单独核对，本地 mock 成功不冒充供应商或盈利验证。
