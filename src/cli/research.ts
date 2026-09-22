@@ -10,7 +10,7 @@ import {
   effectiveResearchMode,
   type ResearchMode,
 } from '../research/control.js';
-import { AdviceStore } from '../knowledge/advice-store.js';
+import { AdviceStore, APPROVED_RECIPE_ID } from '../knowledge/advice-store.js';
 import { AdviceValidator } from '../knowledge/advice-validator.js';
 import { ResearchQueue } from '../research/queue.js';
 import { LlmResearchProvider } from '../research/llm-provider.js';
@@ -219,7 +219,7 @@ async function main(): Promise<void> {
       emit({ withdrawn: args.publication });
     } else if (args.op === 'approve-recipe') {
       advice.approveRecipe({ actor: required('actor'), note: required('note') });
-      emit({ approvedRecipe: 'opponent-evidence-v1' });
+      emit({ approvedRecipe: APPROVED_RECIPE_ID });
     } else if (args.op === 'diagnose') {
       if (args['allow-paid'] !== true)
         throw new Error('Real research diagnostic requires --allow-paid');

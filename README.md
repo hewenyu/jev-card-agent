@@ -51,6 +51,8 @@ The current implementation uses **pure Jev (`BOT_STRATEGY=jev`)** with a [poker 
 
 Version **1.3.0** adds optional [asynchronous LLM research](docs/async-llm.md). `BOT_STRATEGY=jev` keeps Jev as the action selector; `ASYNC_LLM_MODE=off` remains the default. Shadow research cannot alter Jev requests. Explicitly activated live research adds only approved, applicable suggestions to the next hand’s fixed knowledge. This mode is labelled Jev + asynchronous LLM assistance. The older synchronous `jev-reasoning` experiment remains separate.
 
+Version **1.3.1** fixes four-street summaries exceeding the advice input limit with an independently approved `opponent-evidence-v2` template. The live demonstration uses `deepseek-flash` for asynchronous research with thinking disabled; Jev still chooses every action. See [model and activation evidence](docs/deepseek-live-activation.md).
+
 Each hand has a persistent session. Following Pi’s separation of stored history and model context, the full event/decision history remains in SQLite while each request uses a compact projection. Unrelated recent profit streaks, repeated identifiers and duplicated context are omitted. Opponent memory uses at most 200 completed encounters per current opponent; completion and receipt must both precede the decision. Public showdown examples and street counts retain source evidence and sample limits. Missing price metadata is not guessed.
 
 For successful Jev requests, records retain the original request and the schema-parsed `model`, `usage` and `answers`; they do not archive the verbatim HTTP response. Failed calls retain attempts, status and available diagnostic details, which may be incomplete.
