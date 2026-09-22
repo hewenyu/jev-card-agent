@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { AdviceStore } from '../knowledge/advice-store.js';
 import type { AsyncResearchStatus } from '../research/engine.js';
 import type { ResearchPublicView, ResearchSummary } from '../shared/research.js';
+import { connectionRevision } from '../storage/connection-revision.js';
 import { opponentKey } from '../knowledge/advice-validator.js';
 import {
   emptyDecisionCounts,
@@ -21,6 +22,10 @@ export class ResearchMonitor {
   private readonly byRun = new Map<string, DecisionCounts>();
   private readonly activityCounter = new ResearchActivityCounter();
   private view: ResearchPublicView;
+  private projectionRevision?: string;
+  private projectionExpiresAt = 0;
+  private namesCursor = -1;
+  private names = new Map<string, string>();
   constructor(
     private readonly path: string,
     private readonly raw: DatabaseSync,
@@ -61,7 +66,7 @@ export class ResearchMonitor {
     // Incremental scan, never inside a live action or spectator event. All source decisions remain intact.
     const rows = this.raw
       .prepare(
-        'SELECT rowid AS cursor,run_id,context,proposal FROM decisions WHERE rowid>? ORDER BY rowid LIMIT 500',
+        'SELECT rowid AS cursor,run_id,context,proposal FROM decisions WHERE rowid>? ORDER BY rowid LIMIT 32',
       )
       .all(this.cursor);
     for (const row of rows) {
@@ -100,28 +105,36 @@ export class ResearchMonitor {
       !this.raw.prepare('SELECT 1 FROM decisions WHERE rowid>? LIMIT 1').get(this.cursor),
       this.activityCounter,
     );
-    const latest = this.raw
-      .prepare('SELECT context FROM decisions ORDER BY rowid DESC LIMIT 1')
-      .get();
-    const currentSeats = latest
-      ? (JSON.parse(String(latest.context)) as { seats?: Array<{ name?: string; seat: number }> })
-          .seats
-      : [];
-    const names = new Map(
-      (currentSeats ?? [])
-        .filter((seat) => typeof seat.name === 'string' && seat.name.length > 0)
-        .map((seat) => [opponentKey(seat.name!), seat.name!.slice(0, 80)]),
+    const namesCursor = Number(
+      this.raw.prepare('SELECT COALESCE(MAX(rowid),0) AS n FROM decisions').get()!.n,
     );
+    if (namesCursor !== this.namesCursor) {
+      const latest = this.raw
+        .prepare('SELECT context FROM decisions WHERE rowid=?')
+        .get(namesCursor);
+      const seats = latest
+        ? (JSON.parse(String(latest.context)) as { seats?: Array<{ name?: string; seat: number }> })
+            .seats
+        : [];
+      this.names = new Map(
+        (seats ?? [])
+          .filter((seat) => typeof seat.name === 'string' && seat.name.length > 0)
+          .map((seat) => [opponentKey(seat.name!), seat.name!.slice(0, 80)]),
+      );
+      this.namesCursor = namesCursor;
+    }
     summary.schedules = (status.schedules ?? []).map((schedule) => ({
       ...schedule,
       label:
         schedule.taskType === 'leak_review'
           ? 'Global decision review'
-          : (names.get(schedule.scopeKey) ?? `Opponent ${schedule.scopeKey.slice(-8)}`),
+          : (this.names.get(schedule.scopeKey) ?? `Opponent ${schedule.scopeKey.slice(-8)}`),
     }));
     let proposals: ResearchPublicView['proposals'] = [],
       publications: ResearchPublicView['publications'] = [];
-    if (this.reader) {
+    const now = Date.now();
+    const revision = this.reader ? connectionRevision(this.reader.db) : undefined;
+    if (this.reader && (revision !== this.projectionRevision || now >= this.projectionExpiresAt)) {
       const store = this.reader;
       const counts = Object.fromEntries(
         store.db
@@ -131,16 +144,19 @@ export class ResearchMonitor {
       );
       summary.awaitingReview = counts.pending ?? 0;
       summary.approved = counts.approved ?? 0;
-      const now = Date.now();
       const states = store.db
         .prepare(
-          `SELECT p.id,p.seq,CASE
+          `SELECT p.id,p.seq,json_extract(p.payload,'$.expiresAt') AS expires_at,CASE
         WHEN EXISTS(SELECT 1 FROM advice_audit a WHERE a.subject_id=p.id AND a.action='withdrawn') THEN 'withdrawn'
         WHEN EXISTS(SELECT 1 FROM advice_publications n WHERE n.topic_key=p.topic_key AND n.revision>p.revision) THEN 'superseded'
         WHEN json_extract(p.payload,'$.expiresAt')<=? THEN 'expired' ELSE 'published' END AS status
         FROM advice_publications p ORDER BY seq DESC`,
         )
         .all(new Date(now).toISOString());
+      this.projectionExpiresAt = states.reduce((next, row) => {
+        const expires = Date.parse(String(row.expires_at));
+        return expires > now ? Math.min(next, expires) : next;
+      }, Infinity);
       const statuses = new Map(
         states.map((row) => [
           String(row.id),
@@ -181,15 +197,33 @@ export class ResearchMonitor {
         ...(p.recipeId ? { recipeId: p.recipeId } : {}),
         approvalSource: p.approvalSource,
       }));
-      summary.latestPublicationAt = publications[0]?.publishedAt ?? null;
-      summary.latestAdviceAgeMs = summary.latestPublicationAt
-        ? Math.max(0, now - Date.parse(summary.latestPublicationAt))
-        : null;
+      this.projectionRevision = revision;
+    } else if (this.reader) {
+      for (const key of [
+        'awaitingReview',
+        'approved',
+        'published',
+        'expired',
+        'withdrawn',
+        'knownCostUsd',
+        'unpricedCalls',
+      ] as const) {
+        Object.assign(summary, { [key]: this.view.status[key] });
+      }
+      proposals = this.view.proposals;
+      publications = this.view.publications;
     }
+    summary.latestPublicationAt = publications[0]?.publishedAt ?? null;
+    summary.latestAdviceAgeMs = summary.latestPublicationAt
+      ? Math.max(0, now - Date.parse(summary.latestPublicationAt))
+      : null;
     this.view = { status: summary, proposals, publications };
   }
   current(): ResearchPublicView {
     return structuredClone(this.view);
+  }
+  status(): ResearchSummary {
+    return structuredClone(this.view.status);
   }
   fail(): void {
     this.view.status.error = 'Research status unavailable';

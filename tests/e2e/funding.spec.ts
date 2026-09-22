@@ -1,3 +1,4 @@
+import { mockOverview, mockPerformance } from './dashboard-fixture';
 import { expect, test, type Page } from '@playwright/test';
 import type {
   FundingEventView,
@@ -58,7 +59,7 @@ async function fixture(page: Page) {
     }
     window.EventSource = TestEventSource as unknown as typeof EventSource;
   });
-  await page.route('**/api/overview', (route) => {
+  await mockOverview(page, (route) => {
     state.requests++;
     return state.overviewError
       ? route.fulfill({ status: 503, json: { error: 'Account refresh unavailable' } })
@@ -78,7 +79,7 @@ async function fixture(page: Page) {
           },
         });
   });
-  await page.route('**/api/runs/*/performance', (route) =>
+  await mockPerformance(page, (route) =>
     route.fulfill({
       json: {
         runId: 'funding-run',
@@ -264,7 +265,7 @@ test('funding details fit a mobile viewport and an elapsed cooldown does not inv
   }
 });
 
-test('funding history shares one reader across views and separates rebuy observations from reconciliation', async ({
+test('funding history refreshes on visibility and separates rebuy observations from reconciliation', async ({
   page,
 }) => {
   const { state, base, focus } = await fixture(page);
@@ -290,7 +291,7 @@ test('funding history shares one reader across views and separates rebuy observa
   await expect(history).toHaveCount(0);
   await page.getByRole('link', { name: 'Live table', exact: true }).click();
   await expect(history.getByText('Rebuy scheduled', { exact: true })).toBeVisible();
-  expect(state.eventRequests).toBe(reads);
+  await expect.poll(() => state.eventRequests).toBe(reads + 1);
   state.events = [
     {
       ...scheduled,

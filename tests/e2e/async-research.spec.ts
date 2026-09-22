@@ -161,7 +161,8 @@ test('replay distinguishes actual advice adoption from proposal existence', asyn
   await expect(evidence).toContainText('LLM-assisted');
   await expect(evidence).toContainText('Use the current price.');
   delete decision.modelInput.approvedAdvice;
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  // Saved inputs are immutable after completion; load the alternate fixture afresh.
+  await page.reload();
   await expect(evidence).toContainText('No approved advice was included');
   await expect(evidence).not.toContainText('Use the current price.');
 });

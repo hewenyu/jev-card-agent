@@ -17,12 +17,15 @@ export function mergeHistory<T extends HistoryItem>(older: T[], newer: T[]): T[]
 export function useHistoryPages<T extends HistoryItem>(
   path: string | null,
   refreshKey?: string | number,
+  seed?: T[],
 ) {
   const [items, setItems] = useState<T[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadedPath, setLoadedPath] = useState<string | null>(null);
+  const seedRef = useRef(seed);
+  seedRef.current = seed;
   const generation = useRef(0);
   const cursor = useRef<string | null>(null);
   const busy = useRef(false);
@@ -79,19 +82,37 @@ export function useHistoryPages<T extends HistoryItem>(
     initialized.current = false;
     knownIds.current = new Set();
     cursorGeneration.current++;
-    setItems([]);
+    const firstPage = seedRef.current;
+    setItems(firstPage ?? []);
     setError(null);
     setHasMore(false);
     setLoadedPath(path);
     setLoading(false);
-    void load(false);
+    if (firstPage) {
+      cursor.current = firstPage.at(-1)?.id ?? null;
+      initialized.current = true;
+      knownIds.current = new Set(firstPage.map((item) => item.id));
+      setHasMore(firstPage.length === 100);
+    } else void load(false);
     return () => {
       generation.current = currentGeneration + 1;
     };
   }, [path, load]);
 
   useEffect(() => {
-    if (initialized.current) void load(false, true);
+    if (!seed) return;
+    const gap = seed.length === 100 && !seed.some((item) => knownIds.current.has(item.id));
+    if (gap) {
+      cursorGeneration.current++;
+      cursor.current = seed.at(-1)!.id;
+      setHasMore(true);
+    }
+    seed.forEach((item) => knownIds.current.add(item.id));
+    setItems((current) => mergeHistory(current, seed));
+  }, [seed]);
+
+  useEffect(() => {
+    if (!seedRef.current && initialized.current) void load(false, true);
   }, [refreshKey, load]);
 
   return {

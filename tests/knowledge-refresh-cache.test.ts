@@ -70,14 +70,23 @@ describe('bounded publication refresh on the actual Controller path', () => {
     let bundle = emptyAdviceBundle('off', baselineSnapshot().version);
     const sizes = Buffer.byteLength(JSON.stringify(snapshot));
     vi.spyOn(app.controller.research, 'latest').mockImplementation(() => currentSnapshot);
+    vi.spyOn(app.controller.research, 'revision').mockImplementation(
+      () => currentSnapshot.contentHash,
+    );
     vi.spyOn(app.controller.asyncResearch, 'mode').mockImplementation(() => bundle.mode);
     vi.spyOn(app.controller.asyncResearch, 'bundle').mockImplementation(() => bundle);
-    const refresh = () => app.controller.asyncResearch.emit('update');
+    vi.spyOn(app.controller.asyncResearch, 'bundleRevision').mockImplementation(
+      () => bundle.bundleHash,
+    );
+    const refresh = async () => {
+      app.controller.asyncResearch.emit('update');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    };
     const count = () =>
       Number(store.db.prepare('SELECT COUNT(*) AS n FROM knowledge_archive_publications').get()!.n);
     const before = count();
     const started = performance.now();
-    refresh();
+    await refresh();
     const firstMs = performance.now() - started;
     expect(count()).toBe(before + 1);
     const stringify = vi.spyOn(JSON, 'stringify');
@@ -85,7 +94,7 @@ describe('bounded publication refresh on the actual Controller path', () => {
     try {
       for (let index = 0; index < 60; index++) {
         const start = performance.now();
-        refresh();
+        await refresh();
         durations.push(performance.now() - start);
       }
       expect(count()).toBe(before + 1);
@@ -118,7 +127,7 @@ describe('bounded publication refresh on the actual Controller path', () => {
         ...emptyAdviceBundle('shadow', baselineSnapshot().version),
         maxItems: 3,
       });
-      refresh();
+      await refresh();
       expect(count()).toBe(before + 2);
       bundle = withHash({
         ...bundle,
@@ -135,12 +144,12 @@ describe('bounded publication refresh on the actual Controller path', () => {
           },
         ],
       });
-      refresh();
+      await refresh();
       expect(count()).toBe(before + 3);
       const { contentHash: _old, ...content } = snapshot;
       const next = { ...content, version: 'large-e2', evidenceEventId: 2 };
       currentSnapshot = { ...next, contentHash: snapshotHash(next) };
-      refresh();
+      await refresh();
       expect(count()).toBe(before + 4);
       expect(store.pinKnowledge(state, new Date().toISOString())).toBe(pin);
       expect(pin.pin.asyncLlmMode).toBe('off');

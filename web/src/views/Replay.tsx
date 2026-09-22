@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { HandDetail, HandSummary, RunSummary } from '../../../src/shared/api';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { HandAudits, HandDetail, HandSummary, RunSummary } from '../../../src/shared/api';
 import { api, message, signed, time } from '../api';
 import { Decision } from '../components/Decision';
 import { PokerTable } from '../components/PokerTable';
@@ -41,29 +41,89 @@ export function Replay({
     if (!selectedHand && hands[0]) selectHand(hands[0].id);
   }, [hands, selectedHand, selectHand]);
   const handId = selectedHand ?? hands[0]?.id;
+  const summary = hands.find((hand) => hand.id === handId);
+  // Hand rows can be completed by late results/resync. New list objects alone are not changes.
+  const summarySignature = summary
+    ? JSON.stringify([
+        summary.tableId,
+        summary.handNumber,
+        summary.board,
+        summary.heroCards,
+        summary.profit,
+        summary.bigBlind,
+        summary.status,
+        summary.startedAt,
+        summary.endedAt,
+        summary.complete,
+      ])
+    : null;
+  const loadedScope = useRef('');
   const runId = run?.id;
   const detail = record && record.hand.id === handId && record.hand.runId === runId ? record : null;
   useEffect(() => {
     let active = true;
     let pending = false;
+    let stable: HandDetail | null = null;
+    let auditPending = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    setRecord(null);
+    const scope = JSON.stringify([runId, handId]);
+    const changedHand = loadedScope.current !== scope;
+    loadedScope.current = scope;
+    const controller = new AbortController();
+    if (changedHand) {
+      setRecord(null);
+      setCursor(0);
+    }
     setError(null);
-    setCursor(0);
     if (!handId) {
       setLoading(false);
       return;
     }
-    setLoading(true);
+    setLoading(changedHand);
     async function refresh() {
       if (pending || !active) return;
       pending = true;
       clearTimeout(timer);
       try {
-        const value = await api<HandDetail>(`/hands/${encodeURIComponent(handId!)}`);
+        if (stable) {
+          if (!auditPending) return;
+          const audits = await api<HandAudits>(
+            `/hands/${encodeURIComponent(handId!)}/audits`,
+            controller.signal,
+          );
+          if (!active) return;
+          const byId = new Map(audits.map((item) => [item.decisionId, item.audit]));
+          stable = {
+            ...stable,
+            decisions: stable.decisions.map((item) => ({
+              ...item,
+              audit: byId.get(item.id) ?? item.audit,
+            })),
+          };
+          auditPending = stable.decisions.some(
+            (item) => item.audit?.status === 'pending' || item.audit?.status === 'failed',
+          );
+          setRecord(stable);
+          setError(null);
+          return;
+        }
+        const value = await api<HandDetail>(
+          `/hands/${encodeURIComponent(handId!)}`,
+          controller.signal,
+        );
         if (!active) return;
         if (value.hand.id !== handId || value.hand.runId !== runId)
           throw new Error('The returned hand does not match the selected run.');
+        if (
+          value.hand.status === 'complete' &&
+          value.hand.complete &&
+          value.decisions.every((item) => ['accepted', 'cancelled', 'failed'].includes(item.status))
+        ) {
+          stable = value;
+          auditPending = value.decisions.some(
+            (item) => item.audit?.status === 'pending' || item.audit?.status === 'failed',
+          );
+        }
         setRecord(value);
         setCursor((current) => Math.min(current, Math.max(0, value.events.length - 1)));
         setDecisionId((current) =>
@@ -79,7 +139,7 @@ export function Replay({
         if (active) {
           setLoading(false);
           // Schedule after completion: a slow response cannot overlap a newer request.
-          timer = setTimeout(() => void refresh(), 3000);
+          if (!stable || auditPending) timer = setTimeout(() => void refresh(), 3000);
         }
       }
     }
@@ -89,9 +149,10 @@ export function Replay({
     return () => {
       window.removeEventListener('focus', onFocus);
       active = false;
+      controller.abort();
       clearTimeout(timer);
     };
-  }, [handId, runId]);
+  }, [handId, runId, summarySignature]);
   useEffect(() => {
     setDecisionId(selectedDecision);
   }, [handId, selectedDecision]);

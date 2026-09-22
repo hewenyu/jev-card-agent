@@ -1,10 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  DecisionView,
-  HandSummary,
-  Overview as OverviewData,
-  RunSummary,
-} from '../../src/shared/api';
+import { useEffect, useRef, useState } from 'react';
+import type { DecisionView, HandSummary, RunSummary } from '../../src/shared/api';
 import { api, message } from './api';
 import { useLiveSpectator } from './live';
 import { Empty, ErrorNotice, Icon, SourceBadge } from './components/UI';
@@ -16,6 +11,7 @@ import { mergeHistory, useHistoryPages } from './history';
 import { latestFunding } from './funding';
 import { useFundingHistory } from './funding-history';
 import { latestRuntime } from './runtime-view';
+import { useDashboard } from './dashboard';
 
 const views = [
   { id: 'overview', label: 'Overview' },
@@ -28,18 +24,16 @@ const initialView = () =>
 
 export function App() {
   const [view, setView] = useState(initialView);
-  const [data, setData] = useState<OverviewData | null>(null);
   const [runId, setRunId] = useState('');
   const followCurrentRun = useRef(true);
   const [handId, setHandId] = useState<string | null>(null);
   const [decisionId, setDecisionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [revision, setRevision] = useState(0);
-  const refreshing = useRef(false);
-  const [overviewStartedAt, setOverviewStartedAt] = useState(0);
+  const dashboard = useDashboard(view, followCurrentRun.current ? '' : runId);
+  const data = dashboard.data?.overview;
+  const { loading, revision, startedAt: overviewStartedAt, refresh } = dashboard;
   const live = useLiveSpectator();
-  const fundingHistory = useFundingHistory();
+  const fundingHistory = useFundingHistory(view === 'live');
   const displayData = data && {
     ...data,
     runtime: {
@@ -51,35 +45,8 @@ export function App() {
       ),
     },
   };
-  const runPages = useHistoryPages<RunSummary>(data ? '/runs' : null, revision);
+  const runPages = useHistoryPages<RunSummary>(data ? '/runs' : null, undefined, data?.runs);
   const runs = mergeHistory(runPages.items, data?.runs ?? []);
-  const refresh = useCallback(async () => {
-    if (refreshing.current) return;
-    refreshing.current = true;
-    const startedAt = performance.now();
-    try {
-      const value = await api<OverviewData>('/overview');
-      setData(value);
-      setOverviewStartedAt(startedAt);
-      setRevision((current) => current + 1);
-      setError(null);
-    } catch (reason) {
-      setError(message(reason));
-    } finally {
-      refreshing.current = false;
-      setLoading(false);
-    }
-  }, []);
-  useEffect(() => {
-    void refresh();
-    const timer = setInterval(() => void refresh(), 3000);
-    const onFocus = () => void refresh();
-    window.addEventListener('focus', onFocus);
-    return () => {
-      clearInterval(timer);
-      window.removeEventListener('focus', onFocus);
-    };
-  }, [refresh]);
   useEffect(() => {
     const handler = () => setView(initialView());
     window.addEventListener('hashchange', handler);
@@ -88,12 +55,15 @@ export function App() {
   const currentRunId = displayData?.runtime.runId ?? runs[0]?.id;
   const automaticRunId = runs.some((item) => item.id === currentRunId) ? currentRunId : runs[0]?.id;
   useEffect(() => {
-    if (followCurrentRun.current && automaticRunId) setRunId(automaticRunId);
-    else if (!runId && automaticRunId) setRunId(automaticRunId);
+    if (followCurrentRun.current && automaticRunId && runId !== automaticRunId) {
+      setRunId(automaticRunId);
+      setHandId(null);
+      setDecisionId(null);
+    } else if (!runId && automaticRunId) setRunId(automaticRunId);
   }, [automaticRunId, runId]);
   const run = runs.find((item) => item.id === runId);
   const handPages = useHistoryPages<HandSummary>(
-    runId ? `/hands?runId=${encodeURIComponent(runId)}` : null,
+    view === 'replay' && runId ? `/hands?runId=${encodeURIComponent(runId)}` : null,
     revision,
   );
   const hands = handPages.items;
@@ -228,7 +198,7 @@ export function App() {
           </div>
         </header>
         <main>
-          <ErrorNotice error={error} />
+          <ErrorNotice error={error ?? dashboard.error} />
           <ErrorNotice error={runPages.error} />
           {loading ? (
             <div className="loading-state" role="status">
@@ -243,7 +213,18 @@ export function App() {
           ) : (
             <>
               {view === 'overview' && (
-                <Overview run={run} revision={revision} runtime={displayData.runtime} />
+                <Overview
+                  run={run}
+                  data={
+                    dashboard.data?.performance?.runId === runId ? dashboard.data.performance : null
+                  }
+                  error={
+                    dashboard.error || dashboard.data?.performanceError
+                      ? 'Statistics refresh is delayed.'
+                      : null
+                  }
+                  runtime={displayData.runtime}
+                />
               )}
               {view === 'live' && (
                 <Live

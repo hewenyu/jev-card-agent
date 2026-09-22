@@ -1,3 +1,4 @@
+import { mockOverview } from './dashboard-fixture';
 import { expect, test, type Page } from '@playwright/test';
 import type {
   DecisionView,
@@ -130,7 +131,7 @@ async function liveFixture(page: Page) {
   });
   // Runtime data is supplied through the existing overview fallback; no real arena connection.
   await page.route('**/api/live', (route) => route.abort());
-  await page.route('**/api/overview', (route) =>
+  await mockOverview(page, (route) =>
     route.fulfill({ json: { ...base.overview, runtime: state.runtime } }),
   );
   return { ...base, state, writes };

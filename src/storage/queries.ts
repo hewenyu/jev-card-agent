@@ -3,11 +3,13 @@ import type {
   DecisionView,
   EvaluationView,
   HandDetail,
+  HandAudits,
   HandSummary,
   RunSummary,
 } from '../shared/api.js';
 import { json, redact } from './database.js';
 import type { Store } from './store.js';
+import { cachedRead, initializeReadCache } from './read-cache.js';
 
 export interface PageOptions {
   limit?: number;
@@ -21,27 +23,52 @@ function pageLimit(limit = 500): number {
 const optionalString = (value: unknown): string | null => (value == null ? null : String(value));
 
 export class Queries {
-  constructor(readonly store: Store) {}
+  constructor(readonly store: Store) {
+    initializeReadCache(store.db);
+  }
   runs(options: PageOptions = {}): RunSummary[] {
+    return cachedRead(
+      this.store.db,
+      `runs:${pageLimit(options.limit)}:${options.before ?? ''}`,
+      ['runs', 'hands', 'decisions', 'usage'],
+      () => this.readRuns(options),
+    );
+  }
+  private readRuns(options: PageOptions): RunSummary[] {
     const cursor = options.before
       ? this.store.db.prepare('SELECT started_at,id FROM runs WHERE id=?').get(options.before)
       : undefined;
     if (options.before && !cursor) return [];
     return this.store.db
       .prepare(
-        `SELECT r.*,
-      (SELECT COUNT(*) FROM hands h WHERE h.run_id=r.id AND h.status='complete') AS hands,
-      (SELECT COUNT(*) FROM hands h WHERE h.run_id=r.id AND h.complete=1 AND h.profit IS NOT NULL) AS settled_hands,
-      (SELECT COUNT(*) FROM hands h WHERE h.run_id=r.id AND h.status='complete' AND h.complete=0) AS excluded_hands,
-      (SELECT COUNT(*) FROM decisions d WHERE d.run_id=r.id) AS decisions,
-      (SELECT COALESCE(SUM(profit),0) FROM hands h WHERE h.run_id=r.id AND complete=1) AS profit,
-      (SELECT 100.0*SUM(profit/big_blind)/COUNT(*) FROM hands h
-       WHERE h.run_id=r.id AND complete=1 AND big_blind>0 AND profit IS NOT NULL) AS bb100,
-      COALESCE((SELECT SUM(COALESCE(charged_nanos,reserved_nanos))/1e9 FROM usage u WHERE u.run_id=r.id),
-        (SELECT COALESCE(SUM(cost_usd),0) FROM decisions d WHERE d.run_id=r.id)) AS cost,
-      (SELECT COUNT(*) FROM decisions d WHERE d.run_id=r.id AND source='fallback') AS fallbacks
-      FROM runs r ${cursor ? 'WHERE (r.started_at,r.id)<(?,?)' : ''}
-      ORDER BY r.started_at DESC,r.id DESC LIMIT ?`,
+        `WITH page AS MATERIALIZED (
+        SELECT id,mode,strategy,model,status,started_at,ended_at,reason FROM runs
+        ${cursor ? 'WHERE (started_at,id)<(?,?)' : ''}
+        ORDER BY started_at DESC,id DESC LIMIT ?
+      ), hand_stats AS (
+        SELECT h.run_id,
+          COUNT(CASE WHEN h.status='complete' THEN 1 END) AS hands,
+          COUNT(CASE WHEN h.complete=1 AND h.profit IS NOT NULL THEN 1 END) AS settled_hands,
+          COUNT(CASE WHEN h.status='complete' AND h.complete=0 THEN 1 END) AS excluded_hands,
+          SUM(CASE WHEN h.complete=1 THEN h.profit ELSE 0 END) AS profit,
+          100.0*SUM(CASE WHEN h.complete=1 AND h.big_blind>0 AND h.profit IS NOT NULL
+            THEN h.profit/h.big_blind END)/NULLIF(COUNT(CASE WHEN h.complete=1 AND h.big_blind>0
+              AND h.profit IS NOT NULL THEN 1 END),0) AS bb100
+        FROM page p CROSS JOIN hands h ON h.run_id=p.id GROUP BY h.run_id
+      ), decision_stats AS (
+        SELECT d.run_id,COUNT(*) AS decisions,SUM(d.cost_usd) AS cost,
+          COUNT(CASE WHEN d.source='fallback' THEN 1 END) AS fallbacks
+        FROM page p CROSS JOIN decisions d INDEXED BY decisions_metrics ON d.run_id=p.id GROUP BY d.run_id
+      ), usage_stats AS (
+        SELECT u.run_id,SUM(COALESCE(u.charged_nanos,u.reserved_nanos))/1e9 AS cost
+        FROM page p CROSS JOIN usage u ON u.run_id=p.id GROUP BY u.run_id
+      ) SELECT p.*,COALESCE(h.hands,0) AS hands,COALESCE(h.settled_hands,0) AS settled_hands,
+        COALESCE(h.excluded_hands,0) AS excluded_hands,COALESCE(d.decisions,0) AS decisions,
+        COALESCE(h.profit,0) AS profit,h.bb100,COALESCE(u.cost,d.cost,0) AS cost,
+        COALESCE(d.fallbacks,0) AS fallbacks
+      FROM page p LEFT JOIN hand_stats h ON h.run_id=p.id
+      LEFT JOIN decision_stats d ON d.run_id=p.id LEFT JOIN usage_stats u ON u.run_id=p.id
+      ORDER BY p.started_at DESC,p.id DESC`,
       )
       .all(
         ...(cursor ? [String(cursor.started_at), String(cursor.id)] : []),
@@ -67,6 +94,14 @@ export class Queries {
       }));
   }
   hands(runId?: string, options: PageOptions = {}): HandSummary[] {
+    return cachedRead(
+      this.store.db,
+      `hands:${runId ?? ''}:${pageLimit(options.limit)}:${options.before ?? ''}:${!!options.completedOnly}`,
+      ['hands'],
+      () => this.readHands(runId, options),
+    );
+  }
+  private readHands(runId: string | undefined, options: PageOptions): HandSummary[] {
     const cursor = options.before
       ? this.store.db.prepare('SELECT started_at,id FROM hands WHERE id=?').get(options.before)
       : undefined;
@@ -132,6 +167,30 @@ export class Queries {
         })),
     };
   }
+  handAudits(id: string): HandAudits {
+    // Only the mutable audit is refreshed after settlement, not archived model input/events.
+    const source = this.store.knowledgeSource;
+    const status = source?.status();
+    return this.store.db
+      .prepare(
+        "SELECT id,json_type(context,'$.knowledge') AS knowledge FROM decisions WHERE hand_id=? ORDER BY created_at,id",
+      )
+      .all(id)
+      .map((row) => ({
+        decisionId: String(row.id),
+        audit:
+          row.knowledge == null
+            ? null
+            : (source?.getAudit(String(row.id)) ?? {
+                decisionId: String(row.id),
+                inputHash: null,
+                computedAt: null,
+                status: !status?.enabled ? 'disabled' : status.error ? 'failed' : 'pending',
+                uniformShowdownReference: null,
+                provenance: 'asynchronous_audit_not_model_input',
+              }),
+      }));
+  }
   evaluations(): EvaluationView[] {
     return this.store.db
       .prepare('SELECT result FROM evaluations ORDER BY created_at DESC LIMIT 100')
@@ -163,6 +222,14 @@ export class Queries {
       .run(result.id, result.createdAt, JSON.stringify(result));
   }
   metrics(mode: 'live' | 'demo') {
+    return cachedRead(
+      this.store.db,
+      `metrics:${mode}`,
+      ['runs', 'hands', 'decisions', 'usage'],
+      () => this.readMetrics(mode),
+    );
+  }
+  private readMetrics(mode: 'live' | 'demo') {
     const rows = this.store.db
       .prepare(
         `SELECT d.latency_ms,d.source,d.status,d.cost_usd

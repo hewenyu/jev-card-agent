@@ -44,6 +44,10 @@ export class AsyncResearchService extends EventEmitter {
     this.readers();
     return this.advice!.bundle({ ...options, maxItems: this.config.maxItems });
   }
+  bundleRevision(options: Parameters<AsyncResearchService['bundle']>[0]): string {
+    this.readers();
+    return this.advice!.bundleRevision({ ...options, maxItems: this.config.maxItems });
+  }
   latest(asOf = new Date().toISOString()): PublishedAdvice[] {
     return this.bundle({
       mode: this.mode(),

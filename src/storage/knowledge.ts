@@ -21,6 +21,7 @@ import type {
 } from '../knowledge/types.js';
 
 export interface KnowledgeSource {
+  revision?(asOf: string): string;
   latest(asOf?: string): KnowledgeSnapshot;
   status(): SlowLoopStatus;
   getAudit(decisionId: string): AuditView | null;
@@ -28,11 +29,33 @@ export interface KnowledgeSource {
 
 export interface AdviceSource {
   mode(): AsyncLlmMode;
+  bundleRevision?(options: {
+    mode: AsyncLlmMode;
+    basePolicyVersion: string;
+    admissibleAt: string;
+  }): string;
   bundle(options: {
     mode: AsyncLlmMode;
     basePolicyVersion: string;
     admissibleAt: string;
   }): AdviceBundle;
+}
+/** Cheap source tokens let idle heartbeats avoid copying and validating entire snapshots. */
+export function knowledgeSourceRevision(
+  source: KnowledgeSource | undefined,
+  advice: AdviceSource,
+  now: string,
+): string | undefined {
+  if (!advice.bundleRevision || (source && !source.revision)) return undefined;
+  const base = baselineSnapshot();
+  return JSON.stringify([
+    source?.revision?.(now) ?? base.contentHash,
+    advice.bundleRevision({
+      mode: advice.mode(),
+      basePolicyVersion: base.version,
+      admissibleAt: now,
+    }),
+  ]);
 }
 function emptyAdvice(mode: AsyncLlmMode): AdviceBundle {
   const content = {

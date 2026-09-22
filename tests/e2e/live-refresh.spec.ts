@@ -1,3 +1,4 @@
+import { mockOverview } from './dashboard-fixture';
 import { expect, test } from '@playwright/test';
 import type { Overview, RuntimeView, SpectatorSnapshot } from '../../src/shared/api';
 
@@ -53,7 +54,7 @@ test('Live polling refreshes all stacks and bets when an open stream stops advan
     }
     window.EventSource = TestEventSource as unknown as typeof EventSource;
   });
-  await page.route('**/api/overview', (route) => {
+  await mockOverview(page, (route) => {
     overviewRequests++;
     return route.fulfill({ json: { ...original, runtime: overviewRuntime } });
   });

@@ -1,3 +1,4 @@
+import { mockOverview, mockPerformance } from './dashboard-fixture';
 import { expect, test, type Page } from '@playwright/test';
 import type {
   FundingView,
@@ -83,7 +84,7 @@ async function fixture(page: Page) {
       writes.push(request.method());
   });
   await page.route('**/api/live', (route) => route.abort());
-  await page.route('**/api/overview', (route) => {
+  await mockOverview(page, (route) => {
     state.reads++;
     return route.fulfill({
       json: { ...original, runtime: state.runtime, runs: state.runs, recentHands: [] },
@@ -95,7 +96,7 @@ async function fixture(page: Page) {
     route.fulfill({ json: { session: null, decisions: [] } }),
   );
   await page.route('**/api/funding/events*', (route) => route.fulfill({ json: [] }));
-  await page.route('**/api/runs/*/performance', (route) => {
+  await mockPerformance(page, (route) => {
     const runId = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-2)!);
     return state.performanceFailed
       ? route.fulfill({ status: 503, json: { error: 'temporarily unavailable' } })

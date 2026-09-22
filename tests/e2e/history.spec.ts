@@ -1,3 +1,4 @@
+import { mockOverview } from './dashboard-fixture';
 import { expect, test } from '@playwright/test';
 import type { HandDetail, HandSummary, Overview, RunSummary } from '../../src/shared/api';
 
@@ -34,7 +35,7 @@ test('public completed history pages to older hands and runs with retry and isol
   let olderRequests = 0;
   let overviewReads = 0;
   let revealNewHands = false;
-  await page.route('**/api/overview', (route) => {
+  await mockOverview(page, (route) => {
     overviewReads++;
     return route.fulfill({
       json: {
@@ -148,7 +149,7 @@ test('changing public runs ignores a delayed response and never sends a legacy t
       sessionStorage.setItem('jev.console.token', 'test-access-token');
     }
   });
-  await page.route('**/api/overview', (route) => {
+  await mockOverview(page, (route) => {
     expect(route.request().headers().authorization).toBeUndefined();
     return route.fulfill({
       json: {

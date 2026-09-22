@@ -1,3 +1,4 @@
+import { mockOverview } from './dashboard-fixture';
 import { createServer, type ServerResponse } from 'node:http';
 import { expect, test, type Page } from '@playwright/test';
 import type { ChipMovement, SpectatorEvent, SpectatorSnapshot } from '../../src/shared/api';
@@ -206,7 +207,7 @@ test('disconnect retains the latest SSE table when an older HTTP request finishe
   const oldResponse = new Promise<void>((resolve) => {
     releaseOld = resolve;
   });
-  await page.route('**/api/overview', async (route) => {
+  await mockOverview(page, async (route) => {
     const read = ++reads;
     if (read === 2) await oldResponse;
     await route.fulfill({

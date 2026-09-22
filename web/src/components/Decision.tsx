@@ -1,3 +1,4 @@
+import { JsonDetails } from './JsonDetails';
 import type { DecisionView } from '../../../src/shared/api';
 import { dollars, number, time } from '../api';
 import { Status } from './UI';
@@ -79,40 +80,42 @@ export function Decision({ decision }: { decision: DecisionView }) {
           <strong>{decision.confidence === null ? '—' : decision.confidence.toFixed(3)}</strong>
         </div>
       </div>
-      <details className="context-details">
-        <summary>Actual Jev input</summary>
+      <JsonDetails title="Actual Jev input" value={decision.modelInput}>
         {decision.modelInput ? (
           <>
             <p className="annotation">
               Saved request state for this Jev response, with private fields removed. This is not
               reconstructed from the audit context.
             </p>
-            <pre>{JSON.stringify(decision.modelInput, null, 2)}</pre>
           </>
         ) : (
           <p className="annotation">
             The actual Jev request state is not available in this record.
           </p>
         )}
-      </details>
+      </JsonDetails>
       {decision.modelQuestions && (
-        <details className="context-details">
-          <summary>Decision instructions and candidate costs</summary>
+        <JsonDetails
+          className="context-details"
+          title="Decision instructions and candidate costs"
+          value={decision.modelQuestions}
+        >
           <p className="annotation">
             Saved questions sent with this Jev request, including its instructions and candidate
             criteria.
           </p>
-          <pre>{JSON.stringify(decision.modelQuestions, null, 2)}</pre>
-        </details>
+        </JsonDetails>
       )}
-      <details className="context-details">
-        <summary>Inspect decision context</summary>
+      <JsonDetails
+        className="context-details"
+        title="Inspect decision context"
+        value={decision.context}
+      >
         <p className="annotation">
           Information available at this decision’s cutoff. The record includes audit history;
           versions with a poker harness send a compact projection to Jev, excluding recent outcomes.
         </p>
-        <pre>{JSON.stringify(decision.context, null, 2)}</pre>
-      </details>
+      </JsonDetails>
     </div>
   );
 }

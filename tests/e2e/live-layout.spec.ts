@@ -1,3 +1,4 @@
+import { mockOverview } from './dashboard-fixture';
 import { expect, test, type Page } from '@playwright/test';
 import type { HandDetail, Overview } from '../../src/shared/api';
 
@@ -18,7 +19,7 @@ async function liveWithAnalysis(page: Page) {
     },
   };
   await page.route('**/api/live', (route) => route.abort());
-  await page.route('**/api/overview', (route) =>
+  await mockOverview(page, (route) =>
     route.fulfill({
       json: {
         ...overview,

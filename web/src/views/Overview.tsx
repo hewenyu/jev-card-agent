@@ -1,22 +1,22 @@
 import { useEffect, useState } from 'react';
-import type { RunSummary, RuntimeView } from '../../../src/shared/api';
+import type { PerformanceView, RunSummary, RuntimeView } from '../../../src/shared/api';
 import { number, signed, time } from '../api';
 import { Empty, ErrorNotice, Panel } from '../components/UI';
 import { PerformanceChart } from '../components/PerformanceChart';
-import { useRunPerformance } from '../performance';
 import { currentScorePoints, fundingIsStale } from '../season-score';
 import './overview.css';
 
 export function Overview({
   run,
-  revision,
+  data,
+  error,
   runtime,
 }: {
   run: RunSummary | undefined;
-  revision: number;
+  data: PerformanceView | null;
+  error: string | null;
   runtime: RuntimeView;
 }) {
-  const { data, error } = useRunPerformance(run?.id, revision);
   const [curve, setCurve] = useState<'profit' | 'score'>('profit');
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {

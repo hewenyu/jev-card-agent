@@ -1,3 +1,4 @@
+import { JsonDetails } from './JsonDetails';
 import type { DecisionView } from '../../../src/shared/api';
 import { number } from '../api';
 import { asRecord, finite, retryLabel, text } from './analysis-data';
@@ -167,10 +168,11 @@ export function DecisionAnalysis({ decision }: { decision: DecisionView }) {
           );
         })}
         {decision.routing && (
-          <details className="routing-details">
-            <summary>Inspect routing record</summary>
-            <pre>{JSON.stringify(decision.routing, null, 2)}</pre>
-          </details>
+          <JsonDetails
+            className="routing-details"
+            title="Inspect routing record"
+            value={decision.routing}
+          ></JsonDetails>
         )}
       </section>
     </div>

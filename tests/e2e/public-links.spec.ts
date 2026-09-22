@@ -1,3 +1,4 @@
+import { mockOverview } from './dashboard-fixture';
 import { expect, test, type Page } from '@playwright/test';
 import type { Overview, RuntimeView } from '../../src/shared/api';
 
@@ -23,7 +24,7 @@ async function fixture(page: Page) {
   };
   const state = { runtime, reads: 0 };
   await page.route('**/api/live', (route) => route.abort());
-  await page.route('**/api/overview', (route) => {
+  await mockOverview(page, (route) => {
     state.reads++;
     return route.fulfill({ json: { ...original, runtime: state.runtime } });
   });

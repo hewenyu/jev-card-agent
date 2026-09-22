@@ -3,7 +3,13 @@ import type { PokerState, Policy, ProviderMeter } from '../core/types.js';
 import { JevProvider } from '../policies/jev.js';
 import { BaselinePolicy } from '../policies/baseline.js';
 import { PokerRuntime } from '../runtime/runtime.js';
-import type { Overview, RuntimeView, StrategyName, TableView } from '../shared/api.js';
+import type {
+  DashboardOverview,
+  Overview,
+  RuntimeView,
+  StrategyName,
+  TableView,
+} from '../shared/api.js';
 import { Store } from '../storage/store.js';
 import { Queries } from '../storage/queries.js';
 import { LedgerMeter } from '../storage/provider-meter.js';
@@ -91,6 +97,7 @@ export class Controller {
   readonly asyncResearch: AsyncResearchService;
   readonly researchMonitor: ResearchMonitor;
   private researchTimer?: ReturnType<typeof setInterval>;
+  private pendingResearchRefresh?: ReturnType<typeof setImmediate>;
   runtime: PokerRuntime | null = null;
   private strategy: StrategyName = 'jev';
   private starting = false;
@@ -128,15 +135,22 @@ export class Controller {
     );
     store.adviceSource = this.asyncResearch;
     this.research.on('update', () => {
-      this.refreshResearch();
-      if (!this.closing) this.spectator.update(this.view());
+      this.scheduleResearchRefresh();
     });
-    this.asyncResearch.on('update', () => this.refreshResearch());
+    this.asyncResearch.on('update', () => this.scheduleResearchRefresh());
     void Promise.all([this.research.start(), this.asyncResearch.start()])
       .then(() => this.refreshResearch())
       .catch(() => this.researchMonitor.fail());
-    this.researchTimer = setInterval(() => this.refreshResearch(), 2000);
+    this.researchTimer = setInterval(() => this.scheduleResearchRefresh(), 2000);
     this.researchTimer.unref();
+  }
+  private scheduleResearchRefresh(): void {
+    if (this.closing || this.pendingResearchRefresh) return;
+    this.pendingResearchRefresh = setImmediate(() => {
+      this.pendingResearchRefresh = undefined;
+      this.refreshResearch();
+      if (!this.closing) this.spectator.update(this.view());
+    });
   }
   private refreshResearch(): void {
     if (this.closing) return;
@@ -150,6 +164,8 @@ export class Controller {
   async pauseResearch(): Promise<void> {
     clearInterval(this.researchTimer);
     this.researchTimer = undefined;
+    clearImmediate(this.pendingResearchRefresh);
+    this.pendingResearchRefresh = undefined;
     await Promise.all([this.research.stop(), this.asyncResearch.stop()]);
   }
   async restartResearch(): Promise<void> {
@@ -161,7 +177,7 @@ export class Controller {
     }
     this.refreshResearch();
     if (!this.researchTimer) {
-      this.researchTimer = setInterval(() => this.refreshResearch(), 2000);
+      this.researchTimer = setInterval(() => this.scheduleResearchRefresh(), 2000);
       this.researchTimer.unref();
     }
   }
@@ -316,7 +332,7 @@ export class Controller {
     return {
       running,
       research: this.research?.status(),
-      asyncResearch: this.researchMonitor?.current().status,
+      asyncResearch: this.researchMonitor?.status(),
       ...(status?.funding ? { funding: status.funding } : {}),
       decision: status?.decision ?? null,
       status: this.starting
@@ -334,6 +350,18 @@ export class Controller {
         this.controllerError ??
         status?.lastError ??
         (blocked ? `Model decision failed; bot paused: ${blocked.reason}` : null),
+    };
+  }
+  dashboardOverview(): DashboardOverview {
+    return {
+      runtime: this.view(),
+      runs: this.queries.runs({ limit: 100 }),
+      capabilities: {
+        canControl: !this.config.readOnlyDemo,
+        liveConfigured: !!this.config.openPokerApiKey,
+        jevConfigured: !!this.config.jevApiKey,
+        reasoningConfigured: !!this.config.reasoningApiKey,
+      },
     };
   }
   overview(): Overview {

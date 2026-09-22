@@ -1,5 +1,6 @@
 import type { PerformanceView } from '../shared/api.js';
 import type { Store } from './store.js';
+import { cachedRead } from './read-cache.js';
 
 const MAX_POINTS = 500;
 
@@ -14,6 +15,12 @@ function sampleIndices(count: number): Set<number> {
 
 /** Read complete Run history without applying the list endpoints' pagination limits. */
 export function runPerformance(store: Pick<Store, 'db'>, runId: string): PerformanceView | null {
+  return cachedRead(store.db, `performance:${runId}`, ['runs', 'hands', 'funding_events'], () =>
+    calculateRunPerformance(store, runId),
+  );
+}
+
+function calculateRunPerformance(store: Pick<Store, 'db'>, runId: string): PerformanceView | null {
   const { db } = store;
   if (!db.prepare('SELECT id FROM runs WHERE id=?').get(runId)) return null;
   const counts = db
