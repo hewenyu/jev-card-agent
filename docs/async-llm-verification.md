@@ -1,12 +1,12 @@
 # 1.3.0 asynchronous research verification
 
-Development baseline: `12ab7a3508fff79893dd834e94cde686284f20fb` / 1.2.4. Target: 1.3.0 on `feat/jev-async-llm-research`. The accepted [v2 plan](async-llm-plan-v2.md) and [implementation contract](async-llm.md) were written before development. Remote master was checked and still matches the baseline.
+Development baseline: `12ab7a3508fff79893dd834e94cde686284f20fb` / 1.2.4. Target: 1.3.0 on `feat/jev-async-llm-research`. The accepted [v2 plan](async-llm-plan-v2.md) and [implementation contract](async-llm.md) were written before development. This section records pre-deployment development checks. Subsequent real provider calls and production activation are recorded in the [DeepSeek activation report](deepseek-live-activation.md).
 
 ## Evidence categories
 
 - Engineering: controlled end-to-end proposal → validation → operator approval → publication → immutable next-hand pin → actual Jev adapter request → local WebSocket action ACK. Off/shadow request identity and live consumption are tested separately.
-- Provider: no new real supplier calls made for this iteration. Dedicated DeepSeek and configurable standard transports were exercised with controlled HTTP responses; real diagnostics require an explicit CLI invocation.
-- Arena: no new account connection, hand, live activation or production deployment performed. The public website remains the prior deployment. No profitability result is claimed.
+- Provider, at development sign-off: no new real supplier calls made for this iteration. Dedicated DeepSeek and configurable standard transports were exercised with controlled HTTP responses; real diagnostics require an explicit CLI invocation.
+- Arena, at development sign-off: no new account connection, hand, live activation or production deployment performed. The public website still used the prior deployment at that point. No profitability result is claimed.
 
 ## Automated checks
 

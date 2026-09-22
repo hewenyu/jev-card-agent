@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { ResearchBatchV2, ResearchModelMetadata } from '../research/contracts.js';
+import { ADVICE_LIMITS } from './advice-selector.js';
 import type {
   AdviceAudit,
   AdviceBundle,
@@ -20,10 +21,9 @@ import {
   validateAdviceBundle,
 } from './advice-validator.js';
 
-export const APPROVED_RECIPE_ID = 'opponent-evidence-v1';
-export const RECIPE_GUIDANCE =
-  'Use observed frequencies only in this scope; do not infer hidden cards or bluff rates.';
-export const RECIPE_LIMITATION = 'Selected actions and unshown cards limit interpretation.';
+export const APPROVED_RECIPE_ID = 'opponent-evidence-v2';
+export const RECIPE_GUIDANCE = 'Use within scope; infer neither hidden cards nor bluff rates.';
+export const RECIPE_LIMITATION = 'Limited, selected samples.';
 const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_EVIDENCE_AGE_MS = 7 * MAX_TTL_MS;
 interface PublishOptions {
@@ -340,15 +340,29 @@ export class AdviceStore {
       scope: structuredClone(proposal.scope),
       priority: options.priority ?? 0,
       hypothesis:
-        source === 'approved_recipe'
-          ? 'Frequencies describe observed opportunities only.'
-          : proposal.hypothesis,
+        source === 'approved_recipe' ? 'Conditional action frequencies only.' : proposal.hypothesis,
       guidance: source === 'approved_recipe' ? RECIPE_GUIDANCE : proposal.suggestedGuidance,
       limitations: source === 'approved_recipe' ? [RECIPE_LIMITATION] : proposal.limitations,
       metrics: record.batch.metrics.filter((metric) => proposal.metricRefs.includes(metric.id)),
       invalidateWhen: proposal.invalidateWhen,
       approvalSource: source,
     };
+    if (source === 'approved_recipe') {
+      // Match the selector's Unicode character accounting before making an immutable publication.
+      // Preserve all verified metrics; an oversized proposal remains pending for independent review.
+      const characters = [
+        ...[
+          content.hypothesis,
+          content.guidance,
+          ...content.limitations,
+          ...content.metrics.map(
+            (metric) => `${metric.name}: ${metric.numerator}/${metric.denominator}`,
+          ),
+        ].join(''),
+      ].length;
+      if (characters > ADVICE_LIMITS.itemCharacters)
+        throw new Error('Approved recipe exceeds live advice character limit');
+    }
     const publication = { ...content, contentHash: hashPublication(content) };
     this.db
       .prepare(

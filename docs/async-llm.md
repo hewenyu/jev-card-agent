@@ -1,6 +1,6 @@
 # Async LLM research / 异步 LLM 研究
 
-Application release **1.3.0**, development baseline `12ab7a3508fff79893dd834e94cde686284f20fb` (1.2.4), branch `feat/jev-async-llm-research`. The [accepted v2 plan](async-llm-plan-v2.md) was copied and the implementation contract written before coding. Actual checks and limits are in [verification](async-llm-verification.md).
+Application release **1.3.1**, development baseline `12ab7a3508fff79893dd834e94cde686284f20fb` (1.2.4), branch `feat/jev-async-llm-research`. The [accepted v2 plan](async-llm-plan-v2.md) was copied and the implementation contract written before coding. Actual checks and limits are in [verification](async-llm-verification.md).
 
 ## Runtime contract
 
@@ -55,7 +55,7 @@ LLM_ADVICE_MAX_ITEMS=3
 
 Concurrency is intentionally limited to one in this release. Queue, evidence and retry limits constrain work; no cumulative cost limit blocks Jev. Research timeouts are independent of live action deadlines.
 
-`LLM_RESEARCH_THINKING` controls the dedicated DeepSeek dialect: disabled omits effort, enabled uses its supported thinking parameters. Standard Messages uses adaptive thinking and standard Responses uses its existing reasoning-effort contract; this setting does not disable thinking on those transports. Requested and actual models are recorded and mismatches rejected. Controlled adapters are tested; this release has not run a new real supplier probe.
+`LLM_RESEARCH_THINKING` controls the dedicated DeepSeek dialect: disabled omits effort, enabled uses its supported thinking parameters. Standard Messages uses adaptive thinking and standard Responses uses its existing reasoning-effort contract; this setting does not disable thinking on those transports. Requested and actual models are recorded and mismatches rejected. The canonical `deepseek-flash` API model has also passed a real dedicated Messages probe; see [production activation evidence](deepseek-live-activation.md).
 
 Optional `LLM_RESEARCH_INPUT_PRICE_PER_MILLION`, `LLM_RESEARCH_OUTPUT_PRICE_PER_MILLION`, `LLM_RESEARCH_CACHE_READ_PRICE_PER_MILLION` and `LLM_RESEARCH_CACHE_CREATION_PRICE_PER_MILLION` produce explicit estimates. Empty prices remain unknown. Unpriced cache creation or a mismatched actual model keeps the corresponding cost unknown. Usage, price uncertainty and retries are recorded separately from Arena Run billing.
 
@@ -86,7 +86,7 @@ npm run research -- --op mode --mode off --actor owner --note "Disable new resea
 
 Approval requires the fixed evidence/scope/injection review checks plus every scenario requested by the proposal. The operator supplies these confirmations; a model response cannot create them. Publishing uses explicit expected revision (CAS), separate publication sequence and a TTL no greater than 24 hours. Evidence must be younger than seven days. A newer unrelated statistics watermark does not invalidate otherwise compatible advice.
 
-For `approved_recipe`, first use `--op approve-recipe --actor owner --note "Reviewed opponent-evidence-v1"`, then configure `LLM_ADVICE_PUBLISH_POLICY=approved_recipe`. Only the built-in bounded opponent-evidence template may auto-publish; generated free-text strategy is not used by that template. New global guidance remains manual. Latest trustworthy count snapshots can invalidate an old suggestion without waiting for another LLM response, and become part of the next immutable bundle.
+For `approved_recipe`, first use `--op approve-recipe --actor owner --note "Reviewed opponent-evidence-v2"`, then configure `LLM_ADVICE_PUBLISH_POLICY=approved_recipe`. The v2 template fits four street metrics within the unchanged 300-character item limit and requires its own operator approval; v1 approvals and archived publications are preserved. Oversized recipe proposals remain pending. Only the built-in bounded opponent-evidence template may auto-publish; generated free-text strategy is not used by that template. New global guidance remains manual. Latest trustworthy count snapshots can invalidate an old suggestion without waiting for another LLM response, and become part of the next immutable bundle.
 
 Advice selection uses supported streets, active-player count, original dealt positional roster, stack/bet buckets and current opponent keys. It selects at most 1–3 suggestions (default three), up to 300 text characters per suggestion/900 total and 4,096 serialized UTF-8 bytes. Excess advice is omitted with a reason before necessary current facts. Long analysis, hashes and proposal IDs stay out of the model projection; scope targets are rendered as current seats. These are character/byte limits, not token estimates.
 

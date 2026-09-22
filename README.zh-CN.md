@@ -51,6 +51,8 @@ flowchart LR
 
 **1.3.0** 新增可选的[异步 LLM 研究](docs/async-llm.md)。`BOT_STRATEGY=jev` 保持由 Jev 选择动作，`ASYNC_LLM_MODE=off` 仍是默认配置。shadow 研究不改变实际 Jev 请求；明确启用 live 后，只有已批准、适用的短建议才能进入下一手固定知识，评测标为“Jev + 异步 LLM 辅助”。旧版同步 `jev-reasoning` 实验独立保留。
 
+**1.3.1** 通过需单独批准的 `opponent-evidence-v2` 模板修复四街摘要超过建议输入上限的问题。在线演示使用 `deepseek-flash` 做异步研究、关闭思考；每次动作仍由 Jev 选择。详见[模型与启用验证](docs/deepseek-live-activation.md)。
+
 每手建立持久 session。参考 Pi 将历史存储与模型上下文分开的设计，SQLite 保留全部事件和决策，请求使用精简投影，移除无关近期输赢、重复标识和重复上下文。长期对手记忆每人最多取 200 次已完成交手，结算与接收时间都必须早于当前决策；公开摊牌与按街统计保留来源及样本限制，缺少下注价格时不猜填。
 
 成功的 Jev 请求保存原请求及 schema 解析后的 `model`、`usage`、`answers`，并非逐字保存 HTTP 响应。失败调用保留 attempts、状态和可取得的部分诊断，不能假定拥有完整失败响应。
