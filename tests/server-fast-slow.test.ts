@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/server/app.js';
 import { loadConfig } from '../src/server/config.js';
 import { Store } from '../src/storage/store.js';
@@ -9,6 +9,53 @@ import type { AuditView, SlowLoopStatus } from '../src/knowledge/types.js';
 import type { DecisionView } from '../src/shared/api.js';
 
 describe('public asynchronous decision evidence', () => {
+  it('publishes worker status in both anonymous overview and SSE snapshots without internal fields or errors', async () => {
+    const store = new Store(':memory:');
+    const app = await buildApp(
+      {
+        ...loadConfig({}, true),
+        publicHistory: true,
+        apiToken: 'test-only-private-control-token-long',
+      },
+      { store },
+    );
+    try {
+      const status = {
+        enabled: true,
+        running: true,
+        lastCompletedAt: '2026-01-01T00:00:00.000Z',
+        eventCursor: 50,
+        decisionCursor: 30,
+        pendingHands: 4,
+        pendingAudits: 2,
+        latestVersion: 'poker-knowledge-v1-e50',
+        error: 'private worker diagnostic',
+        privateEnv: 'private worker credential',
+      };
+      vi.spyOn(app.controller.research, 'status').mockReturnValue(status);
+      const response = await app.inject('/api/overview');
+      const research = response.json().runtime.research;
+      expect(research).toEqual({
+        enabled: true,
+        running: true,
+        lastCompletedAt: status.lastCompletedAt,
+        eventCursor: 50,
+        decisionCursor: 30,
+        pendingHands: 4,
+        pendingAudits: 2,
+        latestVersion: status.latestVersion,
+        error: 'Knowledge worker unavailable',
+      });
+      expect(response.body).not.toContain('private worker');
+      app.controller.spectator.update(app.controller.view());
+      expect(app.controller.spectator.current().runtime.research).toEqual(research);
+      status.error = '';
+      expect((await app.inject('/api/overview')).json().runtime.research.error).toBeNull();
+    } finally {
+      await app.close();
+      store.close();
+    }
+  });
   it('adds audit and timings without rewriting the saved model request or frozen context', async () => {
     const store = new Store(':memory:');
     const app = await buildApp(

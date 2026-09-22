@@ -285,3 +285,9 @@ Apple M4、Node.js 24.13.0；源库为冻结的历史只读副本，测量前后
 这些数值不包括 session 查询、事件与动作落盘、网络或 ACK；不是完整出牌延迟，也不能代表服务器硬件。第二行是相同新版准备工作加回旧审计采样的隔离对比，不是完整旧版运行时基准。积压组含首次绑定，与第一行不能直接相减作为线程额外开销。线程期间未出现错误，结算积压从1,258手降到606手，审计积压从515降到0；原始历史不被删除。
 
 The pre-release evidence establishes isolated background work, recoverable hand knowledge and auditable input/timing separation. It does not establish an end-to-end latency target or profitable play. Runtime metrics distinguish provider latency from local receipt-to-send and acknowledgement time; production results must be reported with the deployed revision and sample size.
+
+### 1.2.1 公开状态修复 / Public worker status
+
+1.2.0 上线检查发现匿名接口的 runtime 白名单漏掉 `research`，因此慢线程虽然正常工作，公开页面无法显示其状态。1.2.1 显式公开启用状态、最近批次、游标、积压和知识版本；内部错误统一显示为固定提示，不传递原始错误或额外字段。新增回归同时检查匿名 Overview 和 SSE 使用的公开快照，并验证内部字段与错误内容不会泄露。该修复不改变 Jev 输入、动作选择或知识统计。
+
+Production inspection found that the public runtime projection omitted worker status. Version 1.2.1 exposes an explicit allowlist for Overview and SSE snapshots, while replacing internal errors with a fixed public message. Decision behavior and knowledge computation are unchanged.

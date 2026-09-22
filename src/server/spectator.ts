@@ -11,6 +11,21 @@ export function publicRuntime(view: RuntimeView): RuntimeView {
     runId: view.runId,
     strategy: view.strategy,
     error: null,
+    ...(view.research
+      ? {
+          research: {
+            enabled: view.research.enabled,
+            running: view.research.running,
+            lastCompletedAt: view.research.lastCompletedAt,
+            eventCursor: view.research.eventCursor,
+            decisionCursor: view.research.decisionCursor,
+            pendingHands: view.research.pendingHands,
+            pendingAudits: view.research.pendingAudits,
+            latestVersion: view.research.latestVersion,
+            error: view.research.error ? 'Knowledge worker unavailable' : null,
+          },
+        }
+      : {}),
     ...(view.funding
       ? {
           funding: {
