@@ -1,3 +1,4 @@
+import { applyAdvice } from '../core/advice.js';
 import { randomUUID } from 'node:crypto';
 import { buildCandidates, buildContext, validateCandidate } from '../core/index.js';
 import { chooseFallback } from '../policies/baseline.js';
@@ -90,6 +91,7 @@ export async function decide(
       snapshot,
     };
   }
+  if (knowledge?.advice) applyAdvice(context, knowledge.advice);
   timing.preparationMs = Math.max(0, Date.now() - Date.parse(timing.receivedAt));
   let analysisProgress: DecisionProgress | undefined;
   const progressAttempts = new Map<string, ProviderAttempt>();

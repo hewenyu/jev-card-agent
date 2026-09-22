@@ -240,6 +240,7 @@ function decisionView(row: Row): DecisionView {
     context: redact(json(row.context, {})) as Record<string, unknown>,
     ...(modelInput ? { modelInput } : {}),
     ...(modelQuestions ? { modelQuestions } : {}),
+    ...(typeof proposal.requestHash === 'string' ? { requestHash: proposal.requestHash } : {}),
     candidates: json<Candidate[]>(row.candidates, []).map((c) => ({
       id: c.id,
       label: c.label,

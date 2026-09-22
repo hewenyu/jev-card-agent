@@ -13,6 +13,11 @@ export interface SlowLoopOptions {
 /** Only paths and numeric settings cross the worker boundary; environment and credentials do not. */
 export class SlowLoopService extends EventEmitter {
   private worker: Worker | null = null;
+  private stopped = true;
+  private stopping: Promise<void> | null = null;
+  private restartTimer: ReturnType<typeof setTimeout> | undefined;
+  private generation = 0;
+  private failures = 0;
   private reader: KnowledgeStore | null = null;
   private snapshot = baselineSnapshot();
   private current: SlowLoopStatus;
@@ -35,8 +40,15 @@ export class SlowLoopService extends EventEmitter {
     };
   }
   async start(): Promise<void> {
+    if (this.stopping) await this.stopping;
     this.openReader();
-    if (!this.current.enabled || this.worker) return;
+    this.stopped = false;
+    if (!this.current.enabled || this.worker || this.restartTimer) return;
+    this.launch();
+  }
+  private launch(): void {
+    if (this.stopped || this.worker) return;
+    const generation = ++this.generation;
     try {
       // Existing knowledge is safe to load before worker startup; no raw database writes occur here.
       this.openReader();
@@ -51,6 +63,17 @@ export class SlowLoopService extends EventEmitter {
         : new Worker(entry, { env: {}, execArgv: [], workerData: this.workerOptions() });
       this.worker = worker;
       this.current = { ...this.current, running: true, error: null };
+      let failed = false;
+      const fail = () => {
+        if (failed || this.stopped || generation !== this.generation) return;
+        failed = true;
+        this.current = {
+          ...this.current,
+          running: false,
+          error: 'Slow loop worker failed; decisions continue with published knowledge.',
+        };
+        this.emit('update');
+      };
       worker.on(
         'message',
         (message: {
@@ -59,9 +82,14 @@ export class SlowLoopService extends EventEmitter {
           snapshot?: KnowledgeSnapshot;
           error?: string;
         }) => {
-          if (message.type === 'progress' && message.status && message.snapshot) {
+          if (this.stopped || generation !== this.generation) return;
+          if (message.type === 'progress' && message.status) {
+            this.failures = 0;
             this.current = message.status;
-            if (message.snapshot.evidenceEventId >= this.snapshot.evidenceEventId)
+            if (
+              message.snapshot &&
+              message.snapshot.evidenceEventId >= this.snapshot.evidenceEventId
+            )
               this.snapshot = message.snapshot;
             this.openReader();
           } else if (message.type === 'failure')
@@ -72,22 +100,15 @@ export class SlowLoopService extends EventEmitter {
           this.emit('update');
         },
       );
-      worker.on('error', () => {
-        this.current = {
-          ...this.current,
-          running: false,
-          error: 'Slow loop worker failed; decisions continue with published knowledge.',
-        };
-        this.emit('update');
-      });
-      worker.on('exit', (code) => {
+      worker.on('error', fail);
+      worker.on('exit', () => {
+        if (generation !== this.generation) return;
         if (this.worker === worker) this.worker = null;
-        this.current = {
-          ...this.current,
-          running: false,
-          error: code ? `Slow worker exited ${code}` : this.current.error,
-        };
-        this.emit('update');
+        this.current = { ...this.current, running: false };
+        if (!this.stopped) {
+          fail();
+          this.scheduleRestart();
+        }
       });
     } catch {
       this.current = {
@@ -95,8 +116,18 @@ export class SlowLoopService extends EventEmitter {
         running: false,
         error: 'Slow worker could not start; decisions continue with published knowledge.',
       };
+      this.scheduleRestart();
       this.emit('update');
     }
+  }
+  private scheduleRestart(): void {
+    if (this.stopped || this.restartTimer) return;
+    const delay = Math.min(30000, 250 * 2 ** Math.min(this.failures++, 7));
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = undefined;
+      this.launch();
+    }, delay);
+    this.restartTimer.unref();
   }
   private workerOptions() {
     return {
@@ -146,6 +177,18 @@ export class SlowLoopService extends EventEmitter {
     }
   }
   async stop(): Promise<void> {
+    if (this.stopping) return this.stopping;
+    this.stopping = this.stopWorker();
+    try {
+      await this.stopping;
+    } finally {
+      this.stopping = null;
+    }
+  }
+  private async stopWorker(): Promise<void> {
+    this.stopped = true;
+    clearTimeout(this.restartTimer);
+    this.restartTimer = undefined;
     const worker = this.worker;
     if (worker) {
       await new Promise<void>((resolve) => {
@@ -172,6 +215,7 @@ export class SlowLoopService extends EventEmitter {
         }
       });
     }
+    this.generation++;
     this.worker = null;
     this.reader?.close();
     this.reader = null;

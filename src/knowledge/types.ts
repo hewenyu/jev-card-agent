@@ -1,5 +1,6 @@
 import type { OpponentMemory, BettingStreet } from '../core/opponent-memory.js';
 import type { UniformEquity } from '../core/poker-cards.js';
+import type { AdviceBundle, AsyncLlmMode } from './advice-types.js';
 
 export interface StrategyCard {
   id: string;
@@ -21,6 +22,11 @@ export interface KnowledgeSnapshot {
   validation: string[];
 }
 export interface KnowledgePin {
+  bindingSchema?: 'hand-knowledge-v2';
+  bundleHash?: string;
+  bundleAvailableAt?: string;
+  bundlePublicationSeq?: number;
+  asyncLlmMode?: AsyncLlmMode;
   tableId: string;
   handId: string;
   knowledgeVersion: string;
@@ -35,6 +41,7 @@ export interface KnowledgePin {
 export interface KnowledgeBinding {
   pin: KnowledgePin;
   snapshot: KnowledgeSnapshot;
+  advice?: AdviceBundle;
 }
 export interface DecisionKnowledge {
   pin: KnowledgePin;

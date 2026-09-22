@@ -1,5 +1,7 @@
 # Fast decisions and asynchronous knowledge / 快慢双循环
 
+> 1.3.0 adds the independently configured async LLM advice layer; see [async research](async-llm.md) for off/shadow/live, immutable archives, private publication and three-database backup. Earlier deterministic-only descriptions below document the retained statistics path.
+
 ## Design contract / 设计合同
 
 This document is written before implementation. Acceptance results will be recorded separately in `verification.md`; the design is not a claim of measured latency or profitability.

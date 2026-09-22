@@ -1,0 +1,313 @@
+{
+  "generatedAt": "2026-09-22T06:53:33.795Z",
+  "environment": {
+    "platform": "darwin",
+    "release": "25.3.0",
+    "cpu": "Apple M4",
+    "logicalCpus": 10,
+    "node": "v24.13.0"
+  },
+  "limitations": [
+    "Controlled localhost WebSocket and mocked Jev fetch; not real Arena or provider latency.",
+    "Thirty sequential hands per scenario, no statistical claim of equal performance.",
+    "Runtime uses the existing in-memory WebSocket fixture store; raw SQLite backs the separate research worker only.",
+    "State preparation and facts are included in preparationMs; they are not independently timed.",
+    "No deployment or paid calls."
+  ],
+  "scenarios": [
+    {
+      "scenario": "off",
+      "samples": 30,
+      "researchRequests": 0,
+      "bodyHashesEqual": true,
+      "totalMs": 55.90941700000002,
+      "metrics": {
+        "preparationMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 6
+        },
+        "knowledgeMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "providerMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 2
+        },
+        "persistenceMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "receiptToSendMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 8
+        },
+        "ackMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 2
+        }
+      }
+    },
+    {
+      "scenario": "normal",
+      "samples": 30,
+      "researchRequests": 1,
+      "bodyHashesEqual": true,
+      "totalMs": 34.13062500000001,
+      "metrics": {
+        "preparationMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "knowledgeMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "providerMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        },
+        "persistenceMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "receiptToSendMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        },
+        "ackMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 2
+        }
+      }
+    },
+    {
+      "scenario": "hang",
+      "samples": 30,
+      "researchRequests": 1,
+      "bodyHashesEqual": true,
+      "totalMs": 34.017375000000015,
+      "metrics": {
+        "preparationMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "knowledgeMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "providerMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        },
+        "persistenceMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "receiptToSendMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        },
+        "ackMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        }
+      }
+    },
+    {
+      "scenario": "rate_limit",
+      "samples": 30,
+      "researchRequests": 1,
+      "bodyHashesEqual": true,
+      "totalMs": 32.225374999999985,
+      "metrics": {
+        "preparationMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        },
+        "knowledgeMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "providerMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        },
+        "persistenceMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "receiptToSendMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        },
+        "ackMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        }
+      }
+    },
+    {
+      "scenario": "queue_full",
+      "samples": 30,
+      "researchRequests": 1,
+      "bodyHashesEqual": true,
+      "totalMs": 32.56045900000004,
+      "metrics": {
+        "preparationMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        },
+        "knowledgeMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "providerMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        },
+        "persistenceMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "receiptToSendMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        },
+        "ackMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 2
+        }
+      }
+    },
+    {
+      "scenario": "worker_crash",
+      "samples": 30,
+      "researchRequests": 1,
+      "bodyHashesEqual": true,
+      "totalMs": 22.30608300000017,
+      "metrics": {
+        "preparationMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        },
+        "knowledgeMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "providerMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        },
+        "persistenceMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "receiptToSendMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        },
+        "ackMs": {
+          "samples": 30,
+          "p50": 0,
+          "p95": 1,
+          "p99": 1
+        }
+      }
+    }
+  ],
+  "archive": {
+    "generatedAt": "2026-09-22T06:58:49.130Z",
+    "environment": {
+      "platform": "darwin",
+      "release": "25.3.0",
+      "cpu": "Apple M4",
+      "node": "v24.13.0"
+    },
+    "snapshotBytes": 4374974,
+    "opponents": 256,
+    "firstArchiveMs": 33.666875000000005,
+    "unchangedControllerRefresh": {
+      "samples": 60,
+      "p50": 0.028165999999998803,
+      "p95": 0.05041700000003857,
+      "p99": 0.08629200000001447
+    },
+    "limitations": [
+      "Controlled in-memory SQLite Controller; real immutable archive SQL/validation/hash path executes.",
+      "Source services return fixed synthetic snapshots; real provider/database read time is excluded.",
+      "Initial changed archive cost remains synchronous and measured separately; this is not production P95.",
+      "No real Arena or paid API calls."
+    ]
+  }
+}

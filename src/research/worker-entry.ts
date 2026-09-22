@@ -8,12 +8,15 @@ const options = workerData as {
 };
 const worker = new StatsWorker(options.rawPath, options.derivedPath, options.batchSize);
 let stopped = false;
+let sentVersion: string | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
 function tick() {
   if (stopped) return;
   try {
     const status = worker.tick();
-    parentPort?.postMessage({ type: 'progress', status, snapshot: worker.knowledge.latest() });
+    const snapshot = status.latestVersion !== sentVersion ? worker.knowledge.latest() : undefined;
+    parentPort?.postMessage({ type: 'progress', status, ...(snapshot ? { snapshot } : {}) });
+    sentVersion = status.latestVersion;
   } catch (error) {
     parentPort?.postMessage({
       type: 'failure',

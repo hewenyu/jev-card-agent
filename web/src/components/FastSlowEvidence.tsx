@@ -1,6 +1,7 @@
 import type { DecisionView } from '../../../src/shared/api';
 import { number } from '../api';
 import './fast-slow.css';
+import { AdviceEvidence } from './AdviceEvidence';
 
 function stamp(value: string | null | undefined): string {
   return value ?? 'Not recorded';
@@ -95,6 +96,7 @@ export function FastSlowEvidence({ decision }: { decision: DecisionView }) {
       ) : (
         <p className="annotation">Knowledge pin not recorded for this historical decision.</p>
       )}
+      <AdviceEvidence decision={decision} />
       <div className="fast-slow-audit" aria-label="Asynchronous audit">
         <h4>Asynchronous audit · excluded from Jev input</h4>
         <p className="fast-slow-audit-state" role="status">

@@ -1,0 +1,31 @@
+{
+  "generatedAt": "2026-09-22T07:13:40.339Z",
+  "kind": "controlled_vertical_acceptance",
+  "completedEvidenceHands": 12,
+  "evidenceEventWatermark": 24,
+  "evidenceSnapshotHash": "410eab2489209b75f91aaf3f146153c559714e6606b642c50b988b492fa0a7b0",
+  "batchId": "44917e65-1269-4c79-a955-8d8157f763e6",
+  "proposalId": "22a68732-0e87-4503-8c25-ac042d9c6d8a",
+  "publicationId": "55eaceef-72df-40e5-a6f1-e467234b1f25",
+  "bundleHash": "220455fed2f7e9f142d10f5739c42bec91efe6baddfc54972ef4d632fdd328eb",
+  "adviceBundleHash": "09e22e794eea7909f95f45235f9b8181ec48aa26ef3fa43fa6fd75a5fe7af531",
+  "requestHash": "0d162d7d951b08f816370067d74cb45804da465f032acbb2cf4cc23d1412c41d",
+  "researchCalls": 1,
+  "jevCalls": 2,
+  "jevCallsPerAction": 1,
+  "assertions": {
+    "rawEvidenceBuilder": true,
+    "allOutcomeStrata": true,
+    "actualResearchTransport": true,
+    "manualApprovalRequired": true,
+    "currentHandUnchanged": true,
+    "archivedBeforeNextHand": true,
+    "actualNextJevRequestAdopted": true,
+    "onlyJevActions": true
+  },
+  "limitations": [
+    "All historical hands, reviewer and model responses are controlled fixtures.",
+    "No paid API call, public Arena connection, deployment or profitability evaluation.",
+    "This artifact contains whitelisted synthetic identifiers and hashes, not credentials or raw prompts."
+  ]
+}

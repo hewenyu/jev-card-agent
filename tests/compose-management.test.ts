@@ -260,6 +260,19 @@ describe('manual Compose management', () => {
     expect(stderr).toContain('unexpected container path');
   });
 
+  it('retains the research approval and usage database in the Compose backup set', () => {
+    const test = fixture();
+    const researchPath = backupPath.replace('/jev-', '/research-');
+    const { status, calls } = test.run('backup', {
+      TEST_BACKUP_PATH: `${researchPath}\n${backupPath}`,
+    });
+    expect(status).toBe(0);
+    expect(calls).toContainEqual(['compose', 'cp', `app:${researchPath}`, 'data/backups/']);
+    expect(
+      statSync(join(test.directory, 'data/backups', basename(researchPath))).mode & 0o777,
+    ).toBe(0o600);
+  });
+
   it('does not report success if the backup cannot be copied', () => {
     const { status, stdout } = fixture().run('backup', { FAIL_COPY: '1' });
     expect(status).toBe(37);

@@ -17,8 +17,15 @@ import { sessionTurns } from './session.js';
 import { getOpponentMemory, initializeOpponentMemory } from './opponent-memory.js';
 import { STRATEGY_VERSIONS } from '../core/index.js';
 import type { FundingEventView } from '../shared/api.js';
-import { initializeDecisionEvidence, pinKnowledge, type KnowledgeSource } from './knowledge.js';
+import {
+  initializeDecisionEvidence,
+  pinKnowledge,
+  refreshKnowledge,
+  type AdviceSource,
+  type KnowledgeSource,
+} from './knowledge.js';
 import type { DecisionTiming } from '../runtime/timing.js';
+import { KnowledgeIntegrityError } from './knowledge-archive.js';
 import type { KnowledgeBinding } from '../knowledge/types.js';
 import {
   initializeFunding,
@@ -31,7 +38,9 @@ export class Store implements RuntimeStore {
   readonly db: DatabaseSync;
   readonly owner = randomUUID();
   knowledgeSource?: KnowledgeSource;
+  adviceSource?: AdviceSource;
   private handKnowledge: KnowledgeBinding | null = null;
+  private archivedKnowledgeKey?: string;
   constructor(
     readonly filename: string,
     readonly model = 'jev-1.13.0',
@@ -103,10 +112,33 @@ export class Store implements RuntimeStore {
       this.handKnowledge?.pin.handId === state.handId
     )
       return this.handKnowledge;
-    this.handKnowledge = freezeEvidence(
-      pinKnowledge(this.db, state, observedAt, this.knowledgeSource),
-    );
+    try {
+      this.handKnowledge = freezeEvidence(
+        pinKnowledge(this.db, state, observedAt, this.knowledgeSource, this.adviceSource),
+      );
+    } catch (error) {
+      if (error instanceof KnowledgeIntegrityError) {
+        const run = this.db.prepare("SELECT value FROM meta WHERE key='active_run'").get();
+        this.saveDecisionBlock({
+          runId: String(run?.value ?? 'unavailable'),
+          decisionId: randomUUID(),
+          reason: error.message,
+          createdAt: observedAt,
+        });
+      }
+      throw error;
+    }
     return this.handKnowledge;
+  }
+  refreshKnowledge(at = new Date().toISOString()): void {
+    if (this.adviceSource)
+      this.archivedKnowledgeKey = refreshKnowledge(
+        this.db,
+        this.knowledgeSource,
+        this.adviceSource,
+        at,
+        this.archivedKnowledgeKey,
+      );
   }
   saveDecisionTiming(decisionId: string, timing: DecisionTiming): void {
     this.db
