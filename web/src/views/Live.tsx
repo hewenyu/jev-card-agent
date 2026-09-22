@@ -3,6 +3,7 @@ import { number, policyLabel, time } from '../api';
 import type { LiveSpectator } from '../live';
 import { PokerTable } from '../components/PokerTable';
 import { HandSession } from '../components/HandSession';
+import { ResearchStatus } from '../components/ResearchStatus';
 import { AccountFunding } from '../components/AccountFunding';
 import type { FundingHistoryState } from '../funding-history';
 import { Empty, Panel, SourceBadge, Status } from '../components/UI';
@@ -114,6 +115,7 @@ export function Live({
           </p>
         </Panel>
       </div>
+      <ResearchStatus research={runtime.research} />
       <Panel title="Table activity" eyebrow="CONFIRMED ACTIONS">
         {!events.length ? (
           <Empty title="Waiting for the next action">

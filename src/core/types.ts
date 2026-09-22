@@ -3,6 +3,7 @@ import type { StrategyVersions } from './versions.js';
 import type { DecisionSession } from './session.js';
 import type { PokerFacts } from './harness.js';
 import type { OpponentMemory } from './opponent-memory.js';
+import type { DecisionKnowledge } from '../knowledge/types.js';
 
 export type RawMessage = Record<string, unknown>;
 export type DecisionSource = 'jev' | 'baseline' | 'fallback' | 'unavailable';
@@ -75,6 +76,7 @@ export interface OpponentStats {
   lastTableSeq: number;
 }
 export interface DecisionContext {
+  knowledge?: DecisionKnowledge;
   harness?: PokerFacts;
   opponentMemory?: OpponentMemory[];
   session?: DecisionSession;

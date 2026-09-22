@@ -5,6 +5,8 @@ export interface AppConfig {
   host: string;
   port: number;
   databasePath: string;
+  knowledgeDatabasePath: string;
+  researchEnabled: boolean;
   apiToken: string;
   demo: boolean;
   readOnlyDemo: boolean;
@@ -77,12 +79,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
     throw new Error('AUTO_START_BOT must be true or false');
   if (env.PUBLIC_HISTORY && !['true', 'false'].includes(env.PUBLIC_HISTORY))
     throw new Error('PUBLIC_HISTORY must be true or false');
+  if (env.RESEARCH_ENABLED && !['true', 'false'].includes(env.RESEARCH_ENABLED))
+    throw new Error('RESEARCH_ENABLED must be true or false');
+  const databasePath = synthetic
+    ? resolve(env.DEMO_DATABASE_PATH || env.DATABASE_PATH || 'data/demo.sqlite')
+    : resolve(env.DATABASE_PATH || 'data/jev.sqlite');
+  const knowledgeDatabasePath = resolve(
+    env.KNOWLEDGE_DATABASE_PATH || `${databasePath}.knowledge.sqlite`,
+  );
+  if (knowledgeDatabasePath === databasePath)
+    throw new Error('Knowledge database must be separate from the raw database');
   const config: AppConfig = {
     host: env.HOST || '127.0.0.1',
     port: numeric(env.PORT, 8787, 'PORT'),
-    databasePath: synthetic
-      ? resolve(env.DEMO_DATABASE_PATH || env.DATABASE_PATH || 'data/demo.sqlite')
-      : resolve(env.DATABASE_PATH || 'data/jev.sqlite'),
+    databasePath,
+    knowledgeDatabasePath,
+    researchEnabled: !synthetic && env.RESEARCH_ENABLED !== 'false',
     apiToken: env.API_TOKEN || '',
     demo: synthetic,
     readOnlyDemo,

@@ -17,6 +17,9 @@ import { sessionTurns } from './session.js';
 import { getOpponentMemory, initializeOpponentMemory } from './opponent-memory.js';
 import { STRATEGY_VERSIONS } from '../core/index.js';
 import type { FundingEventView } from '../shared/api.js';
+import { initializeDecisionEvidence, pinKnowledge, type KnowledgeSource } from './knowledge.js';
+import type { DecisionTiming } from '../runtime/timing.js';
+import type { KnowledgeBinding } from '../knowledge/types.js';
 import {
   initializeFunding,
   loadFundingState,
@@ -27,13 +30,16 @@ import {
 export class Store implements RuntimeStore {
   readonly db: DatabaseSync;
   readonly owner = randomUUID();
+  knowledgeSource?: KnowledgeSource;
+  private handKnowledge: KnowledgeBinding | null = null;
   constructor(
-    filename: string,
+    readonly filename: string,
     readonly model = 'jev-1.13.0',
   ) {
     this.db = openDatabase(filename);
     initializeFunding(this.db);
     initializeOpponentMemory(this.db);
+    initializeDecisionEvidence(this.db);
   }
 
   beginRun(run: Parameters<RuntimeStore['beginRun']>[0]): void {
@@ -89,6 +95,29 @@ export class Store implements RuntimeStore {
   }
   getOpponentMemory(state: PokerState, asOf: string) {
     return getOpponentMemory(this.db, state, asOf);
+  }
+
+  pinKnowledge(state: PokerState, observedAt: string) {
+    if (
+      this.handKnowledge?.pin.tableId === state.tableId &&
+      this.handKnowledge?.pin.handId === state.handId
+    )
+      return this.handKnowledge;
+    this.handKnowledge = freezeEvidence(
+      pinKnowledge(this.db, state, observedAt, this.knowledgeSource),
+    );
+    return this.handKnowledge;
+  }
+  saveDecisionTiming(decisionId: string, timing: DecisionTiming): void {
+    this.db
+      .prepare('INSERT OR REPLACE INTO decision_timings(decision_id,payload) VALUES(?,?)')
+      .run(decisionId, JSON.stringify(timing));
+  }
+  decisionTiming(decisionId: string): DecisionTiming | undefined {
+    const row = this.db
+      .prepare('SELECT payload FROM decision_timings WHERE decision_id=?')
+      .get(decisionId);
+    return row ? json<DecisionTiming>(row.payload, {} as DecisionTiming) : undefined;
   }
 
   recentOutcomes(asOf: string, excludeHandId: string) {
@@ -165,6 +194,7 @@ export class Store implements RuntimeStore {
           decision.fallbackReason,
           decision.proposal.model ?? null,
         );
+      if (decision.timing) this.saveDecisionTiming(decision.id, decision.timing);
       if (failed) {
         this.saveDecisionBlock({
           runId: decision.runId,
@@ -184,22 +214,33 @@ export class Store implements RuntimeStore {
     const previous = this.db.prepare('SELECT payload FROM actions WHERE id=?').get(action.id);
     const payload = JSON.stringify(action.payload);
     if (previous && previous.payload !== payload) throw new Error('Action ID payload conflict');
-    this.db
-      .prepare(
-        `INSERT OR IGNORE INTO actions
-      (id,run_id,decision_id,table_id,payload,status,created_at,deadline_at)
-      VALUES(?,?,?,?,?,?,?,?)`,
-      )
-      .run(
-        action.id,
-        action.runId,
-        action.decisionId,
-        action.tableId,
-        payload,
-        action.status,
-        action.createdAt,
-        action.deadlineAt,
-      );
+    this.db.exec('SAVEPOINT prepared_action');
+    try {
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO actions
+        (id,run_id,decision_id,table_id,payload,status,created_at,deadline_at)
+        VALUES(?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          action.id,
+          action.runId,
+          action.decisionId,
+          action.tableId,
+          payload,
+          action.status,
+          action.createdAt,
+          action.deadlineAt,
+        );
+      if (action.stateKey)
+        this.db
+          .prepare('INSERT OR IGNORE INTO action_authorities(action_id,state_key) VALUES(?,?)')
+          .run(action.id, action.stateKey);
+      this.db.exec('RELEASE prepared_action');
+    } catch (error) {
+      this.db.exec('ROLLBACK TO prepared_action; RELEASE prepared_action');
+      throw error;
+    }
   }
 
   updateAction(id: string, status: ActionStatus, details?: Record<string, unknown>): void {
@@ -226,8 +267,9 @@ export class Store implements RuntimeStore {
   pendingActions(): StoredAction[] {
     return this.db
       .prepare(
-        `SELECT a.*,d.source AS decision_source FROM actions a LEFT JOIN decisions d
-        ON d.id=a.decision_id WHERE a.status IN ('prepared','sent','unresolved')`,
+        `SELECT a.*,d.source AS decision_source,k.state_key FROM actions a LEFT JOIN decisions d
+        ON d.id=a.decision_id LEFT JOIN action_authorities k ON k.action_id=a.id
+        WHERE a.status IN ('prepared','sent','unresolved')`,
       )
       .all()
       .map((row) => ({
@@ -240,6 +282,8 @@ export class Store implements RuntimeStore {
         status: row.status as ActionStatus,
         createdAt: String(row.created_at),
         deadlineAt: Number(row.deadline_at),
+        timing: this.decisionTiming(String(row.decision_id)),
+        ...(row.state_key ? { stateKey: String(row.state_key) } : {}),
       }));
   }
 
@@ -343,4 +387,12 @@ export class Store implements RuntimeStore {
     this.releaseLease();
     this.db.close();
   }
+}
+
+function freezeEvidence<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) freezeEvidence(child);
+    Object.freeze(value);
+  }
+  return value;
 }

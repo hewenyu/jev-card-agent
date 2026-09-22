@@ -301,7 +301,7 @@ describe('persisted historical feedback', () => {
     });
   });
 
-  it('passes persisted feedback into the actual runtime policy and saves its frozen context', async () => {
+  it('keeps outcome history queryable while the knowledge-based fast path saves only its frozen decision context', async () => {
     const store = fixture();
     settle(store);
     recordDecision(store, 'past-decision');
@@ -315,6 +315,7 @@ describe('persisted historical feedback', () => {
       })),
     };
     const current = state('current');
+    const feedback = vi.spyOn(store, 'recentOutcomes');
     const result = await decide(
       {
         key: authorityKey(current),
@@ -331,7 +332,10 @@ describe('persisted historical feedback', () => {
     expect(result).not.toBeNull();
     expect(policy.decide).toHaveBeenCalledOnce();
     const input = policy.decide.mock.calls[0]![0];
-    expect(input.recentOutcomes).toEqual([
+    expect(feedback).not.toHaveBeenCalled();
+    expect(input.recentOutcomes).toEqual([]);
+    expect(input.knowledge?.pin.handId).toBe('current');
+    expect(store.recentOutcomes(result!.decision.createdAt, 'current')).toEqual([
       expect.objectContaining({
         handId: 'past',
         profitBb: 6,

@@ -235,6 +235,22 @@ describe('manual Compose management', () => {
     expect(stdout).not.toContain('Consistent SQLite backup');
   });
 
+  it('copies both raw and derived SQLite backups with private permissions', () => {
+    const test = fixture();
+    const knowledgePath = backupPath.replace('/jev-', '/knowledge-');
+    const { status, calls } = test.run('backup', {
+      TEST_BACKUP_PATH: `${backupPath}\n${knowledgePath}`,
+    });
+    expect(status).toBe(0);
+    expect(calls.slice(-2)).toEqual([
+      ['compose', 'cp', `app:${backupPath}`, 'data/backups/'],
+      ['compose', 'cp', `app:${knowledgePath}`, 'data/backups/'],
+    ]);
+    expect(
+      statSync(join(test.directory, 'data/backups', basename(knowledgePath))).mode & 0o777,
+    ).toBe(0o600);
+  });
+
   it('rejects unexpected snapshot paths before copying', () => {
     const { status, calls, stderr } = fixture().run('backup', {
       TEST_BACKUP_PATH: '/app/data/jev.sqlite',

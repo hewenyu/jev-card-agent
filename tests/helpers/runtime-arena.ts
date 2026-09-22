@@ -159,7 +159,10 @@ export function resync(ws: WebSocket, hand: string, token: string, sequence = 11
         hole_cards: ['Ah', 'Kd'],
         valid_actions: [{ action: 'check' }, { action: 'fold' }],
       },
-      seats: [{ seat: 0, name: 'hero', stack: 2000, bet: 0, status: 'active' }],
+      seats: [
+        { seat: 0, name: 'hero', stack: 2000, bet: 0, status: 'active' },
+        { seat: 1, name: 'other', stack: 2000, bet: 0, status: 'active' },
+      ],
     },
   });
 }

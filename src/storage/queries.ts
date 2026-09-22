@@ -1,4 +1,4 @@
-import type { Candidate, Proposal } from '../core/types.js';
+import type { Candidate, DecisionContext, Proposal } from '../core/types.js';
 import type {
   DecisionView,
   EvaluationView,
@@ -93,13 +93,13 @@ export class Queries {
   }
   decision(id: string): DecisionView | null {
     const row = this.store.db.prepare('SELECT * FROM decisions WHERE id=?').get(id);
-    return row ? decisionView(row) : null;
+    return row ? this.decisionEvidence(row) : null;
   }
   decisions(runId: string, limit = 100): DecisionView[] {
     return this.store.db
       .prepare('SELECT * FROM decisions WHERE run_id=? ORDER BY created_at LIMIT ?')
       .all(runId, Math.min(500, Math.max(1, limit)))
-      .map(decisionView);
+      .map((row) => this.decisionEvidence(row));
   }
   handDecisions(tableId: string, handId: string): DecisionView[] {
     return this.store.db
@@ -110,7 +110,7 @@ export class Queries {
           json<Partial<import('../core/types.js').DecisionContext>>(row.context, {}).tableId ===
           tableId,
       )
-      .map(decisionView);
+      .map((row) => this.decisionEvidence(row));
   }
   hand(id: string): HandDetail | null {
     const row = this.store.db.prepare('SELECT * FROM hands WHERE id=?').get(id);
@@ -120,7 +120,7 @@ export class Queries {
       decisions: this.store.db
         .prepare('SELECT * FROM decisions WHERE hand_id=? ORDER BY created_at')
         .all(id)
-        .map(decisionView),
+        .map((row) => this.decisionEvidence(row)),
       events: this.store.db
         .prepare('SELECT * FROM events WHERE hand_id=? ORDER BY id')
         .all(id)
@@ -137,6 +137,25 @@ export class Queries {
       .prepare('SELECT result FROM evaluations ORDER BY created_at DESC LIMIT 100')
       .all()
       .map((row) => json<EvaluationView>(row.result, {} as EvaluationView));
+  }
+  private decisionEvidence(row: Row): DecisionView {
+    const view = decisionView(row);
+    view.timing = this.store.decisionTiming(view.id);
+    const context = json<Partial<DecisionContext>>(row.context, {});
+    if (context.knowledge) {
+      view.knowledge = redact(context.knowledge) as DecisionView['knowledge'];
+      const source = this.store.knowledgeSource;
+      const status = source?.status();
+      view.audit = source?.getAudit(view.id) ?? {
+        decisionId: view.id,
+        inputHash: null,
+        computedAt: null,
+        status: !status?.enabled ? 'disabled' : status.error ? 'failed' : 'pending',
+        uniformShowdownReference: null,
+        provenance: 'asynchronous_audit_not_model_input',
+      };
+    }
+    return view;
   }
   saveEvaluation(result: EvaluationView): void {
     this.store.db

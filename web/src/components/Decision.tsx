@@ -2,6 +2,7 @@ import type { DecisionView } from '../../../src/shared/api';
 import { dollars, number, time } from '../api';
 import { Status } from './UI';
 import { DecisionAnalysis } from './DecisionAnalysis';
+import { FastSlowEvidence } from './FastSlowEvidence';
 
 export function Decision({ decision }: { decision: DecisionView }) {
   const selected = decision.candidates.find((item) => item.id === decision.selectedCandidateId);
@@ -35,6 +36,7 @@ export function Decision({ decision }: { decision: DecisionView }) {
         </div>
       )}
       <DecisionAnalysis decision={decision} />
+      <FastSlowEvidence decision={decision} />
       <div className="candidate-list">
         {decision.candidates.map((candidate) => {
           const probability = decision.probabilities[candidate.id];

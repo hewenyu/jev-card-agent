@@ -1,7 +1,7 @@
 import type { DecisionContext, OpponentStats, PokerState } from './types.js';
 import { summarizeRecentOutcomes, type HistoricalFeedback } from './history.js';
 import { STRATEGY_VERSIONS } from './versions.js';
-import { buildPokerFacts } from './harness.js';
+import { buildDecisionFacts } from './harness.js';
 import { bettingFacts, callAmount } from './poker-math.js';
 
 export function buildContext(
@@ -50,6 +50,6 @@ export function buildContext(
     historyIncomplete: state.historyIncomplete,
   });
   context.potOdds = bettingFacts(context).requiredEquityToCall;
-  context.harness = buildPokerFacts(context);
+  context.harness = buildDecisionFacts(context);
   return context;
 }

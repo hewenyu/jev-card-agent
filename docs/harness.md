@@ -1,5 +1,7 @@
 # Pure Jev poker harness
 
+下一版快慢双循环设计及验收合同见 [Fast/slow design](fast-slow.md)。该设计先于开发记录；上线与验证状态以实际验证记录为准。
+
 ## 本次目标 / Objective
 
 以真实结算净筹码与 bb/100 为主要效果指标，发布可审计的纯 Jev 决策版本。Jev 作最终动作选择；本地代码只计算牌局事实、构造合法候选和提供明确标注的策略依据，不代打，不按金额限制调用。历史原始数据保留。
@@ -48,11 +50,11 @@ Preflop candidates include conventional opening/isolation sizes and raises based
 
 ## 实现后的输入取舍
 
-Jev 接收准确的当前牌型与牌面相对强度、位置、分开的筹码/投入、合法候选成本、当手行动、当前活跃对手的长期证据，以及同手已接受动作。随机范围摊牌估算保留在冻结记录和复盘界面中，**不进入默认 Jev 请求**：它没有按实际下注筛选对手范围，可能给弱 bluff-catcher 提供错误的数字锚点。近期输赢和重复标识也只留作审计。
+Jev 接收准确的当前牌型与牌面相对强度、位置、分开的筹码/投入、合法候选成本、当手行动、当前活跃对手的长期证据，以及同手已接受动作。随机范围摊牌估算**不进入默认 Jev 请求**：它没有按实际下注筛选对手范围，可能给弱 bluff-catcher 提供错误的数字锚点。1.1.0 的估算保留在原冻结记录中；1.2.0 在独立工作线程中计算，作为绑定原决策内容哈希的事后审计追加，不回填冻结输入。近期输赢和重复标识仍可从原始历史复盘。
 
 对手证据最多取每个名字最近200手已观察结算，公开摊牌最多3例，实际模型投影再加入最近1例交手并去重。每条线明确缺失价格与截断数量。过长请求优先删减历史实例，并记录 `examplesOmittedForInputSize`；当前牌局事实不因此从数据库丢失。仅按公开名字关联，名字变化或冒用不能识别为同一真实账户。
 
-`context.harness` 是完整冻结工具依据；`proposal.request.state` 才是最终 Jev 输入，二者不等同。各手牌策略版本为 `visible-context-v6` / `street-sized-raise-to-v2` / `opponent-encounters-v3` / `poker-harness-choice-v5`。应用版本为 `1.1.0`。实际验收与部署结果见 [verification.md](verification.md)。
+`context.harness` 是冻结的实时工具依据；`proposal.request.state` 才是最终 Jev 输入，二者不等同。1.2.0 使用 `visible-context-v7` / `street-sized-raise-to-v2` / `pinned-opponent-knowledge-v1` / `poker-harness-choice-v6`。每手绑定持久化知识版本；模型仅接收匹配当前街道的基础参考卡和该版本中当前对手的证据。历史手仍保留原版本与原请求。实际验收与部署结果见 [verification.md](verification.md)。
 
 独立合成策略诊断可显式调用真实 Jev，不连接 Arena：
 

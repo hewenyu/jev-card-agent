@@ -15,6 +15,7 @@ import { json } from '../storage/database.js';
 import type { AppConfig } from './config.js';
 import type { ServerEvent } from '../openpoker/protocol.js';
 import { SpectatorFeed } from './spectator.js';
+import { SlowLoopService } from '../research/service.js';
 
 export interface RunRequest {
   strategy: StrategyName;
@@ -84,6 +85,7 @@ export function policyFor(
 export class Controller {
   readonly queries: Queries;
   readonly spectator: SpectatorFeed;
+  readonly research: SlowLoopService;
   runtime: PokerRuntime | null = null;
   private strategy: StrategyName = 'jev';
   private starting = false;
@@ -104,6 +106,14 @@ export class Controller {
       seedDemo(store);
     }
     this.spectator = new SpectatorFeed(this.view());
+    this.research = new SlowLoopService(store.filename, config.knowledgeDatabasePath, {
+      enabled: config.researchEnabled && store.filename !== ':memory:',
+    });
+    store.knowledgeSource = this.research;
+    this.research.on('update', () => {
+      if (!this.closing) this.spectator.update(this.view());
+    });
+    void this.research.start();
   }
   async start(request: RunRequest): Promise<RuntimeView> {
     if (this.store.loadDecisionBlock())
@@ -255,6 +265,7 @@ export class Controller {
       : null;
     return {
       running,
+      research: this.research?.status(),
       ...(status?.funding ? { funding: status.funding } : {}),
       decision: status?.decision ?? null,
       status: this.starting
@@ -321,6 +332,7 @@ export class Controller {
       });
     }
     await this.runtime?.settleDecisions();
+    await this.research.stop();
     this.releaseLease();
     this.detachSpectator?.();
     this.spectator.close();

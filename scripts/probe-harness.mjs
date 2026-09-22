@@ -36,6 +36,9 @@ try {
       handId: scenario.id,
     };
     const context = buildContext(state);
+    const binding = store.pinKnowledge(state, new Date().toISOString());
+    const { opponents: _opponents, cards: _cards, ...snapshot } = binding.snapshot;
+    context.knowledge = { pin: binding.pin, snapshot };
     const candidates = buildCandidates(state);
     try {
       const proposal = await provider.decide(context, candidates, {

@@ -55,6 +55,9 @@ export interface CandidateView {
 }
 
 export interface DecisionView {
+  knowledge?: DecisionKnowledge;
+  audit?: AuditView;
+  timing?: DecisionTiming;
   id: string;
   runId: string;
   handId: string;
@@ -182,6 +185,7 @@ export interface FundingEventView {
   rebuyAvailableAt: string | null;
 }
 export interface RuntimeView {
+  research?: SlowLoopStatus;
   funding?: FundingView;
   decision?: LiveDecisionProgress | null;
   running: boolean;
@@ -239,3 +243,5 @@ export interface EvaluationView {
     status: string;
   }[];
 }
+import type { AuditView, DecisionKnowledge, SlowLoopStatus } from '../knowledge/types.js';
+import type { DecisionTiming } from '../runtime/timing.js';

@@ -128,30 +128,32 @@ export function HarnessEvidence({ context }: { context: Record<string, unknown> 
           {text(draws.caveat) ?? 'Completion cards are not guaranteed winning outs.'}
         </p>
       </details>
-      <div className="harness-reference" aria-label="Uniform random range reference">
-        <h5>Audit reference · excluded from Jev input</h5>
-        {hasEstimate ? (
-          <>
-            <p>
-              <strong>{percent(estimate.equity)}</strong> estimated pot share against{' '}
-              {number(finite(estimate.opponents) ?? 0)} random opponents.
-            </p>
-            <p className="annotation">
-              {number(finite(estimate.samples) ?? 0)} sampled deals
-              {finite(estimate.standardError) !== null &&
-                ` · standard error ${percent(estimate.standardError)}`}
-              .
-            </p>
-          </>
-        ) : (
-          <p className="analysis-empty">No random-range reference was recorded for this turn.</p>
-        )}
-        <p className="annotation">
-          Retained for replay only. Assumes uniformly random legal opponent cards. This is not the
-          actual win probability against these opponents or the expected profit of a call.
-          {text(estimate.caveat) && ` ${text(estimate.caveat)}`}
-        </p>
-      </div>
+      {hasEstimate && (
+        <div className="harness-reference" aria-label="Uniform random range reference">
+          <h5>Audit reference · excluded from Jev input</h5>
+          {hasEstimate ? (
+            <>
+              <p>
+                <strong>{percent(estimate.equity)}</strong> estimated pot share against{' '}
+                {number(finite(estimate.opponents) ?? 0)} random opponents.
+              </p>
+              <p className="annotation">
+                {number(finite(estimate.samples) ?? 0)} sampled deals
+                {finite(estimate.standardError) !== null &&
+                  ` · standard error ${percent(estimate.standardError)}`}
+                .
+              </p>
+            </>
+          ) : (
+            <p className="analysis-empty">No random-range reference was recorded for this turn.</p>
+          )}
+          <p className="annotation">
+            Retained for replay only. Assumes uniformly random legal opponent cards. This is not the
+            actual win probability against these opponents or the expected profit of a call.
+            {text(estimate.caveat) && ` ${text(estimate.caveat)}`}
+          </p>
+        </div>
+      )}
       <details className="analysis-evidence-details">
         <summary>Inspect calculated evidence and opponent guidance</summary>
         <pre>{JSON.stringify(harness, null, 2)}</pre>

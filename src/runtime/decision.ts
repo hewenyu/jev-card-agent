@@ -7,9 +7,15 @@ import { buildSession } from '../core/session.js';
 import type { DecisionProgress } from '../core/types.js';
 import type { LiveDecisionProgress } from '../shared/api.js';
 import type { DecisionRecord, RuntimeDependencies, StoredAction } from './types.js';
+import type { DecisionTiming } from './timing.js';
+import { decisionStateKey } from './authority.js';
+export { authorityKey } from './authority.js';
 
 export interface DecisionTask {
   key: string;
+  stateKey?: string;
+  receivedAt?: number;
+  decisionDeadlineAt?: number;
   controller: AbortController;
   deadlineAt: number;
   state: PokerState;
@@ -18,9 +24,6 @@ export interface DecisionTask {
   requireJev?: boolean;
   opponents: OpponentStats[];
 }
-export function authorityKey(state: PokerState): string {
-  return `${state.handId ?? ''}:${state.turnToken ?? ''}`;
-}
 export async function decide(
   task: DecisionTask,
   dependencies: RuntimeDependencies,
@@ -28,13 +31,33 @@ export async function decide(
   budgetMs: number,
   onProgress?: (progress: LiveDecisionProgress) => void,
 ): Promise<{ decision: DecisionRecord; action: StoredAction | null } | null> {
+  const preparationStarted = Date.now();
+  // The budget starts before synchronous snapshot/knowledge preparation, never after it.
+  const decisionDeadlineAt = Math.min(
+    task.decisionDeadlineAt ?? preparationStarted + budgetMs,
+    preparationStarted + budgetMs,
+    task.deadlineAt,
+  );
+  const timing: DecisionTiming = {
+    receivedAt: new Date(task.receivedAt ?? preparationStarted).toISOString(),
+    preparationStartedAt: new Date(preparationStarted).toISOString(),
+    preparationMs: 0,
+    knowledgeMs: 0,
+    providerMs: 0,
+    persistenceMs: 0,
+  };
   const candidates = buildCandidates(task.state);
   if (!task.state.handId || !task.state.turnToken || !task.state.tableId) return null;
   const createdAt = new Date().toISOString();
   const decisionId = randomUUID();
-  const context = buildContext(task.state, task.opponents, {
+  const knowledgeStarted = Date.now();
+  const knowledge = dependencies.store.pinKnowledge?.(task.state, createdAt);
+  timing.knowledgeMs = Date.now() - knowledgeStarted;
+  const context = buildContext(task.state, knowledge ? [] : task.opponents, {
     asOf: createdAt,
-    recentOutcomes: dependencies.store.recentOutcomes?.(createdAt, task.state.handId) ?? [],
+    recentOutcomes: knowledge
+      ? []
+      : (dependencies.store.recentOutcomes?.(createdAt, task.state.handId) ?? []),
   });
   context.session = buildSession(
     task.state.tableId,
@@ -47,7 +70,27 @@ export async function decide(
       task.state.lastTableSeq,
     ) ?? [],
   );
-  context.opponentMemory = dependencies.store.getOpponentMemory?.(task.state, createdAt) ?? [];
+  const activeOpponents = new Set(
+    task.state.seats
+      .filter(
+        (seat) =>
+          seat.seat !== task.state.heroSeat &&
+          seat.name !== null &&
+          seat.inHand !== false &&
+          !seat.folded,
+      )
+      .map((seat) => seat.name),
+  );
+  context.opponentMemory =
+    knowledge?.snapshot.opponents.filter((opponent) => activeOpponents.has(opponent.name)) ?? [];
+  if (knowledge) {
+    const { opponents: _opponents, cards: _cards, ...snapshot } = knowledge.snapshot;
+    context.knowledge = {
+      pin: { ...knowledge.pin, opponentMemory: context.opponentMemory },
+      snapshot,
+    };
+  }
+  timing.preparationMs = Math.max(0, Date.now() - Date.parse(timing.receivedAt));
   let analysisProgress: DecisionProgress | undefined;
   const progressAttempts = new Map<string, ProviderAttempt>();
   let frozen = false;
@@ -92,14 +135,17 @@ export async function decide(
   let policyCall: Promise<Proposal> | undefined;
   let policyError: unknown;
   try {
-    if (!fallbackReason && budgetMs > 0 && !task.controller.signal.aborted) {
+    if (!fallbackReason && decisionDeadlineAt > Date.now() && !task.controller.signal.aborted) {
       {
         const timeout = new Promise<never>((_, reject) => {
-          timer = setTimeout(() => {
-            reject(new Error('decision_timeout'));
-            collectingOnly = true;
-            callController.abort();
-          }, budgetMs);
+          timer = setTimeout(
+            () => {
+              reject(new Error('decision_timeout'));
+              collectingOnly = true;
+              callController.abort();
+            },
+            Math.max(0, decisionDeadlineAt - Date.now()),
+          );
           callController.signal.addEventListener(
             'abort',
             () => reject(new Error('decision_cancelled')),
@@ -155,11 +201,15 @@ export async function decide(
     }
     fallbackReason = providerError instanceof Error ? providerError.message : 'policy_failed';
   } finally {
+    timing.providerMs = Math.max(0, Date.now() - started);
     if (timer) clearTimeout(timer);
     task.controller.signal.removeEventListener('abort', abort);
   }
   const cancelled = task.controller.signal.aborted;
-  if (!cancelled && Date.now() >= task.deadlineAt) {
+  if (
+    !cancelled &&
+    (Date.now() >= task.deadlineAt || (proposal && Date.now() >= decisionDeadlineAt))
+  ) {
     rejectedProposal = proposal;
     proposal = null;
     fallbackReason = 'decision_deadline_elapsed';
@@ -208,6 +258,7 @@ export async function decide(
   }
   frozen = true;
   const decision: DecisionRecord = {
+    timing,
     id: decisionId,
     runId,
     handId: task.state.handId,
@@ -226,6 +277,8 @@ export async function decide(
   const candidate = candidates.find((item) => item.id === proposal.candidateId);
   if (!candidate || !validateCandidate(candidate, task.state)) return null;
   const action: StoredAction = {
+    stateKey: decisionStateKey(task.state, false),
+    timing,
     decisionSource: proposal.source,
     id: randomUUID(),
     runId,

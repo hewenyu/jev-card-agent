@@ -119,7 +119,7 @@ describe('bounded historical decision feedback', () => {
     expect(context.strategyVersions).not.toBe(STRATEGY_VERSIONS);
     expect(context.recentOutcomes[0]?.profitBb).toBe(-1.5);
     expect(context.lastTableSeq).toBe(42);
-    expect(STRATEGY_VERSIONS.prompt).toBe('poker-harness-choice-v5');
+    expect(STRATEGY_VERSIONS.prompt).toBe('poker-harness-choice-v6');
     expect(buildContext(state).recentOutcomes).toEqual([]);
     expect(buildContext(state).asOf).toBeNull();
   });

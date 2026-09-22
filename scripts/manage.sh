@@ -46,14 +46,18 @@ case "$action" in
   backup)
     mkdir -p data/backups
     chmod 700 data/backups
-    backup_path=$(docker compose exec -T app node --input-type=module < "$script_dir/backup-database.mjs")
-    case "$backup_path" in
-      /app/data/backups/jev-*.sqlite) ;;
-      *) printf '%s\n' 'Backup failed: unexpected container path' >&2; exit 1 ;;
-    esac
-    docker compose cp "app:$backup_path" data/backups/
-    chmod 600 "data/backups/$(basename "$backup_path")"
-    printf 'Consistent SQLite backup: data/backups/%s\n' "$(basename "$backup_path")"
+    backup_paths=$(docker compose exec -T app node --input-type=module < "$script_dir/backup-database.mjs")
+    while IFS= read -r backup_path; do
+      case "$backup_path" in
+        /app/data/backups/jev-*.sqlite|/app/data/backups/knowledge-*.sqlite) ;;
+        *) printf '%s\n' 'Backup failed: unexpected container path' >&2; exit 1 ;;
+      esac
+      docker compose cp "app:$backup_path" data/backups/
+      chmod 600 "data/backups/$(basename "$backup_path")"
+      printf 'Consistent SQLite backup: data/backups/%s\n' "$(basename "$backup_path")"
+    done <<EOF
+$backup_paths
+EOF
     exit 0
     ;;
   *)

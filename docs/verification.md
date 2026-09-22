@@ -258,3 +258,30 @@ Live 和 Replay 对每个已入座玩家分别展示 Available 与 Bet，零下�
 重连回归覆盖原已知回合剩余期限、原决策总期限、迟到旧调用、重复恢复与未知新token。未知期限仍不能本地代打。发布流程保留所有原始历史和费用账本，GitHub无缓存发布镜像，再由操作员手动Compose更新；本节是发布前验证记录，生产Run的收益必须另行采集。
 
 发布前最终全量验证：**44个Vitest文件、344项测试全部通过**；**48项Playwright全部通过**，包括实际模型输入、旧版记录兼容、手机布局、Live刷新和模型失败展示。ESLint、Prettier、TypeScript、生产构建及仓库检查通过，最长文件948行；构建产物扫描5个已配置私有值，无匹配。16场景的真实API诊断可通过 `node --env-file=.env scripts/probe-harness.mjs` 复现，报告不进入公开仓库。
+
+## 1.2.0 快慢双循环验证 / Fast and slow loops
+
+设计先记录在 [fast-slow.md](fast-slow.md)，再实施。实时路径仅由 Jev 选择动作；独立 Worker 线程增量维护已完成手牌统计，并在另一 SQLite 文件追加审计。线程不继承供应商/牌桌凭据。每手知识绑定持久化，当前手行动继续更新；异步结果不能改写原始模型请求。
+
+截至发布前，本地完整 lint、format、typecheck、构建、仓库检查与 **378 项 Vitest** 通过，包括跨批次发布时间回归。**51 项 Playwright** 通过，包括知识版本固定、事后审计刷新、工作线程状态、旧历史、只读权限和移动端布局。最长实现文件为 runtime.ts，973 行。真实配置的5个私有值扫描仓库与144个构建产物，零匹配。
+
+编译后的实际 Worker 验证使用临时 SQLite：原始数据库保持写锁时，知识发布与审计仍完成；Worker 运行、停止、禁用和启动失败时均可保存合成决策与待发送动作。原 context 未变，审计 SHA256 匹配；派生表未进入原始库。这些测试没有连接 Arena。
+
+真实 Jev 合成诊断包含本版固定基础知识卡：**16/16 场景通过，16 次调用，P50 292 ms、P95/max 1,291 ms**。预期结果只用于评分，没有传给模型。合成场景通过不是扑克 EV 或盈利证明。
+
+### 本地性能测量
+
+Apple M4、Node.js 24.13.0；源库为冻结的历史只读副本，测量前后 SHA256 相同。可用 `node scripts/probe-fast-slow.mjs <SQLite路径> <Run ID>` 重现；它不调用模型或连接 Arena，报告写到被忽略的 `data/reviews/fast-slow/`。
+
+| 测量范围                                     | 样本数 |       P50 |       P95 |      最大 |
+| -------------------------------------------- | -----: | --------: | --------: | --------: |
+| 历史状态构造、确定性事实、候选、投影与序列化 |    519 |  0.049 ms |  0.080 ms |  0.123 ms |
+| 同样准备再加1,200次随机权益采样              |    519 |  0.656 ms |  0.875 ms |  1.150 ms |
+| 256合成对手、2.54 MB快照首次持久绑定         |     32 | 27.906 ms | 31.234 ms | 33.017 ms |
+| 重开Store恢复已固定快照                      |     32 |  6.337 ms |  7.501 ms |  7.552 ms |
+| 慢循环积压期间准备，含首次绑定               |    519 |  4.131 ms |  6.866 ms | 12.414 ms |
+| 10 ms定时器的额外延迟                        |    476 |  0.760 ms |  3.775 ms |  8.859 ms |
+
+这些数值不包括 session 查询、事件与动作落盘、网络或 ACK；不是完整出牌延迟，也不能代表服务器硬件。第二行是相同新版准备工作加回旧审计采样的隔离对比，不是完整旧版运行时基准。积压组含首次绑定，与第一行不能直接相减作为线程额外开销。线程期间未出现错误，结算积压从1,258手降到606手，审计积压从515降到0；原始历史不被删除。
+
+The pre-release evidence establishes isolated background work, recoverable hand knowledge and auditable input/timing separation. It does not establish an end-to-end latency target or profitable play. Runtime metrics distinguish provider latency from local receipt-to-send and acknowledgement time; production results must be reported with the deployed revision and sample size.

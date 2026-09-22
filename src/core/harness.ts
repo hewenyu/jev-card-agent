@@ -1,21 +1,20 @@
 import type { Candidate, DecisionContext, RawMessage } from './types.js';
-import { analyzePokerCards, estimateUniformEquity } from './poker-cards.js';
+import { analyzePokerCards, type UniformEquity } from './poker-cards.js';
 import { activeSeats, bettingFacts, positionFacts, round } from './poker-math.js';
+import { selectStrategyCards } from '../knowledge/selector.js';
 
-export const HARNESS_VERSION = 'poker-harness-v1';
+export const HARNESS_VERSION = 'poker-harness-v2';
 
 /** Deterministic tools supply evidence. Jev remains the only live action selector. */
-export function buildPokerFacts(context: DecisionContext) {
+export function buildDecisionFacts(context: DecisionContext) {
   const betting = bettingFacts(context);
   return {
     version: HARNESS_VERSION,
     cards: analyzePokerCards(context.holeCards, context.board),
     betting,
     position: positionFacts(context),
-    uniformShowdownReference:
-      betting.activeOpponents > 0
-        ? estimateUniformEquity(context.holeCards, context.board, betting.activeOpponents)
-        : null,
+    // Historical contexts may contain this field. New simulations are separate audit records.
+    uniformShowdownReference: null as UniformEquity | null,
     opponentGuidance: context.opponents
       .filter((opponent) =>
         activeSeats(context.seats).some(
@@ -43,7 +42,8 @@ export function buildPokerFacts(context: DecisionContext) {
       })),
   };
 }
-export type PokerFacts = ReturnType<typeof buildPokerFacts>;
+export const buildPokerFacts = buildDecisionFacts;
+export type PokerFacts = ReturnType<typeof buildDecisionFacts>;
 
 /** Like Pi's context projection: preserve the event store, send only useful evidence. */
 export function projectJevState(context: DecisionContext): RawMessage {
@@ -52,6 +52,19 @@ export function projectJevState(context: DecisionContext): RawMessage {
   const { uniformShowdownReference: _auditReference, ...modelFacts } = facts;
   const projected = {
     harness: modelFacts,
+    ...(context.knowledge
+      ? {
+          knowledge: {
+            version: context.knowledge.pin.knowledgeVersion,
+            snapshotHash: context.knowledge.pin.snapshotHash,
+            evidenceEventId: context.knowledge.pin.evidenceEventId,
+            evidenceCutoff: context.knowledge.snapshot.evidenceCutoff,
+            publishedAt: context.knowledge.snapshot.publishedAt,
+            source: context.knowledge.snapshot.source,
+            references: selectStrategyCards(context.knowledge.pin, context.street),
+          },
+        }
+      : {}),
     street: context.street,
     holeCards: context.holeCards,
     board: context.board,

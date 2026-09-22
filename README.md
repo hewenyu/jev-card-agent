@@ -35,6 +35,9 @@ flowchart LR
   V --> O
   R --> T[Decision traces · SQLite]
   T --> E[Replay, evaluation and analytics]
+  T --> S[Separate statistics and audit worker]
+  S --> K[Published knowledge]
+  K --> C
 ```
 
 The current implementation uses **pure Jev (`BOT_STRATEGY=jev`)** with a [poker harness](docs/harness.md): deterministic card and betting facts, position, street-sized legal candidates, current-hand context and completed opponent encounters. Jev makes the final choice. The runtime does not automatically rewrite strategy. Deployment and executed validation are recorded separately in the [verification report](docs/verification.md).
@@ -47,7 +50,13 @@ For successful Jev requests, records retain the original request and the schema-
 
 Every submitted live action must come from Jev. Jev gets an initial attempt and **at most three retries**, with **10 seconds per request and 40 seconds for the whole decision**, always bounded by the platform action deadline. Costs are recorded for review and never impose a monetary limit. If no valid Jev result is available, the runtime records the failed decision, submits no locally chosen action and stops playing. This stop persists across restarts; an operator must explicitly resume through the private management interface. The platform may apply its own timeout action, which is not a Jev choice. Authentication, provider balance, model identity and ledger failures are not blindly retried.
 
-Decision views preserve the supplied facts, actual provider output and final Jev choice. Card tools supply made hands, board texture and draws. A seeded 1,200-sample uniform-random showdown reference remains in the full audit context, with its assumptions and sampling error, but is **omitted from the actual Jev request**. It is not equity against the opponent’s betting range or action EV. Jev’s own probabilities are also not poker equity. Missing provider thinking is marked unavailable, never invented.
+Decision views preserve the supplied facts, actual provider output and final Jev choice. Card tools supply made hands, board texture and draws. A seeded 1,200-sample uniform-random showdown reference is stored as a separate asynchronous audit, with its assumptions and sampling error, but is **omitted from the actual Jev request**. It is not equity against the opponent’s betting range or action EV. Jev’s own probabilities are also not poker equity. Missing provider thinking is marked unavailable, never invented.
+
+## Fast decisions and asynchronous knowledge
+
+The normal live path makes one Jev request. A separate worker thread maintains deterministic statistics and random-range audits without waiting for an extra LLM. Each hand pins a published knowledge version, evidence cutoff and content hash across reconnects and restarts; current cards and actions keep updating. A paused or backlogged worker leaves decisions using existing eligible knowledge or an explicit baseline. Research currently produces deterministic statistics, calls no LLM and cannot submit table actions.
+
+Live and Replay show the hand’s pinned knowledge, actual request, stage timings and asynchronous audit status. Later audits are separate additions, never presented as information supplied to Jev at decision time. Older records explicitly mark unavailable fields. Live keeps the table first and worker status below it; Overview remains statistics-only. See the [fast/slow contract](docs/fast-slow.md); latency and profitability require separate measurement.
 
 ## Account chips and rebuys
 
@@ -129,12 +138,13 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Development uses Vite at `http://127.0.0.1:5173` and the API at `http://127.0.0.1:8787`. Production serves the UI, API and runtime from one Node.js process. Checks cover formatting, lint, types, unit/integration tests, build output, file-size limits and credential hygiene. Browser tests use synthetic data and do not spend model credits. Maintained text files stay below 1,000 lines.
+Development uses Vite at `http://127.0.0.1:5173` and the API at `http://127.0.0.1:8787`. The main process serves the UI, API and runtime; a separate worker thread handles derived knowledge and audits. Checks cover formatting, lint, types, unit/integration tests, build output, file-size limits and credential hygiene. Browser tests use synthetic data and do not spend model credits. Maintained text files stay below 1,000 lines.
 
 The frozen 2026-09-21 pure-Jev run had **295 verified settlements, −10,551 chips and 519 accepted Jev actions, with no local fallback**. Its losses drove the harness redesign; they do not establish a profitable replacement. Profitability remains a live evaluation objective, measured by net chips and bb/100 alongside sample size and drawdown. Historical provider probes and current verification remain in the [verification report](docs/verification.md).
 
 ## Documentation
 
+- [Fast decisions and asynchronous knowledge](docs/fast-slow.md)
 - [Pure Jev harness and evidence contract](docs/harness.md)
 - [Architecture and scope](docs/architecture.md)
 - [Evaluation methodology and cost accounting](docs/evaluation.md)

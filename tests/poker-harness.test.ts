@@ -184,7 +184,7 @@ describe('poker harness evidence and prices', () => {
     expect(request).toHaveProperty('harness.cards.madeHand.name', 'high_card');
     expect(request).not.toHaveProperty('recentOutcomes');
     expect(request).not.toHaveProperty('harness.uniformShowdownReference');
-    expect(context.harness?.uniformShowdownReference).not.toBeNull();
+    expect(context.harness?.uniformShowdownReference).toBeNull();
     expect(JSON.stringify(request)).not.toContain('audit-hand-uuid');
     expect(JSON.stringify(request)).not.toContain('private-authority');
     expect(context).toHaveProperty('recentOutcomes');

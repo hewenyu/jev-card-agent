@@ -40,7 +40,7 @@ function parse(value: string): Raw {
   }
 }
 
-export function initializeOpponentMemory(db: DatabaseSync): void {
+export function initializeOpponentMemory(db: DatabaseSync, includeRawIndex = true): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS opponent_encounters (
       table_id TEXT NOT NULL, hand_id TEXT NOT NULL, name TEXT NOT NULL,
@@ -50,11 +50,11 @@ export function initializeOpponentMemory(db: DatabaseSync): void {
     );
     CREATE INDEX IF NOT EXISTS opponent_encounters_lookup
       ON opponent_encounters(name, completed_ms DESC, received_ms);
-    CREATE INDEX IF NOT EXISTS events_type_id ON events(type, id);
   `);
+  if (includeRawIndex) db.exec('CREATE INDEX IF NOT EXISTS events_type_id ON events(type, id)');
 }
 
-function materialize(db: DatabaseSync, result: EventRow): void {
+function materialize(db: DatabaseSync, result: EventRow, target: DatabaseSync = db): void {
   const end = parse(result.payload);
   const completedAt = typeof end.ts === 'string' ? end.ts : '';
   const completed = Date.parse(completedAt);
@@ -140,7 +140,7 @@ function materialize(db: DatabaseSync, result: EventRow): void {
   const heroSeat = heroSeats.size === 1 ? [...heroSeats][0]! : null;
   const heroParticipated = heroSeat !== null && line.some((action) => action.seat === heroSeat);
   const shown = raw(end.shown_cards);
-  const insert = db.prepare(`INSERT OR IGNORE INTO opponent_encounters
+  const insert = target.prepare(`INSERT OR IGNORE INTO opponent_encounters
     (table_id,hand_id,name,completed_ms,received_ms,result_event_id,payload) VALUES(?,?,?,?,?,?,?)`);
   for (const [seat] of identities) {
     const name = identity(seat);
@@ -171,22 +171,39 @@ function materialize(db: DatabaseSync, result: EventRow): void {
 }
 
 /** Incremental derived index. Raw events remain unchanged; duplicate replay cannot double-count hands. */
-export function syncOpponentMemory(db: DatabaseSync): void {
-  const cursor = Number(db.prepare('SELECT value FROM meta WHERE key=?').get(VERSION)?.value ?? 0);
+export function syncOpponentMemory(
+  db: DatabaseSync,
+  target: DatabaseSync = db,
+  limit = 100,
+  cutoff?: string,
+): number {
+  const cursor = Number(
+    target.prepare('SELECT value FROM meta WHERE key=?').get(VERSION)?.value ?? 0,
+  );
   const results = db
-    .prepare("SELECT * FROM events WHERE type='hand_result' AND id>? ORDER BY id")
-    .all(cursor) as unknown as EventRow[];
-  if (!results.length) return;
-  db.exec('SAVEPOINT opponent_memory');
+    .prepare("SELECT * FROM events WHERE type='hand_result' AND id>? ORDER BY id LIMIT ?")
+    .all(cursor, limit) as unknown as EventRow[];
+  // A future-dated receipt/result blocks advancement, so it cannot leak into a published batch.
+  const futureIndex = results.findIndex(
+    (result) =>
+      cutoff !== undefined &&
+      (Date.parse(result.received_at) >= Date.parse(cutoff) ||
+        Date.parse(String(parse(result.payload).ts)) >= Date.parse(cutoff)),
+  );
+  const admissible = futureIndex < 0 ? results : results.slice(0, futureIndex);
+  if (!admissible.length) return cursor;
+  target.exec('SAVEPOINT opponent_memory');
   try {
-    for (const result of results) materialize(db, result);
-    db.prepare('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)').run(
-      VERSION,
-      String(results.at(-1)!.id),
-    );
-    db.exec('RELEASE opponent_memory');
+    for (const result of admissible) materialize(db, result, target);
+    target
+      .prepare(
+        `INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE CAST(meta.value AS INTEGER)<CAST(excluded.value AS INTEGER)`,
+      )
+      .run(VERSION, String(admissible.at(-1)!.id));
+    target.exec('RELEASE opponent_memory');
+    return admissible.at(-1)!.id;
   } catch (error) {
-    db.exec('ROLLBACK TO opponent_memory; RELEASE opponent_memory');
+    target.exec('ROLLBACK TO opponent_memory; RELEASE opponent_memory');
     throw error;
   }
 }
@@ -220,10 +237,11 @@ export function getOpponentMemory(
   db: DatabaseSync,
   state: PokerState,
   asOf: string,
+  synchronize = true,
 ): OpponentMemory[] {
   const cutoff = Date.parse(asOf);
   if (!Number.isFinite(cutoff)) return [];
-  syncOpponentMemory(db);
+  if (synchronize) syncOpponentMemory(db, db, Number.MAX_SAFE_INTEGER);
   const names = [
     ...new Set(
       state.seats

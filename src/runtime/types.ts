@@ -5,6 +5,8 @@ import type { HistoricalOutcome } from '../core/index.js';
 import type { SessionTurn } from '../core/session.js';
 import type { FundingEventView, FundingView, LiveDecisionProgress } from '../shared/api.js';
 import type { OpponentMemory } from '../core/opponent-memory.js';
+import type { KnowledgeBinding } from '../knowledge/types.js';
+import type { DecisionTiming } from './timing.js';
 
 export type RuntimePhase =
   | 'idle'
@@ -55,6 +57,7 @@ export interface StartOptions {
   gracefulStopTimeoutMs?: number;
 }
 export interface DecisionRecord {
+  timing?: DecisionTiming;
   status?: 'proposed' | 'cancelled' | 'failed';
   id: string;
   runId: string;
@@ -67,6 +70,9 @@ export interface DecisionRecord {
 }
 export type ActionStatus = 'prepared' | 'sent' | 'accepted' | 'rejected' | 'unresolved';
 export interface StoredAction {
+  /** Execution facts without replay history; immutable across retries. */
+  stateKey?: string;
+  timing?: DecisionTiming;
   decisionSource?: Proposal['source'];
   id: string;
   runId: string;
@@ -85,6 +91,8 @@ export interface RuntimeCheckpoint {
 }
 /** Synchronous methods are SQLite transactions. Throw on failure: no unrecorded action is sent. */
 export interface RuntimeStore {
+  pinKnowledge?(state: PokerState, observedAt: string): KnowledgeBinding;
+  saveDecisionTiming?(decisionId: string, timing: DecisionTiming): void;
   getOpponentMemory?(state: PokerState, asOf: string): OpponentMemory[];
   loadFundingState?(): Partial<FundingView> | undefined;
   saveFundingEvent?(event: FundingEventView, dedupeKey?: string): void;

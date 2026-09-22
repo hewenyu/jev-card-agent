@@ -19,6 +19,14 @@ import {
 import { LobbyLifecycle } from './lobby.js';
 import { FundingMonitor } from './funding.js';
 import { authorityKey, decide, type DecisionTask } from './decision.js';
+import {
+  actionAuthorityKey,
+  decisionStateKey,
+  runtimeDefaults as defaults,
+  atHandBoundary,
+} from './authority.js';
+import { markAcknowledged, markSent } from './timing.js';
+import { recordDecision } from './recording.js';
 import type {
   DecisionRecord,
   RuntimeDependencies,
@@ -27,19 +35,6 @@ import type {
   StoredAction,
 } from './types.js';
 
-const defaults = {
-  buyIn: 2000,
-  autoRebuy: true,
-  maxHands: 0,
-  maxDurationMs: 0,
-  decisionTimeoutMs: 40_000,
-  turnTimeoutMs: 45_000,
-  submissionReserveMs: 1500,
-  reconnectMinMs: 500,
-  reconnectMaxMs: 15_000,
-  maxReconnectAttempts: 20,
-  gracefulStopTimeoutMs: 0,
-};
 export class PokerRuntime extends EventEmitter {
   private readonly client: OpenPokerClient;
   private readonly lobby: LobbyLifecycle;
@@ -241,7 +236,7 @@ export class PokerRuntime extends EventEmitter {
     this.lobby.cancel();
     this.snapshot.phase = 'stopping';
     this.publish();
-    const idleBoundary = this.atHandBoundary();
+    const idleBoundary = atHandBoundary(this.snapshot.state);
     if (!graceful || !this.snapshot.state.handId || this.snapshot.state.complete || idleBoundary) {
       this.leave();
       return;
@@ -249,20 +244,6 @@ export class PokerRuntime extends EventEmitter {
     if (this.options.gracefulStopTimeoutMs > 0) {
       this.stopTimer ??= setTimeout(() => this.leave(), this.options.gracefulStopTimeoutMs);
     }
-  }
-
-  private atHandBoundary(): boolean {
-    const state = this.snapshot.state;
-    return (
-      state.complete ||
-      state.street === 'idle' ||
-      [
-        'between_hands_delay',
-        'awaiting_hand_start',
-        'insufficient_players',
-        'table_closing',
-      ].includes(state.waitingReason ?? '')
-    );
   }
 
   private publish(): void {
@@ -378,8 +359,13 @@ export class PokerRuntime extends EventEmitter {
   }
 
   private receive(event: ServerEvent): void {
+    const receivedAt = Date.now();
     const runId = this.snapshot.runId!;
-    const sourceId = this.dependencies.store.appendEvent(runId, event, new Date().toISOString());
+    const sourceId = this.dependencies.store.appendEvent(
+      runId,
+      event,
+      new Date(receivedAt).toISOString(),
+    );
     this.emit('event', event);
     this.funding.observe(
       event,
@@ -417,7 +403,7 @@ export class PokerRuntime extends EventEmitter {
     }
     if (event.type === 'player_action') this.acknowledge(event);
     if (event.type === 'resync_response') {
-      this.applyResync(event);
+      this.applyResync(event, receivedAt);
       return;
     }
     const previous = this.snapshot.state;
@@ -458,11 +444,11 @@ export class PokerRuntime extends EventEmitter {
       this.observedHands.add(this.snapshot.state.handId);
     }
     this.persist(event);
-    if (this.stopRequested && event.type === 'table_state' && this.atHandBoundary()) {
+    if (this.stopRequested && event.type === 'table_state' && atHandBoundary(this.snapshot.state)) {
       this.leave();
       return;
     }
-    if (event.type === 'your_turn') this.authorize(false, event);
+    if (event.type === 'your_turn') this.authorize(false, event, receivedAt);
     else if (event.type === 'hand_result') this.completeHand(event);
     else if (event.type === 'table_closed' || event.type === 'season_ended') {
       this.cancelTask();
@@ -488,6 +474,12 @@ export class PokerRuntime extends EventEmitter {
 
   private persist(event: ServerEvent): void {
     this.opponents.observe(this.snapshot.state);
+    if (
+      this.snapshot.state.handId &&
+      !this.snapshot.state.complete &&
+      ['hand_start', 'your_turn', 'resync_response'].includes(event.type)
+    )
+      this.dependencies.store.pinKnowledge?.(this.snapshot.state, new Date().toISOString());
     this.dependencies.store.saveCheckpoint({
       opponents: this.opponents.exportState(),
       tableId: this.snapshot.state.tableId,
@@ -498,7 +490,7 @@ export class PokerRuntime extends EventEmitter {
       this.dependencies.store.saveHand(this.snapshot.runId!, this.snapshot.state, event);
   }
 
-  private applyResync(event: ServerEvent): void {
+  private applyResync(event: ServerEvent, receivedAt = Date.now()): void {
     this.resyncPending = false;
     if (this.resyncTimer) clearTimeout(this.resyncTimer);
     if (
@@ -539,24 +531,24 @@ export class PokerRuntime extends EventEmitter {
       this.observedHands.add(this.snapshot.state.handId);
     }
     this.persist(event);
-    if (this.stopRequested && this.atHandBoundary()) {
+    if (this.stopRequested && atHandBoundary(this.snapshot.state)) {
       this.leave();
       return;
     }
     const key = authorityKey(this.snapshot.state);
     for (const action of this.pending.values()) {
-      if (`${action.payload.hand_id}:${action.payload.turn_token}` !== key) {
+      if (actionAuthorityKey(action) !== key) {
         this.dependencies.store.updateAction(action.id, 'unresolved', {
           reason: 'authority_changed_without_confirmation',
         });
         this.pending.delete(action.id);
       }
     }
-    this.authorize(true, event);
+    this.authorize(true, event, receivedAt);
     this.publish();
   }
 
-  private authorize(recovered: boolean, event: ServerEvent): void {
+  private authorize(recovered: boolean, event: ServerEvent, receivedAt: number): void {
     const state = this.snapshot.state;
     if (!state.turnToken || !state.handId || !state.tableId || this.leaving || this.decisionHalted)
       return;
@@ -564,9 +556,7 @@ export class PokerRuntime extends EventEmitter {
     if (this.activeTask?.key === key || this.blockedAuthorities.has(key)) return;
     this.dependencies.store.assertRuntimeLease?.();
     this.cancelTask();
-    let pending = [...this.pending.values()].find(
-      (action) => `${action.payload.hand_id}:${action.payload.turn_token}` === key,
-    );
+    let pending = [...this.pending.values()].find((action) => actionAuthorityKey(action) === key);
     if (pending && this.requireJev && pending.decisionSource !== 'jev') {
       this.dependencies.store.updateAction(pending.id, 'unresolved', {
         reason: 'non_jev_pending_action',
@@ -575,6 +565,22 @@ export class PokerRuntime extends EventEmitter {
       pending = undefined;
     }
     if (pending) {
+      if (pending.stateKey && pending.stateKey !== decisionStateKey(state, false)) {
+        const reason = 'pending_decision_state_changed';
+        this.dependencies.store.updateAction(pending.id, 'unresolved', { reason });
+        this.dependencies.store.saveDecisionBlock?.({
+          runId: this.snapshot.runId!,
+          decisionId: pending.decisionId,
+          reason,
+          createdAt: new Date().toISOString(),
+        });
+        this.pending.delete(pending.id);
+        this.blockedAuthorities.add(key);
+        this.decisionHalted = true;
+        this.snapshot.lastError = reason;
+        this.stop(true);
+        return;
+      }
       if (Date.now() < pending.deadlineAt) this.submit(pending);
       else {
         this.dependencies.store.updateAction(pending.id, 'unresolved', {
@@ -587,7 +593,7 @@ export class PokerRuntime extends EventEmitter {
     if (this.knownTurns.has(key)) return;
     this.knownTurns.add(key);
     const eventTime = typeof event.ts === 'string' ? Date.parse(event.ts) : NaN;
-    const startedAt = Number.isFinite(eventTime) ? Math.min(Date.now(), eventTime) : Date.now();
+    const startedAt = Number.isFinite(eventTime) ? Math.min(receivedAt, eventTime) : receivedAt;
     const remembered = this.turnDeadlines.get(key);
     const timing = remembered?.tableId === state.tableId ? remembered : undefined;
     const deadlineAt =
@@ -597,7 +603,7 @@ export class PokerRuntime extends EventEmitter {
     const decisionDeadlineAt =
       timing?.decisionDeadlineAt ??
       Math.min(
-        Date.now() + this.options.decisionTimeoutMs,
+        receivedAt + this.options.decisionTimeoutMs,
         deadlineAt - this.options.submissionReserveMs,
       );
     // Only a live your_turn establishes time. Resync timestamps must never reset that clock.
@@ -605,6 +611,9 @@ export class PokerRuntime extends EventEmitter {
       this.turnDeadlines.set(key, { tableId: state.tableId, deadlineAt, decisionDeadlineAt });
     const task: DecisionTask = {
       key,
+      stateKey: decisionStateKey(state),
+      receivedAt,
+      decisionDeadlineAt,
       controller: new AbortController(),
       state: structuredClone(state),
       deadlineAt,
@@ -633,11 +642,7 @@ export class PokerRuntime extends EventEmitter {
       this.snapshot.runId!,
       budget,
       (progress) => {
-        if (
-          this.activeTask !== task ||
-          task.controller.signal.aborted ||
-          authorityKey(this.snapshot.state) !== task.key
-        )
+        if (this.activeTask !== task || task.controller.signal.aborted || !this.matchesTask(task))
           return;
         this.snapshot.decision = progress;
         this.publish();
@@ -655,7 +660,7 @@ export class PokerRuntime extends EventEmitter {
         ) {
           result.decision.status = 'cancelled';
           result.decision.fallbackReason = 'decision_cancelled';
-          this.dependencies.store.saveDecision(result.decision);
+          recordDecision(this.dependencies.store, result.decision);
           if (this.activeTask === task) this.activeTask = null;
           return;
         }
@@ -666,24 +671,26 @@ export class PokerRuntime extends EventEmitter {
         const selected = result.decision.candidates.find(
           (candidate) => candidate.id === result.decision.proposal.candidateId,
         );
-        if (!selected || !validateCandidate(selected, this.snapshot.state)) {
+        const legal = !!selected && validateCandidate(selected, this.snapshot.state);
+        if (!legal || !this.matchesTask(task)) {
           if (this.requireJev) {
             result.decision.status = 'failed';
-            result.decision.fallbackReason = 'candidate_no_longer_legal';
+            result.decision.fallbackReason = legal
+              ? 'decision_state_changed'
+              : 'candidate_no_longer_legal';
             result.decision.proposal = {
               ...result.decision.proposal,
               source: 'unavailable',
               candidateId: '',
               selected: '',
               explanation:
-                'The Jev proposal was no longer legal at submission; no action was submitted.',
+                'The decision state or legal candidates changed before submission; no action was submitted.',
             };
             this.pauseForDecisionFailure(result.decision, task);
           } else this.resync();
           return;
         }
-        this.dependencies.store.saveDecision(result.decision);
-        this.dependencies.store.prepareAction(result.action);
+        recordDecision(this.dependencies.store, result.decision, result.action);
         this.pending.set(result.action.id, result.action);
         this.snapshot.decisions++;
         this.emit('decision', result.decision);
@@ -696,8 +703,15 @@ export class PokerRuntime extends EventEmitter {
     this.decisionTasks.add(pendingDecision);
   }
 
+  private matchesTask(task: DecisionTask): boolean {
+    return (
+      authorityKey(this.snapshot.state) === task.key &&
+      (!task.stateKey || decisionStateKey(this.snapshot.state) === task.stateKey)
+    );
+  }
+
   private pauseForDecisionFailure(decision: DecisionRecord, task: DecisionTask): void {
-    this.dependencies.store.saveDecision(decision);
+    recordDecision(this.dependencies.store, decision);
     const reason = decision.fallbackReason ?? 'model_decision_unavailable';
     this.dependencies.store.saveDecisionBlock?.({
       runId: this.snapshot.runId!,
@@ -729,10 +743,14 @@ export class PokerRuntime extends EventEmitter {
       this.dependencies.store.updateAction(action.id, 'unresolved', {
         reason: 'submission_retry_limit',
       });
-      this.blockedAuthorities.add(`${action.payload.hand_id}:${action.payload.turn_token}`);
+      this.blockedAuthorities.add(actionAuthorityKey(action));
       return;
     }
+    const sendStarted = Date.now();
     if (this.send(action.payload)) {
+      markSent(action.timing, sendStarted);
+      if (action.timing)
+        this.dependencies.store.saveDecisionTiming?.(action.decisionId, action.timing);
       this.attempts.set(action.id, attempts + 1);
       action.status = 'sent';
       this.dependencies.store.updateAction(action.id, 'sent');
@@ -755,12 +773,19 @@ export class PokerRuntime extends EventEmitter {
     // Uncorrelated rejections never mark an arbitrary neighboring action as rejected.
     if (!id || !this.pending.has(id)) return;
     const action = this.pending.get(id)!;
-    if (event.hand_id && event.hand_id !== action.payload.hand_id) return;
+    if (
+      (event.hand_id && event.hand_id !== action.payload.hand_id) ||
+      (event.table_id && event.table_id !== action.tableId)
+    )
+      return;
     const status =
       event.type === 'action_rejected' ||
       (event.type === 'action_ack' && event.status !== 'accepted')
         ? 'rejected'
         : 'accepted';
+    markAcknowledged(action.timing);
+    if (action.timing)
+      this.dependencies.store.saveDecisionTiming?.(action.decisionId, action.timing);
     this.dependencies.store.updateAction(id, status, { code: event.code ?? null });
     this.pending.delete(id);
     this.attempts.delete(id);
