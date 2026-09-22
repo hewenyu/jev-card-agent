@@ -39,6 +39,10 @@ case "$action" in
   resume)
     docker compose exec -T app node --input-type=module < "$script_dir/resume-runtime.mjs"
     ;;
+  research)
+    docker compose exec -T app node dist/cli/research.js "$@"
+    exit 0
+    ;;
   logs)
     docker compose logs --tail 100 -f "$@" app
     exit 0
@@ -49,7 +53,7 @@ case "$action" in
     backup_paths=$(docker compose exec -T app node --input-type=module < "$script_dir/backup-database.mjs")
     while IFS= read -r backup_path; do
       case "$backup_path" in
-        /app/data/backups/jev-*.sqlite|/app/data/backups/knowledge-*.sqlite) ;;
+        /app/data/backups/jev-*.sqlite|/app/data/backups/knowledge-*.sqlite|/app/data/backups/research-*.sqlite) ;;
         *) printf '%s\n' 'Backup failed: unexpected container path' >&2; exit 1 ;;
       esac
       docker compose cp "app:$backup_path" data/backups/
@@ -61,7 +65,7 @@ EOF
     exit 0
     ;;
   *)
-    printf '%s\n' 'Usage: sh scripts/manage.sh {start|stop|restart|update|resume|status|logs|backup}' >&2
+    printf '%s\n' 'Usage: sh scripts/manage.sh {start|stop|restart|update|resume|status|logs|backup|research}' >&2
     exit 2
     ;;
 esac

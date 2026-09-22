@@ -1,5 +1,7 @@
 # Docker 服务器部署
 
+> 1.3.0 adds the independently configured async LLM advice layer; see [async research](async-llm.md) for off/shadow/live, immutable archives, private publication and three-database backup. Earlier deterministic-only descriptions below document the retained statistics path.
+
 镜像通过 GitHub Actions 的 `DOCKER` 环境自动构建并发布到 `hewenyulucky/jev-card-agent`。环境 Secrets 为 `USER`、`TOKEN`；参见[镜像发布流程](docker-release.md)。镜像支持 `linux/amd64` 和 `linux/arm64`。构建明确禁用 Docker 和 npm Actions 缓存，并拉取最新基础镜像。CI 不连接运行服务器、不自动更新正在运行的容器。
 
 服务器只需要 Docker Engine 和 Docker Compose，无需安装 Node.js。克隆仓库或下载源码，在部署目录保留 `compose.yaml`、`.env.example` 和 `scripts/`，本地创建 `.env`。目录权限建议 700，`.env` 权限 600。管理脚本内部的容器操作全部使用 `docker compose`；不要将 `.env` 上传至 GitHub 或放入镜像。

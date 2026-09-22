@@ -16,6 +16,8 @@ import type { AppConfig } from './config.js';
 import type { ServerEvent } from '../openpoker/protocol.js';
 import { SpectatorFeed } from './spectator.js';
 import { SlowLoopService } from '../research/service.js';
+import { AsyncResearchService } from '../research/llm-service.js';
+import { ResearchMonitor } from './research-view.js';
 
 export interface RunRequest {
   strategy: StrategyName;
@@ -86,6 +88,9 @@ export class Controller {
   readonly queries: Queries;
   readonly spectator: SpectatorFeed;
   readonly research: SlowLoopService;
+  readonly asyncResearch: AsyncResearchService;
+  readonly researchMonitor: ResearchMonitor;
+  private researchTimer?: ReturnType<typeof setInterval>;
   runtime: PokerRuntime | null = null;
   private strategy: StrategyName = 'jev';
   private starting = false;
@@ -110,10 +115,55 @@ export class Controller {
       enabled: config.researchEnabled && store.filename !== ':memory:',
     });
     store.knowledgeSource = this.research;
+    this.asyncResearch = new AsyncResearchService(
+      store.filename,
+      store.filename === ':memory:'
+        ? { ...config.asyncLlm, mode: 'off', databasePath: ':memory:' }
+        : config.asyncLlm,
+    );
+    this.researchMonitor = new ResearchMonitor(
+      this.asyncResearch.config.databasePath,
+      store.db,
+      this.asyncResearch.status(),
+    );
+    store.adviceSource = this.asyncResearch;
     this.research.on('update', () => {
+      this.refreshResearch();
       if (!this.closing) this.spectator.update(this.view());
     });
-    void this.research.start();
+    this.asyncResearch.on('update', () => this.refreshResearch());
+    void Promise.all([this.research.start(), this.asyncResearch.start()])
+      .then(() => this.refreshResearch())
+      .catch(() => this.researchMonitor.fail());
+    this.researchTimer = setInterval(() => this.refreshResearch(), 2000);
+    this.researchTimer.unref();
+  }
+  private refreshResearch(): void {
+    if (this.closing) return;
+    try {
+      this.store.refreshKnowledge();
+      this.researchMonitor.refresh(this.asyncResearch.status());
+    } catch {
+      this.researchMonitor.fail();
+    }
+  }
+  async pauseResearch(): Promise<void> {
+    clearInterval(this.researchTimer);
+    this.researchTimer = undefined;
+    await Promise.all([this.research.stop(), this.asyncResearch.stop()]);
+  }
+  async restartResearch(): Promise<void> {
+    if (this.closing) throw new Error('Controller is closing');
+    await Promise.all([this.research.start(), this.asyncResearch.start()]);
+    if (this.closing) {
+      await this.pauseResearch();
+      return;
+    }
+    this.refreshResearch();
+    if (!this.researchTimer) {
+      this.researchTimer = setInterval(() => this.refreshResearch(), 2000);
+      this.researchTimer.unref();
+    }
   }
   async start(request: RunRequest): Promise<RuntimeView> {
     if (this.store.loadDecisionBlock())
@@ -266,6 +316,7 @@ export class Controller {
     return {
       running,
       research: this.research?.status(),
+      asyncResearch: this.researchMonitor?.current().status,
       ...(status?.funding ? { funding: status.funding } : {}),
       decision: status?.decision ?? null,
       status: this.starting
@@ -332,7 +383,8 @@ export class Controller {
       });
     }
     await this.runtime?.settleDecisions();
-    await this.research.stop();
+    await this.pauseResearch();
+    this.researchMonitor.close();
     this.releaseLease();
     this.detachSpectator?.();
     this.spectator.close();

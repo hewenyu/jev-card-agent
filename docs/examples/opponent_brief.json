@@ -1,0 +1,66 @@
+{
+  "source": "controlled_schema_example_not_a_real_provider_response",
+  "batch": {
+    "batchId": "controlled-research-batch",
+    "taskType": "opponent_brief",
+    "scopeKey": "opponent-a4bd5150118a3534a5bfabcc",
+    "basePolicyVersion": "poker-knowledge-base-v1",
+    "researchPromptVersion": "controlled-test",
+    "inputSchemaVersion": "research-batch-v2",
+    "rulesetVersion": "openpoker-nlhe-v2",
+    "contextSchemaVersion": "visible-context-v7",
+    "sourceSnapshotHash": "73e13b56007cc31610a3783cda1776d058f18bfcb12da8c2b2ded72ebad2ce3a",
+    "evidenceEventWatermark": 10,
+    "cutoff": "2026-09-22T06:08:46.279Z",
+    "eligibleHandIds": ["evidence-hand"],
+    "metrics": [
+      {
+        "id": "observed",
+        "name": "Observed opportunities",
+        "numerator": 1,
+        "denominator": 1,
+        "opponentKey": "opponent-a4bd5150118a3534a5bfabcc",
+        "handIds": ["evidence-hand"],
+        "throughEventId": 10,
+        "availableAt": "2026-09-22T06:07:46.280Z"
+      }
+    ],
+    "examples": [
+      {
+        "id": "example",
+        "handId": "evidence-hand",
+        "eventId": 10,
+        "availableAt": "2026-09-22T06:07:46.280Z",
+        "opponentKey": "opponent-a4bd5150118a3534a5bfabcc",
+        "phase": "decision_visible",
+        "summary": "A free check was available."
+      }
+    ],
+    "sampleDefinition": "One independently recorded controlled scenario.",
+    "missingness": ["No showdown."],
+    "disclosureMode": "public-live"
+  },
+  "response": {
+    "kind": "opponent_brief",
+    "basePolicyVersion": "poker-knowledge-base-v1",
+    "evidenceSnapshotHash": "73e13b56007cc31610a3783cda1776d058f18bfcb12da8c2b2ded72ebad2ce3a",
+    "evidenceRefs": ["example"],
+    "counterEvidenceRefs": [],
+    "scope": {
+      "streets": ["preflop"],
+      "players": [2],
+      "positions": [],
+      "stackBuckets": [],
+      "betBuckets": [],
+      "opponentKeys": ["opponent-a4bd5150118a3534a5bfabcc"],
+      "rulesetVersion": "openpoker-nlhe-v2",
+      "basePolicyVersion": "poker-knowledge-base-v1"
+    },
+    "hypothesis": "A free option existed.",
+    "suggestedGuidance": "Consider the free check using the current facts.",
+    "metricRefs": ["observed"],
+    "limitations": ["Small sample."],
+    "invalidateWhen": [],
+    "requiredScenarios": ["free-check"]
+  }
+}

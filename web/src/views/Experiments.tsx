@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { EvaluationView } from '../../../src/shared/api';
 import { api, dollars, message, number, policyLabel, time } from '../api';
 import { Empty, ErrorNotice, Panel, Status } from '../components/UI';
+import { AsyncResearch } from '../components/AsyncResearch';
 
 export function Experiments({ openDecision }: { openDecision: (decisionId: string) => void }) {
   const [evaluations, setEvaluations] = useState<EvaluationView[]>([]);
@@ -52,6 +53,7 @@ export function Experiments({ openDecision }: { openDecision: (decisionId: strin
         </div>
       </div>
       <ErrorNotice error={error} />
+      <AsyncResearch />
       <div className="experiments-grid">
         <Panel title="Evaluation history" eyebrow="IMMUTABLE INPUTS">
           {loading ? (

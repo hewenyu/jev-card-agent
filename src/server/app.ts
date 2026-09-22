@@ -115,6 +115,15 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
       .send({ error: error instanceof Error ? error.message : 'Request failed' });
   });
   app.get('/health', () => ({ status: 'ok', service: 'jev-card-agent' }));
+  app.get('/api/research', () => controller.researchMonitor.current());
+  app.post('/api/research/pause', async () => {
+    await controller.pauseResearch();
+    return { paused: true };
+  });
+  app.post('/api/research/restart', async () => {
+    await controller.restartResearch();
+    return { restarted: true };
+  });
   app.get('/api/funding/events', (request) =>
     store.recentFundingEvents(pageSchema.parse(request.query)),
   );

@@ -4,6 +4,7 @@ import type { LiveSpectator } from '../live';
 import { PokerTable } from '../components/PokerTable';
 import { HandSession } from '../components/HandSession';
 import { ResearchStatus } from '../components/ResearchStatus';
+import { AsyncResearch } from '../components/AsyncResearch';
 import { AccountFunding } from '../components/AccountFunding';
 import type { FundingHistoryState } from '../funding-history';
 import { Empty, Icon, Panel, SourceBadge, Status } from '../components/UI';
@@ -144,6 +145,7 @@ export function Live({
         </Panel>
       </div>
       <ResearchStatus research={runtime.research} />
+      <AsyncResearch summary={runtime.asyncResearch} />
       <Panel title="Table activity" eyebrow="CONFIRMED ACTIONS">
         {!events.length ? (
           <Empty title="Waiting for the next action">

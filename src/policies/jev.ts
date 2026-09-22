@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type {
   Candidate,
@@ -254,6 +255,7 @@ export class JevProvider implements RoutingJev {
         model: parsed.model,
         usage: parsed.usage,
         request,
+        requestHash: createHash('sha256').update(serialized).digest('hex'),
         response: parsed as unknown as RawMessage,
         ...(route || advisoryMetadata
           ? {

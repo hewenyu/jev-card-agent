@@ -1,3 +1,4 @@
+import type { DecisionAdvice } from './advice.js';
 import type { RecentOutcome } from './history.js';
 import type { StrategyVersions } from './versions.js';
 import type { DecisionSession } from './session.js';
@@ -77,6 +78,7 @@ export interface OpponentStats {
 }
 export interface DecisionContext {
   knowledge?: DecisionKnowledge;
+  advice?: DecisionAdvice;
   harness?: PokerFacts;
   opponentMemory?: OpponentMemory[];
   session?: DecisionSession;
@@ -114,6 +116,7 @@ export interface Proposal {
   usage?: { input_tokens: number; output_tokens: number };
   latencyMs: number;
   request?: RawMessage;
+  requestHash?: string;
   response?: RawMessage;
   routing?: RawMessage;
   attempts?: ProviderAttempt[];
@@ -144,6 +147,8 @@ export interface ProviderCall {
   requestedModel: string;
   inputCharacters: number;
   maxOutputTokens: number;
+  /** Opt-in private transport archive; never includes HTTP authentication headers. */
+  request?: { body: string; sha256: string; inputSha256: string };
 }
 export interface ProviderMeter {
   before(call: ProviderCall): string | null;

@@ -11,6 +11,34 @@ export function publicRuntime(view: RuntimeView): RuntimeView {
     runId: view.runId,
     strategy: view.strategy,
     error: null,
+    ...(view.asyncResearch
+      ? {
+          asyncResearch: {
+            mode: view.asyncResearch.mode,
+            configuredMode: view.asyncResearch.configuredMode,
+            running: view.asyncResearch.running,
+            error: view.asyncResearch.error ? 'Research unavailable' : null,
+            pending: view.asyncResearch.pending,
+            executing: view.asyncResearch.executing,
+            failed: view.asyncResearch.failed,
+            awaitingReview: view.asyncResearch.awaitingReview,
+            approved: view.asyncResearch.approved,
+            published: view.asyncResearch.published,
+            expired: view.asyncResearch.expired,
+            withdrawn: view.asyncResearch.withdrawn,
+            lastCompletedAt: view.asyncResearch.lastCompletedAt,
+            latestPublicationAt: view.asyncResearch.latestPublicationAt,
+            knownCostUsd: view.asyncResearch.knownCostUsd,
+            unpricedCalls: view.asyncResearch.unpricedCalls,
+            unknownUsageCalls: view.asyncResearch.unknownUsageCalls,
+            attempts: view.asyncResearch.attempts,
+            adoptedDecisions: view.asyncResearch.adoptedDecisions,
+            evaluatedDecisions: view.asyncResearch.evaluatedDecisions,
+            unmatchedDecisions: view.asyncResearch.unmatchedDecisions,
+            latestAdviceAgeMs: view.asyncResearch.latestAdviceAgeMs,
+          },
+        }
+      : {}),
     ...(view.research
       ? {
           research: {

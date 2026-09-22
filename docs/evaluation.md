@@ -1,5 +1,7 @@
 # 评估、测试与费用记录
 
+> 1.3.0 adds the independently configured async LLM advice layer; see [async research](async-llm.md) for off/shadow/live, immutable archives, private publication and three-database backup. Earlier deterministic-only descriptions below document the retained statistics path.
+
 本文描述已实现的评估口径和验收方法。实际执行结果见 [verification.md](verification.md)，运行命令见 [running.md](running.md)。本项目连接 OpenPoker.ai WebSocket V2，不实现扑克服务器，不通过 webhook 参加对局。
 
 ## 三种证据

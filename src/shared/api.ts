@@ -69,6 +69,7 @@ export interface DecisionView {
   /** Saved Jev request fields, recursively redacted; never reconstructed from audit context. */
   modelInput?: Record<string, unknown>;
   modelQuestions?: Record<string, unknown>;
+  requestHash?: string;
   candidates: CandidateView[];
   selectedCandidateId: string | null;
   source: string;
@@ -195,6 +196,7 @@ export interface FundingEventView {
 }
 export interface RuntimeView {
   research?: SlowLoopStatus;
+  asyncResearch?: import('./research.js').ResearchSummary;
   funding?: FundingView;
   decision?: LiveDecisionProgress | null;
   running: boolean;

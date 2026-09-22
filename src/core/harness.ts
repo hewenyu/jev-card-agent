@@ -1,6 +1,7 @@
 import type { Candidate, DecisionContext, RawMessage } from './types.js';
 import { analyzePokerCards, type UniformEquity } from './poker-cards.js';
 import { activeSeats, bettingFacts, positionFacts, round } from './poker-math.js';
+import { opponentKey } from '../knowledge/advice-validator.js';
 import { selectStrategyCards } from '../knowledge/selector.js';
 
 export const HARNESS_VERSION = 'poker-harness-v2';
@@ -63,6 +64,24 @@ export function projectJevState(context: DecisionContext): RawMessage {
             source: context.knowledge.snapshot.source,
             references: selectStrategyCards(context.knowledge.pin, context.street),
           },
+        }
+      : {}),
+    ...(context.advice?.mode === 'live' && context.advice.items.length
+      ? {
+          approvedAdvice: context.advice.items.map(({ id: _id, scope, ...item }) => ({
+            ...item,
+            scope: {
+              streets: scope.streets,
+              opponentSeats: activeSeats(context.seats)
+                .filter(
+                  (seat) =>
+                    seat.seat !== context.heroSeat &&
+                    seat.name !== null &&
+                    scope.opponentKeys.includes(opponentKey(seat.name)),
+                )
+                .map((seat) => seat.seat),
+            },
+          })),
         }
       : {}),
     street: context.street,
@@ -151,6 +170,20 @@ export function projectJevState(context: DecisionContext): RawMessage {
     evidencePolicy:
       'Only current visible facts and prior completed encounters. No recent profit streak, random-range equity or presumed opponent private cards. Stored raw history and uniform equity audits are separate from this projected request.',
   };
+  while (JSON.stringify(projected).length > 34000 && projected.approvedAdvice?.length) {
+    projected.approvedAdvice.pop();
+    const removed = context.advice!.items.pop()!;
+    context.advice!.proposalIds.pop();
+    const audit = context.advice!.audit.find((item) => item.id === removed.id);
+    if (audit) audit.reason = 'context_size_limit';
+    context.advice!.publicationIds = context.advice!.items.map((item) => item.id);
+    context.advice!.serializedBytes = Buffer.byteLength(
+      JSON.stringify(context.advice!.items),
+      'utf8',
+    );
+    if (!context.advice!.items.length) context.advice!.knowledgeSource = 'deterministic';
+  }
+  if (projected.approvedAdvice?.length === 0) delete projected.approvedAdvice;
   while (JSON.stringify(projected).length > 34000) {
     const largest = projected.opponentMemory
       .filter((memory) => memory.examples.length > 0)

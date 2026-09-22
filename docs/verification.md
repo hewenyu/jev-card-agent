@@ -2,6 +2,14 @@
 
 本文件区分真实调用、公开 Arena 对局和本地可控测试。验证日期按 UTC 记录；终端环境时区可能显示前一天。密钥、Bot 账户资料、原始牌局数据库和 provider 响应均不公开，`.env` 与 `data/` 被 Git 忽略。
 
+## 1.3.0 异步研究开发验收 / Async research engineering validation
+
+本轮已实现独立 LLM 研究、结构化提案、私有审批/发布/撤回、下一手固定知识和实际 Jev 请求采用。默认 `ASYNC_LLM_MODE=off`。受控纵向测试从 12 手合成完整历史经过真实适配器、独立审批与归档，确认当前手不变、下一手采用建议、每次动作只有一次 Jev 请求。500 项 Vitest、59 项 Playwright 及 lint、格式、类型、构建、仓库检查通过；性能原始样本、复现命令和完整边界见 [1.3.0 验证报告](async-llm-verification.md)。
+
+本轮没有调用真实付费供应商、连接 Arena、启用生产 live 或部署服务器，也没有修改生产历史。下方较早版本的真实调用及对局记录不代表 1.3.0 已通过供应商或盈利验证。
+
+Version 1.3.0 completes the controlled engineering chain and explicit diagnostic/evaluation entry points. Real provider compatibility, Arena adoption and strategy profitability remain separate, unexecuted checks for this release. Existing production stays on 1.2.4.
+
 ## 真实 API
 
 | 接口              | 请求                           | 观测结果                                                     | 可得结论                               |

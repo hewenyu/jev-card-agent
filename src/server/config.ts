@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import type { StrategyName } from '../shared/api.js';
+import { loadAsyncResearchConfig, type AsyncResearchConfig } from '../research/config.js';
 
 export interface AppConfig {
   host: string;
@@ -7,6 +8,7 @@ export interface AppConfig {
   databasePath: string;
   knowledgeDatabasePath: string;
   researchEnabled: boolean;
+  asyncLlm: AsyncResearchConfig;
   apiToken: string;
   demo: boolean;
   readOnlyDemo: boolean;
@@ -95,6 +97,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
     databasePath,
     knowledgeDatabasePath,
     researchEnabled: !synthetic && env.RESEARCH_ENABLED !== 'false',
+    asyncLlm: loadAsyncResearchConfig(env, databasePath, synthetic),
     apiToken: env.API_TOKEN || '',
     demo: synthetic,
     readOnlyDemo,
@@ -149,6 +152,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
   };
   if (env.REASONING_API_FORMAT && !['responses', 'messages'].includes(env.REASONING_API_FORMAT))
     throw new Error('REASONING_API_FORMAT must be responses or messages');
+  if (config.asyncLlm.databasePath === knowledgeDatabasePath)
+    throw new Error('Research database must be separate from the statistics database');
   if (config.hybridTimeoutMs > 40_000)
     throw new Error('HYBRID_TIMEOUT_MS must leave submission time below the 45-second turn');
   if (config.jevDecisionTimeoutMs > 40_000 || config.jevTimeoutMs > config.jevDecisionTimeoutMs)

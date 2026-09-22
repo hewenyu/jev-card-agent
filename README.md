@@ -41,12 +41,15 @@ flowchart LR
   T --> E[Replay, evaluation and analytics]
   T --> S[Separate statistics and audit worker]
   S --> K[Published knowledge]
+  T --> L[Independent LLM research worker]
+  L --> P[Validate, approve and publish advice]
+  P --> K
   K --> C
 ```
 
 The current implementation uses **pure Jev (`BOT_STRATEGY=jev`)** with a [poker harness](docs/harness.md): deterministic card and betting facts, position, street-sized legal candidates, current-hand context and completed opponent encounters. Jev makes the final choice. The runtime does not automatically rewrite strategy. Deployment and executed validation are recorded separately in the [verification report](docs/verification.md).
 
-The dedicated **DeepSeekProvider** and standard Responses / Messages adapters remain available for optional combined-policy experiments. Extra analysis requires explicitly selecting `jev-reasoning` and configuring its provider; pure Jev does not call DeepSeek, GPT or Claude.
+Version **1.3.0** adds optional [asynchronous LLM research](docs/async-llm.md). `BOT_STRATEGY=jev` keeps Jev as the action selector; `ASYNC_LLM_MODE=off` remains the default. Shadow research cannot alter Jev requests. Explicitly activated live research adds only approved, applicable suggestions to the next hand’s fixed knowledge. This mode is labelled Jev + asynchronous LLM assistance. The older synchronous `jev-reasoning` experiment remains separate.
 
 Each hand has a persistent session. Following Pi’s separation of stored history and model context, the full event/decision history remains in SQLite while each request uses a compact projection. Unrelated recent profit streaks, repeated identifiers and duplicated context are omitted. Opponent memory uses at most 200 completed encounters per current opponent; completion and receipt must both precede the decision. Public showdown examples and street counts retain source evidence and sample limits. Missing price metadata is not guessed.
 
@@ -60,9 +63,18 @@ Decision views preserve the supplied facts, actual provider output and final Jev
 
 ## Fast decisions and asynchronous knowledge
 
-The normal live path makes one Jev request. A separate worker thread maintains deterministic statistics and random-range audits without waiting for an extra LLM. Each hand pins a published knowledge version, evidence cutoff and content hash across reconnects and restarts; current cards and actions keep updating. A paused or backlogged worker leaves decisions using existing eligible knowledge or an explicit baseline. Research currently produces deterministic statistics, calls no LLM and cannot submit table actions.
+The normal live path makes one Jev request. A separate worker thread maintains deterministic statistics and random-range audits without waiting for an extra LLM. Each hand pins a published knowledge version, evidence cutoff and content hash across reconnects and restarts; current cards and actions keep updating. A paused or backlogged worker leaves decisions using existing eligible knowledge or an explicit baseline. An independent research worker can analyze completed evidence using the dedicated DeepSeek Messages adapter or configured Responses/Messages transport. It cannot submit actions or resume a stopped bot. Research receives its own credentials and sanitized evidence; the statistics worker receives neither model nor Arena credentials.
 
-Live and Replay show the hand’s pinned knowledge, actual request, stage timings and asynchronous audit status. Later audits are separate additions, never presented as information supplied to Jev at decision time. Older records explicitly mark unavailable fields. Live keeps the table first and worker status below it; Overview remains statistics-only. See the [fast/slow contract](docs/fast-slow.md); latency and profitability require separate measurement.
+Live and Replay show the hand’s pinned knowledge, actual request, stage timings and asynchronous audit status. Later audits are separate additions, never presented as information supplied to Jev at decision time. Older records explicitly mark unavailable fields. Live keeps the table first and worker status below it; Overview remains statistics-only. Research status, review/publication history and actual advice adoption appear below Live and in Evaluations. Each decision shows advice provenance and exclusions. Private CLI operations handle approval, publication, withdrawal and explicit live activation; no controls are added to the public website. See the [async research operations guide](docs/async-llm.md) and [1.3.0 verification](docs/async-llm-verification.md); engineering tests and profitability are separate results.
+
+## Prepare research without model calls
+
+```sh
+npm run research -- --op prepare --output data/research/prepared
+npm run research -- --op status
+```
+
+Preparation reads verified completed live hands and writes private frozen batches. Configure dedicated `LLM_RESEARCH_*` settings before explicitly enabling research. Real diagnostics and paired Jev comparisons require `--allow-paid`; enabling live consumption also requires `--confirm-live`. The [operations guide](docs/async-llm.md) gives the full commands and migration/rollback procedure.
 
 ## Account chips and rebuys
 

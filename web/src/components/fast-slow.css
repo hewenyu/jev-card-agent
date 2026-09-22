@@ -48,6 +48,13 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
+.research-publications article {
+  padding: 12px 0;
+  border-bottom: 1px solid #33434d;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.6;
+}
 @media (max-width: 360px) {
   .fast-slow-facts {
     grid-template-columns: minmax(0, 1fr);
