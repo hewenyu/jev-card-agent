@@ -276,3 +276,31 @@ summary {
     transition: none;
   }
 }
+
+.repository-link {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+  color: #c4cec5;
+  font-size: 12px;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.repository-link:hover {
+  color: var(--green);
+  text-decoration: underline;
+}
+@media (max-width: 540px) {
+  .topbar-controls > .repository-link {
+    order: 1;
+    margin-left: auto;
+  }
+  .topbar-controls > .run-selector {
+    order: 2;
+    flex-basis: 100%;
+  }
+  .topbar-controls > .button {
+    order: 3;
+  }
+}

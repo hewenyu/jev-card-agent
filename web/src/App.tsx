@@ -204,6 +204,14 @@ export function App() {
                 ))}
               </select>
             </label>
+            <a
+              className="repository-link"
+              href="https://github.com/hewenyu/jev-card-agent"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              GitHub <Icon name="external" size={14} />
+            </a>
             {(runPages.hasMore || runPages.error) && (
               <button
                 className="button compact secondary"

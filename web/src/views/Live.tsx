@@ -6,7 +6,7 @@ import { HandSession } from '../components/HandSession';
 import { ResearchStatus } from '../components/ResearchStatus';
 import { AccountFunding } from '../components/AccountFunding';
 import type { FundingHistoryState } from '../funding-history';
-import { Empty, Panel, SourceBadge, Status } from '../components/UI';
+import { Empty, Icon, Panel, SourceBadge, Status } from '../components/UI';
 import './live.css';
 
 function actionLabel(event: SpectatorEvent, runtime: RuntimeView): string {
@@ -28,6 +28,13 @@ export function Live({
   live: LiveSpectator;
 }) {
   const run = runs.find((item) => item.id === runtime.runId);
+  const arenaUrl =
+    runtime.mode === 'live' &&
+    runtime.running &&
+    runtime.status === 'playing' &&
+    runtime.table?.tableId
+      ? `https://openpoker.ai/arena/${encodeURIComponent(runtime.table.tableId)}`
+      : null;
   const events =
     live.snapshot?.runtime.runId === runtime.runId
       ? live.snapshot.recentEvents.filter(
@@ -58,7 +65,21 @@ export function Live({
         <Panel
           title="Live table"
           eyebrow={runtime.mode === 'demo' ? 'RECORDED DEMONSTRATION' : 'OPENPOKER ARENA'}
-          action={<Status>{runtime.status}</Status>}
+          action={
+            <div className="table-heading-actions">
+              <Status>{runtime.status}</Status>
+              {arenaUrl && (
+                <a
+                  className="arena-watch-link"
+                  href={arenaUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Watch on OpenPoker <Icon name="external" size={13} />
+                </a>
+              )}
+            </div>
+          }
         >
           <PokerTable
             table={runtime.table}

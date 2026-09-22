@@ -94,3 +94,22 @@
 .spectator-layout .seat-5 {
   top: 3px;
 }
+
+.table-heading-actions {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 8px;
+}
+.arena-watch-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--green);
+  font-size: 11px;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.arena-watch-link:hover {
+  text-decoration: underline;
+}
