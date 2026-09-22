@@ -1,14 +1,44 @@
-import { useState } from 'react';
-import type { RunSummary } from '../../../src/shared/api';
+import { useEffect, useState } from 'react';
+import type { RunSummary, RuntimeView } from '../../../src/shared/api';
 import { number, signed, time } from '../api';
 import { Empty, ErrorNotice, Panel } from '../components/UI';
 import { PerformanceChart } from '../components/PerformanceChart';
 import { useRunPerformance } from '../performance';
+import { currentScorePoints, fundingIsStale } from '../season-score';
 import './overview.css';
 
-export function Overview({ run, revision }: { run: RunSummary | undefined; revision: number }) {
+export function Overview({
+  run,
+  revision,
+  runtime,
+}: {
+  run: RunSummary | undefined;
+  revision: number;
+  runtime: RuntimeView;
+}) {
   const { data, error } = useRunPerformance(run?.id, revision);
   const [curve, setCurve] = useState<'profit' | 'score'>('profit');
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const currentRun = !!run && run.id === runtime.runId;
+  const funding = runtime.funding;
+  const score = currentRun ? (funding?.seasonScore ?? null) : (data?.score ?? null);
+  const scoreAt = currentRun ? funding?.updatedAt : data?.scoreObservedAt;
+  const legacy = !currentRun && score !== null && data?.scoreSource !== 'official';
+  const stale = currentRun && fundingIsStale(funding, now);
+  const scoreLabel = legacy ? 'Historical balance estimate' : 'Season score';
+  const scoreStatus = legacy
+    ? 'Legacy account + table balance · not official score'
+    : currentRun
+      ? score === null
+        ? 'Official score not yet reported'
+        : stale
+          ? 'Last confirmed official score · refresh delayed'
+          : 'Current official account score'
+      : 'Latest recorded official score for this run';
   const profitPoints =
     data?.settledHands && run
       ? [
@@ -16,15 +46,20 @@ export function Overview({ run, revision }: { run: RunSummary | undefined; revis
           ...data.profitPoints.map((point) => ({ at: point.at, value: point.netChips })),
         ]
       : [];
-  const scorePoints =
-    data?.scorePoints.map((point) => ({ at: point.at, value: point.score })) ?? [];
+  const scorePoints = (
+    currentRun ? currentScorePoints(data, funding) : (data?.scorePoints ?? [])
+  ).map((point) => ({ at: point.at, value: point.score }));
   return (
     <div className="results-overview">
       <div className="page-heading">
         <div>
           <p className="eyebrow">PERFORMANCE</p>
           <h1>Results at a glance.</h1>
-          <p className="subtle">Selected run · full recorded history · automatically refreshed</p>
+          <p className="subtle">
+            {currentRun
+              ? 'Current run · live official score · recorded results'
+              : 'Selected historical run · recorded results and score'}
+          </p>
         </div>
       </div>
       <ErrorNotice error={error} />
@@ -64,20 +99,15 @@ export function Overview({ run, revision }: { run: RunSummary | undefined; revis
             </article>
             <article className="metric">
               <span>
-                Season score <small>CHIPS</small>
+                {scoreLabel} <small>CHIPS</small>
               </span>
-              <strong data-testid="overview-score">
-                {data?.score == null ? '—' : number(data.score)}
-              </strong>
-              <p
-                title={data?.scoreObservedAt ? `Recorded ${time(data.scoreObservedAt)}` : undefined}
-              >
-                Official account snapshot · includes rebuys
-              </p>
+              <strong data-testid="overview-score">{score === null ? '—' : number(score)}</strong>
+              <p data-testid="overview-score-status">{scoreStatus}</p>
+              {scoreAt && <p className="score-timestamp">Recorded {time(scoreAt)}</p>}
             </article>
           </div>
           <Panel
-            title={curve === 'profit' ? 'Cumulative net profit' : 'Season score'}
+            title={curve === 'profit' ? 'Cumulative net profit' : scoreLabel}
             eyebrow="RESULTS OVER TIME"
             className="results-panel"
             action={
@@ -94,22 +124,23 @@ export function Overview({ run, revision }: { run: RunSummary | undefined; revis
                   aria-pressed={curve === 'score'}
                   onClick={() => setCurve('score')}
                 >
-                  Season score
+                  {legacy ? 'Historical estimate' : 'Season score'}
                 </button>
               </div>
             }
           >
-            {!data && !error ? (
+            {!data && !error && !(curve === 'score' && scorePoints.length) ? (
               <p className="results-loading" role="status">
                 Loading statistics…
               </p>
-            ) : !data ? (
+            ) : !data && !(curve === 'score' && scorePoints.length) ? (
               <Empty title="Statistics unavailable">Retrying automatically.</Empty>
             ) : (
               <PerformanceChart
                 points={curve === 'profit' ? profitPoints : scorePoints}
                 kind={curve}
-                hands={data.settledHands}
+                hands={data?.settledHands ?? 0}
+                scoreLabel={scoreLabel}
               />
             )}
             <footer className="panel-footer results-footer">
@@ -121,9 +152,9 @@ export function Overview({ run, revision }: { run: RunSummary | undefined; revis
               <span>
                 {curve === 'profit'
                   ? `Net chips · excludes rebuys${data && data.settledHands > data.profitPoints.length ? ' · sampled curve' : ''}`
-                  : data?.scoreObservedAt
-                    ? `Includes rebuys · recorded ${time(data.scoreObservedAt)}`
-                    : 'Account chips + chips at table'}
+                  : scoreAt
+                    ? `${legacy ? 'Legacy estimate' : 'Official score'} · recorded ${time(scoreAt)}`
+                    : 'Awaiting an official score snapshot'}
               </span>
             </footer>
           </Panel>

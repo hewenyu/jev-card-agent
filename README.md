@@ -22,7 +22,9 @@ The public website is **anonymous and read-only**. It exposes the Bot’s own cu
 
 Live SSE updates and reconnects automatically. Every occupied seat labels **Available** (chips still available to bet) and **Bet** (the current street’s contribution, already included in the pot). Settled hands clear current bets and label the historical pot **Settled pot**. Every player’s displayed stack and the dealer button follow server state; sparse player summaries preserve seats they do not mention. Animations illustrate events without calculating authoritative balances. Older runs and hands load in pages of 100.
 
-Overview focuses on the selected run’s results across its full recorded history. Win rate is the share of verified hands with positive net profit; break-even hands remain in the denominator. Season score comes from recorded official account snapshots and includes rebuys, while net profit excludes funding. Both curves refresh automatically. Account details and funding events are shown below the table in Live; individual hands remain in Replay.
+Overview shows settled profit and win rate for the selected run. Win rate is the share of verified hands with positive net profit; break-even hands remain in the denominator. For the current run, its season score uses the same official `seasonScore` account observation shown in Live, including after departure or stopping; it does not add the available balance and table stack. Missing official scores stay unknown, while restored or delayed observations retain their value with a stale label. Net profit excludes funding.
+
+The run selector follows the current run by default. Selecting history pins that choice; selecting the current run again restores following. Historical scores show their last recorded source and time; older balance sums are explicitly labelled estimates, not official scores. Score curves do not join different seasons or legacy estimates onto current observations. Account details and funding events remain below the Live table; Overview stays statistics-only.
 
 ## How decisions work
 

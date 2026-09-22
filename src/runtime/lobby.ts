@@ -1,4 +1,9 @@
-import type { ActiveGame, OpenPokerClient, RebuyResult } from '../openpoker/client.js';
+import type {
+  ActiveGame,
+  OpenPokerClient,
+  RebuyResult,
+  SeasonBalance,
+} from '../openpoker/client.js';
 import { record, type ServerEvent } from '../openpoker/protocol.js';
 
 interface LobbyHooks {
@@ -12,6 +17,7 @@ interface LobbyHooks {
   cooldown(): void;
   fail(error: unknown): void;
   fundingRebuy?(result: RebuyResult): void;
+  fundingSnapshot?(balance: SeasonBalance | null, reason: 'before_join'): boolean;
 }
 class FatalLobbyError extends Error {}
 
@@ -127,6 +133,8 @@ export class LobbyLifecycle {
     try {
       const season = await this.client.seasonBalance(operation.signal);
       if (!current()) return;
+      if (this.hooks.fundingSnapshot?.(season, 'before_join') === false)
+        throw new Error('Official account observation could not be persisted');
       if (season && season.chipsAtTable > 0 && season.chipBalance >= 1000) {
         const placement = await this.client.activeGame(operation.signal);
         if (!current()) return;
@@ -173,6 +181,8 @@ export class LobbyLifecycle {
         this.client.activeGame(operation.signal),
       ]);
       if (!current()) return;
+      if (this.hooks.fundingSnapshot?.(latest, 'before_join') === false)
+        throw new Error('Official account observation could not be persisted');
       if (!latest || placement.playing || latest.chipsAtTable > 0 || latest.chipBalance >= 1000) {
         this.schedule(1000);
         return;

@@ -291,3 +291,13 @@ The pre-release evidence establishes isolated background work, recoverable hand 
 1.2.0 上线检查发现匿名接口的 runtime 白名单漏掉 `research`，因此慢线程虽然正常工作，公开页面无法显示其状态。1.2.1 显式公开启用状态、最近批次、游标、积压和知识版本；内部错误统一显示为固定提示，不传递原始错误或额外字段。新增回归同时检查匿名 Overview 和 SSE 使用的公开快照，并验证内部字段与错误内容不会泄露。该修复不改变 Jev 输入、动作选择或知识统计。
 
 Production inspection found that the public runtime projection omitted worker status. Version 1.2.1 exposes an explicit allowlist for Overview and SSE snapshots, while replacing internal errors with a fixed public message. Decision behavior and knowledge computation are unchanged.
+
+## 1.2.2 积分同步修复 / Season score reconciliation
+
+2026-09-22 UTC 只读核对最近三次 Run 边界：前一轮最终筹码与后一轮首份快照分别为 **1,459 → 1,459、5,657 → 5,657、5,737 → 5,737**，没有实际归零。旧 Runtime 在离桌事件后 15–21 ms 内停止，取消了尚未完成的账户请求；其中两份旧 Run 的最后记录比最终结算多 20 筹码。核对时官方 `score`、Live 账户和当前 Run API 一致；浏览器是否仍选着旧 Run 未通过远程页面目检确认，但前端默认选择确实不会跟随新 Run。
+
+修复合同先更新于运行文档：当前 Overview 与 Live 使用同一官方积分观测；默认跟随当前 Run，主动选择历史时保留历史。客户端直接读取 `score` / `season_id`，入桌前记录核对结果，入桌后和确认离桌后再次记录；每个 Run 即使初始余额相同也必须留下首次观测。新增字段通过增量迁移保存，旧记录不改写，余额求和只标记为旧版估算。已保存历史净收益仍按各 Run 的实际手牌结算计算。
+
+The regression scope includes differing official score and chip totals, signed/absent scores, buy-in and cash-out transfers, preserved historical rows, startup reconciliation, final reconciliation before stopping, current Overview/Live agreement, and intentional historical selection. Engineering checks and deployment observations are reported separately; account score is not evidence of strategy profitability.
+
+发布前本地 `npm run check` 全部通过：52 个文件、395 项 Vitest，包含真实本地 WebSocket 上的启动/离桌顺序，以及原数据库旧列逐值不变的迁移回归；lint、格式、类型、构建与仓库检查通过，最长实现文件 991 行。浏览器全套 54 项通过，更新一处已改变的说明文案断言后，其所属文件 8 项复验通过；最终发布流水线再次执行完整浏览器套件。Overview/Live 桌面截图已目检，5 个配置私有值在跟踪源码与 144 个构建文件中零匹配。本轮无需额外供应商模型诊断，未改变 Jev 的行动选择逻辑。

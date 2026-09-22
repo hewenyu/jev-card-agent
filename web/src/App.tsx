@@ -30,6 +30,7 @@ export function App() {
   const [view, setView] = useState(initialView);
   const [data, setData] = useState<OverviewData | null>(null);
   const [runId, setRunId] = useState('');
+  const followCurrentRun = useRef(true);
   const [handId, setHandId] = useState<string | null>(null);
   const [decisionId, setDecisionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +62,6 @@ export function App() {
       setData(value);
       setOverviewStartedAt(startedAt);
       setRevision((current) => current + 1);
-      setRunId((current) => current || value.runs[0]?.id || '');
       setError(null);
     } catch (reason) {
       setError(message(reason));
@@ -85,6 +85,12 @@ export function App() {
     window.addEventListener('hashchange', handler);
     return () => window.removeEventListener('hashchange', handler);
   }, []);
+  const currentRunId = displayData?.runtime.runId ?? runs[0]?.id;
+  const automaticRunId = runs.some((item) => item.id === currentRunId) ? currentRunId : runs[0]?.id;
+  useEffect(() => {
+    if (followCurrentRun.current && automaticRunId) setRunId(automaticRunId);
+    else if (!runId && automaticRunId) setRunId(automaticRunId);
+  }, [automaticRunId, runId]);
   const run = runs.find((item) => item.id === runId);
   const handPages = useHistoryPages<HandSummary>(
     runId ? `/hands?runId=${encodeURIComponent(runId)}` : null,
@@ -103,6 +109,7 @@ export function App() {
   async function openDecision(id: string) {
     try {
       const decision = await api<DecisionView>(`/decisions/${encodeURIComponent(id)}`);
+      followCurrentRun.current = decision.runId === currentRunId;
       setRunId(decision.runId);
       setHandId(decision.handId);
       setDecisionId(decision.id);
@@ -177,6 +184,7 @@ export function App() {
                 aria-label="Selected run"
                 value={runId}
                 onChange={(event) => {
+                  followCurrentRun.current = event.target.value === currentRunId;
                   setRunId(event.target.value);
                   setHandId(null);
                   setDecisionId(null);
@@ -191,6 +199,7 @@ export function App() {
                         ? 'Evaluation'
                         : 'Arena'}{' '}
                     · {item.strategy} · {item.id.slice(0, 12)}
+                    {item.id === currentRunId ? ' · Current' : ''}
                   </option>
                 ))}
               </select>
@@ -225,7 +234,9 @@ export function App() {
             </Empty>
           ) : (
             <>
-              {view === 'overview' && <Overview run={run} revision={revision} />}
+              {view === 'overview' && (
+                <Overview run={run} revision={revision} runtime={displayData.runtime} />
+              )}
               {view === 'live' && (
                 <Live
                   runtime={displayData.runtime}

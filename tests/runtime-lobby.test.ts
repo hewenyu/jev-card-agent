@@ -35,6 +35,7 @@ function fixture(balance = 1500) {
     cooldown: vi.fn(),
     fail: vi.fn(),
     fundingRebuy: vi.fn(),
+    fundingSnapshot: vi.fn(() => true),
   };
   const lobby = new LobbyLifecycle(client, hooks);
   return {
@@ -179,6 +180,33 @@ describe('free-chip continuous lobby lifecycle', () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(hooks.join).toHaveBeenCalledTimes(count + 1);
     }
+    lobby.cancel();
+  });
+  it('persists the exact official balance before every join and retries when persistence fails', async () => {
+    const { lobby, hooks, season } = fixture(1600);
+    hooks.fundingSnapshot.mockReturnValueOnce(false);
+    lobby.requestJoin();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hooks.fundingSnapshot).toHaveBeenCalledWith(season, 'before_join');
+    expect(hooks.join).not.toHaveBeenCalled();
+    season.chipBalance = 1800;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(hooks.join).toHaveBeenCalledExactlyOnceWith(1800);
+    expect(hooks.fundingSnapshot.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      hooks.join.mock.invocationCallOrder[0]!,
+    );
+    lobby.cancel();
+  });
+  it('does not join after an official balance request fails and retries the read', async () => {
+    const { lobby, hooks, read } = fixture();
+    read.mockRejectedValueOnce(new Error('network unavailable'));
+    lobby.requestJoin();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hooks.join).not.toHaveBeenCalled();
+    expect(hooks.fundingSnapshot).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(hooks.fundingSnapshot).toHaveBeenCalledTimes(1);
+    expect(hooks.join).toHaveBeenCalledExactlyOnceWith(1500);
     lobby.cancel();
   });
 });

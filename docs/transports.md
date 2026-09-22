@@ -53,7 +53,7 @@ Node.js 24.13.0 临时诊断：REST profile 返回 200；active-game 返回 200 
 
 ## 免费筹码、买入与持续参赛
 
-OpenPoker 的核心对局使用免费的整数虚拟筹码。账户 `/api/me` 中的 `balance` 属于支付余额，不能用于牌桌买入判断；运行时只读取 `/api/season/me` 的 `chip_balance` 和 `chips_at_table`，以及 `/api/me/active-game` 的在桌状态。
+OpenPoker 的核心对局使用免费的整数虚拟筹码。账户 `/api/me` 中的 `balance` 属于支付余额，不能用于牌桌买入判断；运行时读取 `/api/season/me` 的 `chip_balance`、`chips_at_table`、`score`、`season_id`，以及 `/api/me/active-game` 的在桌状态。`score` 直接作为官方积分保存，可为负值；缺失时显示未知，不使用筹码余额相加替代。每次入桌前核对并保存官方账户快照，入桌和离桌后再次对账。
 
 当前官方公共赛季合同：
 

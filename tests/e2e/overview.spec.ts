@@ -13,6 +13,8 @@ function performance(runId: string, changes: Partial<PerformanceView> = {}): Per
     netChips: 1250,
     winRate: 40,
     score: 870,
+    scoreSource: 'official',
+    seasonId: 'overview-test-season',
     scoreObservedAt: end,
     profitPoints: [
       { at: start, handNumber: 1, settledHands: 1, netChips: -50 },

@@ -39,6 +39,20 @@ export function initializeFunding(db: DatabaseSync): void {
     available_before INTEGER, available_after INTEGER, chips_at_table INTEGER, rebuy_available_at TEXT
   );
   CREATE INDEX IF NOT EXISTS funding_events_page ON funding_events(created_at DESC,id DESC);`);
+  const columns = new Set(
+    db
+      .prepare('PRAGMA table_info(funding_events)')
+      .all()
+      .map((row) => String(row.name)),
+  );
+  for (const [name, type] of Object.entries({
+    season_score: 'INTEGER',
+    season_id: 'TEXT',
+    score_source: 'TEXT',
+    sync_reason: 'TEXT',
+  })) {
+    if (!columns.has(name)) db.exec(`ALTER TABLE funding_events ADD COLUMN ${name} ${type}`);
+  }
   const watermark = Number(
     db.prepare("SELECT value FROM meta WHERE key='funding_history_through_id'").get()?.value ?? 0,
   );
@@ -91,10 +105,14 @@ export function saveFundingEvent(
 ): void {
   db.prepare(
     `INSERT INTO funding_events
-    (id,dedupe_key,run_id,created_at,kind,source,amount,available_before,available_after,chips_at_table,rebuy_available_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(dedupe_key) DO UPDATE SET
+    (id,dedupe_key,run_id,created_at,kind,source,amount,available_before,available_after,chips_at_table,rebuy_available_at,season_score,season_id,score_source,sync_reason)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(dedupe_key) DO UPDATE SET
       available_after=COALESCE(funding_events.available_after,excluded.available_after),
-      chips_at_table=COALESCE(funding_events.chips_at_table,excluded.chips_at_table)`,
+      chips_at_table=COALESCE(funding_events.chips_at_table,excluded.chips_at_table),
+      season_score=CASE WHEN funding_events.score_source IS NULL THEN excluded.season_score ELSE funding_events.season_score END,
+      season_id=CASE WHEN funding_events.score_source IS NULL THEN excluded.season_id ELSE funding_events.season_id END,
+      score_source=COALESCE(funding_events.score_source,excluded.score_source),
+      sync_reason=COALESCE(funding_events.sync_reason,excluded.sync_reason)`,
   ).run(
     event.id,
     dedupeKey,
@@ -107,6 +125,14 @@ export function saveFundingEvent(
     event.availableAfter,
     event.chipsAtTable,
     event.rebuyAvailableAt,
+    event.seasonScore ?? null,
+    event.seasonId ?? null,
+    Object.hasOwn(event, 'seasonScore')
+      ? event.seasonScore == null
+        ? 'unavailable'
+        : 'official'
+      : null,
+    event.syncReason ?? null,
   );
 }
 export function recentFundingEvents(
@@ -117,17 +143,19 @@ export function recentFundingEvents(
   if (!Number.isInteger(limit) || limit < 1 || limit > 500)
     throw new Error('Funding event limit must be 1–500');
   const cursor = options.before
-    ? db.prepare('SELECT created_at,id FROM funding_events WHERE id=?').get(options.before)
+    ? db
+        .prepare('SELECT created_at,rowid AS row_id FROM funding_events WHERE id=?')
+        .get(options.before)
     : undefined;
   if (options.before && !cursor) return [];
   const rows = cursor
     ? db
         .prepare(
-          'SELECT * FROM funding_events WHERE (created_at,id)<(?,?) ORDER BY created_at DESC,id DESC LIMIT ?',
+          'SELECT * FROM funding_events WHERE (created_at,rowid)<(?,?) ORDER BY created_at DESC,rowid DESC LIMIT ?',
         )
-        .all(cursor.created_at!, cursor.id!, limit)
+        .all(cursor.created_at!, cursor.row_id!, limit)
     : db
-        .prepare('SELECT * FROM funding_events ORDER BY created_at DESC,id DESC LIMIT ?')
+        .prepare('SELECT * FROM funding_events ORDER BY created_at DESC,rowid DESC LIMIT ?')
         .all(limit);
   return rows.map((row) => ({
     id: String(row.id),
@@ -139,6 +167,15 @@ export function recentFundingEvents(
     availableBefore: row.available_before === null ? null : Number(row.available_before),
     availableAfter: row.available_after === null ? null : Number(row.available_after),
     chipsAtTable: row.chips_at_table === null ? null : Number(row.chips_at_table),
+    ...(row.score_source != null
+      ? {
+          seasonScore: row.season_score == null ? null : Number(row.season_score),
+          seasonId: row.season_id == null ? null : String(row.season_id),
+        }
+      : {}),
+    ...(row.sync_reason != null
+      ? { syncReason: String(row.sync_reason) as FundingEventView['syncReason'] }
+      : {}),
     rebuyAvailableAt: row.rebuy_available_at === null ? null : String(row.rebuy_available_at),
   }));
 }
@@ -148,7 +185,7 @@ export function loadFundingState(db: DatabaseSync): Partial<FundingView> | undef
     db
       .prepare(
         `SELECT f.* FROM funding_events f JOIN runs r ON r.id=f.run_id
-     WHERE r.mode='live' AND f.kind=? ORDER BY f.created_at DESC,f.id DESC LIMIT 1`,
+     WHERE r.mode='live' AND f.kind=? ORDER BY f.created_at DESC,f.rowid DESC LIMIT 1`,
       )
       .get(kind);
   const balance = latest('balance_sync');
@@ -160,6 +197,8 @@ export function loadFundingState(db: DatabaseSync): Partial<FundingView> | undef
   return {
     availableChips: balance?.available_after == null ? null : Number(balance.available_after),
     chipsAtTable: balance?.chips_at_table == null ? null : Number(balance.chips_at_table),
+    seasonScore: balance?.season_score == null ? null : Number(balance.season_score),
+    seasonId: balance?.season_id == null ? null : String(balance.season_id),
     updatedAt: balance ? String(balance.created_at) : null,
     lastRebuyAt: confirmed ? String(confirmed.created_at) : null,
     rebuyAvailableAt:

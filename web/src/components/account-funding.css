@@ -149,3 +149,31 @@
     line-height: 1.5;
   }
 }
+
+.funding-official-score {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.funding-official-score > div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+}
+.funding-official-score h3 {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.funding-official-score strong {
+  font-size: 25px;
+  font-variant-numeric: tabular-nums;
+}
+.funding-official-score p {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}

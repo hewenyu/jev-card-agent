@@ -49,28 +49,50 @@ export function runPerformance(store: Pick<Store, 'db'>, runId: string): Perform
     handIndex += 1;
   }
 
-  // Both balances must come from the same official account snapshot. WS seat stacks
-  // and rebuy amounts cannot fill gaps or stand in for a leaderboard observation.
-  const scoreFilter = `run_id=? AND kind='balance_sync' AND source IN ('rest','reconciliation')
-    AND available_after IS NOT NULL AND chips_at_table IS NOT NULL`;
+  // New records retain the official score independently of both chip balances.
+  // Old sums remain explicitly labelled estimates; never backfill them as official observations.
+  const baseFilter = `run_id=? AND kind='balance_sync' AND source IN ('rest','reconciliation')`;
+  const latestOfficialObservation = db
+    .prepare(
+      `SELECT season_id FROM funding_events WHERE ${baseFilter} AND score_source IS NOT NULL
+       ORDER BY created_at DESC,rowid DESC LIMIT 1`,
+    )
+    .get(runId);
+  const seasonId =
+    latestOfficialObservation?.season_id == null
+      ? null
+      : String(latestOfficialObservation.season_id);
+  const scoreFilter = latestOfficialObservation
+    ? `${baseFilter} AND score_source IS NOT NULL AND season_id IS ?`
+    : `${baseFilter} AND available_after IS NOT NULL AND chips_at_table IS NOT NULL`;
+  const parameters = latestOfficialObservation ? [runId, seasonId] : [runId];
   const scoreCount = Number(
-    db.prepare(`SELECT COUNT(*) AS count FROM funding_events WHERE ${scoreFilter}`).get(runId)!
-      .count,
+    db
+      .prepare(`SELECT COUNT(*) AS count FROM funding_events WHERE ${scoreFilter}`)
+      .get(...parameters)!.count,
   );
   const scoreIndices = sampleIndices(scoreCount);
   const scorePoints: PerformanceView['scorePoints'] = [];
   let score: number | null = null;
   let scoreObservedAt: string | null = null;
+  let scoreSource: PerformanceView['scoreSource'] = null;
   let scoreIndex = 0;
   for (const row of db
     .prepare(
-      `SELECT created_at,available_after,chips_at_table FROM funding_events
-       WHERE ${scoreFilter} ORDER BY created_at,id`,
+      `SELECT created_at,available_after,chips_at_table,season_score,score_source FROM funding_events
+       WHERE ${scoreFilter} ORDER BY created_at,${latestOfficialObservation ? 'rowid' : 'id'}`,
     )
-    .iterate(runId)) {
-    score = Number(row.available_after) + Number(row.chips_at_table);
+    .iterate(...parameters)) {
+    score = latestOfficialObservation
+      ? row.season_score == null
+        ? null
+        : Number(row.season_score)
+      : Number(row.available_after) + Number(row.chips_at_table);
+    scoreSource =
+      score === null ? null : latestOfficialObservation ? 'official' : 'legacy_balance_sum';
     scoreObservedAt = String(row.created_at);
-    if (scoreIndices.has(scoreIndex)) scorePoints.push({ at: scoreObservedAt, score });
+    if (score !== null && scoreIndices.has(scoreIndex))
+      scorePoints.push({ at: scoreObservedAt, score });
     scoreIndex += 1;
   }
   return {
@@ -82,6 +104,8 @@ export function runPerformance(store: Pick<Store, 'db'>, runId: string): Perform
     winRate: settledHands === 0 ? null : (wonHands / settledHands) * 100,
     score,
     scoreObservedAt,
+    scoreSource,
+    seasonId,
     profitPoints,
     scorePoints,
   };

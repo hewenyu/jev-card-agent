@@ -5,6 +5,7 @@ import { Panel } from './UI';
 import { FundingHistory } from './FundingHistory';
 import type { FundingHistoryState } from '../funding-history';
 import './account-funding.css';
+import { fundingIsStale } from '../season-score';
 
 function dateLabel(value: string | null | undefined): string {
   if (!value || !Number.isFinite(Date.parse(value))) return 'Not yet reported';
@@ -42,10 +43,8 @@ export function AccountFunding({
   }, []);
   const funding = runtime.funding;
   const hero = runtime.table?.seats.find((seat) => seat.seat === runtime.table?.heroSeat);
-  const lastConfirmed = funding?.updatedAt ? Date.parse(funding.updatedAt) : NaN;
-  const expired = Number.isFinite(lastConfirmed) && now - lastConfirmed > 45_000;
   const loading = !funding || funding.status === 'loading';
-  const stale = funding?.status === 'stale' || expired;
+  const stale = fundingIsStale(funding, now);
   const status =
     runtime.mode === 'demo'
       ? 'Synthetic demo'
@@ -106,6 +105,24 @@ export function AccountFunding({
             <p>Official account snapshot · may lag live play</p>
           </div>
         </dl>
+        <section className="funding-official-score" aria-label="Official season score">
+          <div>
+            <h3>Official season score</h3>
+            <strong data-testid="live-season-score">{chips(funding?.seasonScore)}</strong>
+          </div>
+          <p>
+            {funding?.seasonScore == null
+              ? 'Not yet reported by OpenPoker.'
+              : stale
+                ? 'Last confirmed official score · refresh delayed.'
+                : 'Reported by OpenPoker · separate from seat balance and current bet.'}
+          </p>
+          <p>
+            Recorded{' '}
+            <time dateTime={funding?.updatedAt ?? undefined}>{dateLabel(funding?.updatedAt)}</time>
+            {funding?.seasonId && <> · Season {funding.seasonId}</>}
+          </p>
+        </section>
         <dl className="funding-details">
           <div>
             <dt>Automatic rebuy</dt>

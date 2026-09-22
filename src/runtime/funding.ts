@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import type { OpenPokerClient, RebuyResult } from '../openpoker/client.js';
+import type { OpenPokerClient, RebuyResult, SeasonBalance } from '../openpoker/client.js';
 import { record, type ServerEvent } from '../openpoker/protocol.js';
-import type { FundingEventView, FundingView } from '../shared/api.js';
+import type { FundingEventView, FundingView, FundingSyncReason } from '../shared/api.js';
 import { awaitWithAbort } from '../policies/abort.js';
 import { fundingAvailableAt, fundingEventId, fundingIdentity } from '../storage/funding.js';
 
@@ -18,6 +18,8 @@ const refreshedEvents = new Set([
   'season_ended',
 ]);
 const initial = (autoRebuy: boolean): FundingView => ({
+  seasonScore: null,
+  seasonId: null,
   availableChips: null,
   chipsAtTable: null,
   autoRebuy,
@@ -38,6 +40,8 @@ export class FundingMonitor {
   private operation: AbortController | null = null;
   private timer?: ReturnType<typeof setInterval>;
   private runId = '';
+  private hasRunSnapshot = false;
+  private boundaries = new Set<FundingSyncReason>();
   private observedAt = 0;
   private pending = new Map<string, { event: FundingEventView; identity: string }>();
   constructor(
@@ -45,20 +49,23 @@ export class FundingMonitor {
     private readonly publish: (value: FundingView) => void,
     private readonly save?: (event: FundingEventView, dedupeKey: string) => void,
   ) {}
-  start(autoRebuy: boolean, runId = '', restored?: Partial<FundingView>): void {
+  start(autoRebuy: boolean, runId = '', restored?: Partial<FundingView>): Promise<boolean> {
     this.stop();
     this.running = true;
     this.runId = runId;
     this.pending.clear();
+    this.boundaries.clear();
+    this.hasRunSnapshot = false;
     this.value = { ...initial(autoRebuy), ...restored, status: restored ? 'stale' : 'loading' };
     this.emit();
-    void this.refresh();
+    const startup = this.refresh('startup');
     this.timer = setInterval(() => {
       if (!this.operation) void this.refresh();
     }, 15_000);
     this.timer.unref();
+    return startup;
   }
-  stop(): void {
+  stop(preserveCurrent = false): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     this.epoch++;
@@ -66,7 +73,7 @@ export class FundingMonitor {
     this.operation = null;
     if (!this.running) return;
     this.running = false;
-    this.value.status = 'stale';
+    if (!preserveCurrent) this.value.status = 'stale';
     this.emit();
   }
   observe(event: ServerEvent, heroSeat: number | null, sourceId: string = randomUUID()): void {
@@ -86,6 +93,8 @@ export class FundingMonitor {
       this.value.autoRebuy = event.enabled;
     } else if (event.type === 'season_ended') {
       this.value = initial(this.value.autoRebuy);
+      this.hasRunSnapshot = false;
+      this.pending.clear();
     }
     if (cooldown || event.type === 'rebuy_confirmed')
       this.remember(
@@ -93,7 +102,7 @@ export class FundingMonitor {
         'ws',
         fundingIdentity(event, sourceId),
       );
-    void this.refresh();
+    void this.refresh(event.type === 'table_joined' ? 'table_joined' : 'event');
   }
   restRebuy(result: RebuyResult): void {
     if (!this.running) return;
@@ -108,32 +117,71 @@ export class FundingMonitor {
           : new Date(Date.now() + result.retryAfterMs).toISOString();
       this.remember('rebuy_scheduled', 'rest', `rest:${randomUUID()}`);
     }
-    void this.refresh();
+    void this.refresh('event');
   }
-  async refresh(): Promise<void> {
-    if (!this.running) return;
+  /** A caller that already fetched the official account can publish that exact observation. */
+  reconcile(balance: SeasonBalance | null, reason: FundingSyncReason): boolean {
+    if (!this.running) return false;
+    this.epoch++;
+    this.operation?.abort();
+    this.operation = null;
+    return this.applySnapshot(balance, reason);
+  }
+  async refresh(reason: FundingSyncReason = 'poll'): Promise<boolean> {
+    if (!this.running) return false;
+    if (reason !== 'poll' && reason !== 'event') this.boundaries.add(reason);
     const epoch = ++this.epoch;
     this.operation?.abort();
     const operation = new AbortController();
     this.operation = operation;
-    const signal = AbortSignal.any([operation.signal, AbortSignal.timeout(10_000)]);
+    const timer = setTimeout(
+      () => operation.abort(new Error('Account reconciliation timed out')),
+      10_000,
+    );
     const current = () => this.running && epoch === this.epoch;
     this.value.status = this.value.updatedAt ? 'stale' : 'loading';
     this.emit();
     try {
-      const balance = await awaitWithAbort(signal, () => this.client.seasonBalance(signal));
-      if (!current()) return;
+      const balance = await awaitWithAbort(operation.signal, () =>
+        this.client.seasonBalance(operation.signal),
+      );
+      if (!current()) return false;
+      return this.applySnapshot(balance, reason);
+    } catch {
+      if (!current()) return false;
+      this.value.status = 'stale';
+      this.emit();
+      return false;
+    } finally {
+      clearTimeout(timer);
+      if (this.operation === operation) this.operation = null;
+    }
+  }
+  private applySnapshot(balance: SeasonBalance | null, reason: FundingSyncReason): boolean {
+    const previous = structuredClone(this.value);
+    if (reason !== 'poll' && reason !== 'event') this.boundaries.add(reason);
+    try {
+      if (
+        balance &&
+        (!Number.isSafeInteger(balance.chipBalance) ||
+          balance.chipBalance < 0 ||
+          !Number.isSafeInteger(balance.chipsAtTable) ||
+          balance.chipsAtTable < 0 ||
+          (balance.score != null && !Number.isFinite(balance.score)))
+      )
+        throw new Error('Invalid official season balance');
       const before = this.value.availableChips;
       const previousTable = this.value.chipsAtTable;
-      const first = this.value.updatedAt === null;
+      const previousScore = this.value.seasonScore;
+      const previousSeason = this.value.seasonId;
+      this.value.availableChips = balance?.chipBalance ?? null;
+      this.value.chipsAtTable = balance?.chipsAtTable ?? null;
+      // Unknown official score is never inferred from balances or carried over from another observation.
+      this.value.seasonScore = balance?.score ?? null;
+      this.value.seasonId = balance?.seasonId ?? null;
       if (balance) {
-        this.value.availableChips = balance.chipBalance;
-        this.value.chipsAtTable = balance.chipsAtTable;
         this.value.autoRebuy = balance.autoRebuy;
         this.value.rebuyCooldownSeconds = balance.pro ? 120 : 300;
-      } else {
-        this.value.availableChips = null;
-        this.value.chipsAtTable = null;
       }
       this.value.updatedAt = new Date().toISOString();
       this.value.status = 'current';
@@ -143,16 +191,22 @@ export class FundingMonitor {
             ...event,
             availableAfter: this.value.availableChips,
             chipsAtTable: this.value.chipsAtTable,
+            seasonScore: this.value.seasonScore,
+            seasonId: this.value.seasonId,
           },
           identity,
         );
       }
       this.pending.clear();
-      if (
-        first ||
+      const changed =
+        !this.hasRunSnapshot ||
         before !== this.value.availableChips ||
-        previousTable !== this.value.chipsAtTable
-      ) {
+        previousTable !== this.value.chipsAtTable ||
+        previousScore !== this.value.seasonScore ||
+        previousSeason !== this.value.seasonId;
+      const reasons = [...this.boundaries];
+      if (!reasons.length && changed) reasons.push(reason);
+      for (const syncReason of reasons) {
         const id = randomUUID();
         this.save?.(
           {
@@ -165,18 +219,22 @@ export class FundingMonitor {
             availableBefore: before,
             availableAfter: this.value.availableChips,
             chipsAtTable: this.value.chipsAtTable,
+            seasonScore: this.value.seasonScore,
+            seasonId: this.value.seasonId,
             rebuyAvailableAt: this.value.rebuyAvailableAt,
+            syncReason,
           },
           id,
         );
       }
+      this.boundaries.clear();
+      this.hasRunSnapshot = true;
       this.emit();
+      return true;
     } catch {
-      if (!current()) return;
-      this.value.status = 'stale';
+      this.value = { ...previous, status: 'stale' };
       this.emit();
-    } finally {
-      if (this.operation === operation) this.operation = null;
+      return false;
     }
   }
   private remember(kind: FundingEventView['kind'], source: 'ws' | 'rest', identity: string): void {

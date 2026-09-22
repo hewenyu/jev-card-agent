@@ -35,7 +35,7 @@ test('public site supports overview, historical replay, and recorded evaluation 
   await expect(page.getByLabel('Selected run')).toHaveValue(/demo/);
   await expect(page.locator('.topbar .source-demo')).toContainText('Demo');
   await expect(
-    page.getByText('Selected run · full recorded history · automatically refreshed'),
+    page.getByText('Current run · live official score · recorded results'),
   ).toBeVisible();
   await page.getByRole('link', { name: 'Replay & decisions', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Replay the evidence.' })).toBeVisible();

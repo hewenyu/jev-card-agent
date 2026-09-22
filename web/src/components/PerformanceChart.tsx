@@ -20,10 +20,12 @@ export function PerformanceChart({
   points,
   kind,
   hands,
+  scoreLabel = 'Season score',
 }: {
   points: ChartPoint[];
   kind: 'profit' | 'score';
   hands: number;
+  scoreLabel?: string;
 }) {
   const gradient = useId();
   if (!points.length)
@@ -55,7 +57,7 @@ export function PerformanceChart({
   const label =
     kind === 'profit'
       ? `Cumulative net profit: ${signed(last.value)} chips across ${number(hands)} verified hands`
-      : `Season score: ${number(last.value)} chips`;
+      : `${scoreLabel}: ${number(last.value)} chips`;
   return (
     <figure className="results-chart">
       <div className="results-chart-body">

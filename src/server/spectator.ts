@@ -31,6 +31,8 @@ export function publicRuntime(view: RuntimeView): RuntimeView {
           funding: {
             availableChips: view.funding.availableChips,
             chipsAtTable: view.funding.chipsAtTable,
+            seasonScore: view.funding.seasonScore ?? null,
+            seasonId: view.funding.seasonId ?? null,
             autoRebuy: view.funding.autoRebuy,
             rebuyAmount: view.funding.rebuyAmount,
             rebuyCooldownSeconds: view.funding.rebuyCooldownSeconds,

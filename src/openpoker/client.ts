@@ -64,6 +64,8 @@ export class OpenPokerClient {
       .object({
         chip_balance: z.number().int().nonnegative(),
         chips_at_table: z.number().int().nonnegative(),
+        score: z.number().int().nullable().optional(),
+        season_id: z.string().min(1).nullable().optional(),
         pro_tier: z.boolean().optional(),
         auto_rebuy: z.boolean().optional(),
       })
@@ -71,6 +73,8 @@ export class OpenPokerClient {
     return {
       chipBalance: parsed.chip_balance,
       chipsAtTable: parsed.chips_at_table,
+      score: parsed.score ?? null,
+      seasonId: parsed.season_id ?? null,
       pro: parsed.pro_tier ?? false,
       autoRebuy: parsed.auto_rebuy ?? false,
     };
@@ -104,6 +108,8 @@ export class OpenPokerClient {
 export interface SeasonBalance {
   chipBalance: number;
   chipsAtTable: number;
+  score?: number | null;
+  seasonId?: string | null;
   pro: boolean;
   autoRebuy: boolean;
 }

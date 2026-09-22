@@ -54,6 +54,7 @@ export class PokerRuntime extends EventEmitter {
     state: createInitialState(),
   };
   private running = false;
+  private finishing = false;
   private leaving = false;
   private leaveAttempts = 0;
   private leaveVerification = false;
@@ -121,6 +122,7 @@ export class PokerRuntime extends EventEmitter {
       },
       fail: (error) => this.fail(error),
       fundingRebuy: (result) => this.funding.restRebuy(result),
+      fundingSnapshot: (balance, reason) => this.funding.reconcile(balance, reason),
     });
   }
   async settleDecisions(): Promise<void> {
@@ -141,7 +143,7 @@ export class PokerRuntime extends EventEmitter {
   }
 
   async start(options: StartOptions = {}): Promise<void> {
-    if (this.running) throw new Error('Runtime is already running');
+    if (this.running || this.finishing) throw new Error('Runtime is already running or finishing');
     this.options = { ...defaults, ...options };
     this.requireJev = options.kind !== 'demo' && options.strategy !== 'baseline';
     if (
@@ -202,7 +204,7 @@ export class PokerRuntime extends EventEmitter {
     for (const action of this.dependencies.store.pendingActions())
       this.pending.set(action.id, action);
     this.running = true;
-    this.funding.start(
+    const startupFunding = this.funding.start(
       this.options.autoRebuy,
       this.snapshot.runId!,
       this.dependencies.store.loadFundingState?.(),
@@ -212,6 +214,8 @@ export class PokerRuntime extends EventEmitter {
     }
     this.publish();
     try {
+      await startupFunding;
+      if (!this.running) return;
       const active = await this.client.activeGame(this.lifetime.signal);
       if (!this.running) return;
       if (active.playing) {
@@ -934,10 +938,10 @@ export class PokerRuntime extends EventEmitter {
     this.snapshot.lastError = error instanceof Error ? error.message : String(error);
     this.finish('failed');
   }
-  private finish(phase: 'stopped' | 'failed'): void {
+  private async finish(phase: 'stopped' | 'failed'): Promise<void> {
     if (!this.running) return;
     this.running = false;
-    this.funding.stop();
+    this.finishing = true;
     this.lobby.cancel();
     this.cancelTask();
     this.lifetime.abort();
@@ -952,6 +956,19 @@ export class PokerRuntime extends EventEmitter {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.socket?.close();
     this.socket = null;
+    if (phase === 'stopped') {
+      this.snapshot.phase = 'stopping';
+      this.publish();
+      const reconciled = await this.funding.refresh('after_leave');
+      this.funding.stop(reconciled);
+      if (!reconciled)
+        this.snapshot.lastError = [
+          this.snapshot.lastError,
+          'Final official account reconciliation failed; balance and score remain stale.',
+        ]
+          .filter(Boolean)
+          .join(' ');
+    } else this.funding.stop();
     this.snapshot.phase = phase;
     this.snapshot.connected = false;
     this.snapshot.stoppedAt = new Date().toISOString();
@@ -967,6 +984,7 @@ export class PokerRuntime extends EventEmitter {
       this.snapshot.phase = 'failed';
       this.snapshot.lastError = `Persistence failure: ${error instanceof Error ? error.message : String(error)}`;
     }
+    this.finishing = false;
     this.publish();
     this.emit('stopped', this.status());
   }

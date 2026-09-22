@@ -705,6 +705,11 @@ describe('OpenPoker runtime against an actual local WebSocket server', () => {
     });
     runtime.stop(false);
     await vi.waitFor(() => expect(runtime.status().phase).toBe('stopped'));
-    expect(runtime.status().funding?.status).toBe('stale');
+    expect(runtime.status().funding).toMatchObject({
+      status: 'current',
+      availableChips: 1500,
+      chipsAtTable: 0,
+      seasonScore: null,
+    });
   });
 });

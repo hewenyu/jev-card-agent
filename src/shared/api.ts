@@ -10,6 +10,8 @@ export interface PerformanceView {
   winRate: number | null;
   score: number | null;
   scoreObservedAt: string | null;
+  scoreSource?: 'official' | 'legacy_balance_sum' | null;
+  seasonId?: string | null;
   profitPoints: { at: string; handNumber: number; settledHands: number; netChips: number }[];
   scorePoints: { at: string; score: number }[];
 }
@@ -163,6 +165,8 @@ export interface LiveDecisions {
 export interface FundingView {
   availableChips: number | null;
   chipsAtTable: number | null;
+  seasonScore?: number | null;
+  seasonId?: string | null;
   autoRebuy: boolean;
   rebuyAmount: 1500;
   rebuyCooldownSeconds: 120 | 300;
@@ -172,6 +176,8 @@ export interface FundingView {
   observedAt: string;
   status: 'loading' | 'current' | 'stale';
 }
+export type FundingSyncReason =
+  'startup' | 'before_join' | 'table_joined' | 'after_leave' | 'poll' | 'event';
 export interface FundingEventView {
   id: string;
   runId: string;
@@ -182,6 +188,9 @@ export interface FundingEventView {
   availableBefore: number | null;
   availableAfter: number | null;
   chipsAtTable: number | null;
+  seasonScore?: number | null;
+  seasonId?: string | null;
+  syncReason?: FundingSyncReason;
   rebuyAvailableAt: string | null;
 }
 export interface RuntimeView {

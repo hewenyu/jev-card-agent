@@ -185,8 +185,78 @@ describe('complete Run performance statistics', () => {
       scoreObservedAt: null,
       profitPoints: [],
       scorePoints: [],
+      scoreSource: null,
+      seasonId: null,
     });
     expect(runPerformance(store, 'missing')).toBeNull();
+  });
+
+  it('uses official score independently of balances and preserves it across buy-in and cash-out', () => {
+    const store = fixture();
+    balance(store, 'legacy', 9000, 0, { createdAt: at(0) });
+    balance(store, 'before-join', 6000, 0, {
+      createdAt: at(1),
+      seasonScore: 5500,
+      seasonId: 's1',
+      syncReason: 'before_join',
+    });
+    balance(store, 'seated', 4000, 2000, {
+      createdAt: at(2),
+      seasonScore: 5500,
+      seasonId: 's1',
+      syncReason: 'table_joined',
+    });
+    balance(store, 'left', 6000, 0, {
+      createdAt: at(3),
+      seasonScore: 5500,
+      seasonId: 's1',
+      syncReason: 'after_leave',
+    });
+    expect(runPerformance(store, 'main')).toMatchObject({
+      score: 5500,
+      scoreSource: 'official',
+      seasonId: 's1',
+      scoreObservedAt: at(3),
+      scorePoints: [
+        { at: at(1), score: 5500 },
+        { at: at(2), score: 5500 },
+        { at: at(3), score: 5500 },
+      ],
+    });
+    balance(store, 'score-only', 6000, 0, { createdAt: at(4), seasonScore: -100, seasonId: 's1' });
+    expect(runPerformance(store, 'main')).toMatchObject({ score: -100, scoreSource: 'official' });
+    balance(store, 'unknown-score', 6000, 0, {
+      createdAt: at(5),
+      seasonScore: null,
+      seasonId: 's1',
+    });
+    expect(runPerformance(store, 'main')).toMatchObject({
+      score: null,
+      scoreSource: null,
+      scoreObservedAt: at(5),
+    });
+  });
+
+  it('labels old balance sums as estimates and never joins score curves across seasons', () => {
+    const store = fixture();
+    balance(store, 'legacy', 300, 1000);
+    expect(runPerformance(store, 'main')).toMatchObject({
+      score: 1300,
+      scoreSource: 'legacy_balance_sum',
+      seasonId: null,
+    });
+    balance(store, 'old-season', 300, 1000, {
+      createdAt: at(2),
+      seasonScore: 1000,
+      seasonId: 'old',
+    });
+    balance(store, 'new-season', 5000, 0, { createdAt: at(3), seasonScore: 5000, seasonId: 'new' });
+    expect(runPerformance(store, 'main')).toMatchObject({
+      score: 5000,
+      scoreSource: 'official',
+      seasonId: 'new',
+      scorePoints: [{ at: at(3), score: 5000 }],
+    });
   });
 
   it('serves live-updated anonymous statistics, 404 for missing Runs and denies public writes', async () => {
