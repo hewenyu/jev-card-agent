@@ -8,6 +8,7 @@ import {
 import { AdviceBundleSchema } from './advice-schema.js';
 import { KNOWLEDGE_CONTEXT_VERSION, RULESET_VERSION } from './validator.js';
 import type { AdviceBundle, PublishedAdvice } from './advice-types.js';
+import { validateGuidanceProposal } from './advice-guidance.js';
 
 export function contentHash(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -66,6 +67,28 @@ export class AdviceValidator {
         Date.parse(example.availableAt) > Date.parse(batch.cutoff)
       )
         throw new Error('Example exceeds frozen evidence');
+    }
+    for (const trigger of batch.triggers ?? []) {
+      if (
+        !hands.has(trigger.handId) ||
+        trigger.eventId > batch.evidenceEventWatermark ||
+        Date.parse(trigger.availableAt) > Date.parse(batch.cutoff) ||
+        !batch.examples.some(
+          (example) =>
+            example.handId === trigger.handId &&
+            example.phase === 'post_settlement' &&
+            example.eventId >= trigger.eventId &&
+            Date.parse(example.availableAt) >= Date.parse(trigger.availableAt),
+        ) ||
+        (trigger.decisionId &&
+          !batch.examples.some(
+            (example) =>
+              example.id === `decision-${trigger.decisionId}` &&
+              example.handId === trigger.handId &&
+              example.phase === 'decision_visible',
+          ))
+      )
+        throw new Error('Trigger exceeds frozen evidence');
     }
     return batch;
   }
@@ -138,6 +161,7 @@ export class AdviceValidator {
     if (prohibited.test(text)) throw new Error('Prohibited instruction or capability in advice');
     // All statistical numbers are rendered from verified metric references, never model prose.
     if (/\d/.test(text)) throw new Error('Numeric claims must use verified metricRefs');
+    validateGuidanceProposal(proposal, batch);
     return proposal;
   }
 }

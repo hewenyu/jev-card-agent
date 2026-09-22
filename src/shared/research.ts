@@ -1,3 +1,29 @@
+import type { ResearchScheduleEntry } from '../research/scheduling.js';
+
+export interface ResearchActivityCounts {
+  attempts: number;
+  successfulAttempts: number;
+  failedAttempts: number;
+  retries: number;
+  completedJobs: number;
+  insufficientJobs: number;
+  evaluatedDecisions: number;
+  adoptedDecisions: number;
+  unmatchedDecisions: number;
+}
+export interface ResearchActivity {
+  allTime: ResearchActivityCounts;
+  currentRun:
+    | (ResearchActivityCounts & {
+        id: string;
+        startedAt: string;
+        endedAt: string | null;
+      })
+    | null;
+  decisionsCaughtUp: boolean;
+}
+export type ResearchScheduleView = ResearchScheduleEntry & { label: string };
+
 /** Anonymous research views contain no raw batch, provider response, endpoint or operator note. */
 export interface ResearchSummary {
   mode: 'off' | 'shadow' | 'live';
@@ -22,6 +48,8 @@ export interface ResearchSummary {
   evaluatedDecisions: number;
   unmatchedDecisions: number;
   latestAdviceAgeMs: number | null;
+  activity?: ResearchActivity;
+  schedules?: ResearchScheduleView[];
 }
 export interface ResearchPublicView {
   status: ResearchSummary;
@@ -43,6 +71,9 @@ export interface ResearchPublicView {
     expiresAt: string;
     evidenceCutoff: string;
     guidance: string;
+    observation?: string;
+    limitations?: string[];
+    recipeId?: string;
     approvalSource: string;
   }>;
 }

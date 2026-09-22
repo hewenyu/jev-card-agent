@@ -60,3 +60,60 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+.research-activity-grid,
+.research-schedule-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+.research-activity-card,
+.research-scope {
+  min-width: 0;
+  padding: 14px;
+  background: #171f24;
+  border: 1px solid #33434d;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.research-activity-card h4,
+.research-schedule h4 {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+.research-activity-counts {
+  margin-bottom: 0;
+}
+.research-activity-note {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.research-scope-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 12px;
+}
+.research-scope-heading strong {
+  min-width: 0;
+}
+.research-progress-count {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.research-scope progress {
+  display: block;
+  width: 100%;
+  height: 6px;
+  accent-color: #65b8a3;
+}
+.research-scope .annotation {
+  font-size: 11px;
+}
+@media (max-width: 700px) {
+  .research-activity-grid,
+  .research-schedule-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

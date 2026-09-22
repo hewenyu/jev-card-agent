@@ -11,6 +11,51 @@ test('research observations refresh modes and publication status without public 
   view.status.configuredMode = 'live';
   view.status.running = true;
   view.status.awaitingReview = 1;
+  view.status.activity = {
+    allTime: {
+      attempts: 12,
+      retries: 2,
+      successfulAttempts: 10,
+      failedAttempts: 2,
+      completedJobs: 10,
+      insufficientJobs: 3,
+      evaluatedDecisions: 50,
+      adoptedDecisions: 20,
+      unmatchedDecisions: 30,
+    },
+    currentRun: {
+      id: 'run-current',
+      startedAt: '2026-09-22T02:00:00.000Z',
+      endedAt: null,
+      attempts: 4,
+      retries: 1,
+      successfulAttempts: 3,
+      failedAttempts: 1,
+      completedJobs: 3,
+      insufficientJobs: 1,
+      evaluatedDecisions: 10,
+      adoptedDecisions: 8,
+      unmatchedDecisions: 2,
+    },
+    decisionsCaughtUp: true,
+  };
+  view.status.schedules = [
+    {
+      scopeKey: 'opponent-test',
+      taskType: 'opponent_brief',
+      label: 'Poki',
+      windowHands: 17,
+      newHands: 7,
+      requiredHands: 10,
+      stage: 'refresh',
+      reason: 'refresh_threshold',
+      state: 'waiting',
+      lastCompletedAt: '2026-09-22T02:00:00.000Z',
+      lastAttemptAt: '2026-09-22T02:00:00.000Z',
+      lastOutcome: 'completed',
+      updatedAt: '2026-09-22T02:01:00.000Z',
+    },
+  ];
   const writes: string[] = [];
   page.on('request', (request) => {
     if (request.url().includes('/api/') && request.method() !== 'GET')
@@ -21,11 +66,25 @@ test('research observations refresh modes and publication status without public 
   const panel = page.getByLabel('LLM research status');
   await expect(panel).toContainText('Research runs in shadow');
   await expect(panel).toContainText('has not been activated');
+  await expect(panel.getByLabel('Research activity in latest run')).toContainText(
+    '8 / 10 live decisions · 80%',
+  );
+  await expect(panel.getByLabel('Research activity across all history')).toContainText(
+    '20 / 50 live decisions · 40%',
+  );
+  const progress = panel.getByLabel('Poki research progress');
+  await expect(progress).toContainText('7 / 10 new hands · 3 more needed');
+  view.status.schedules[0]!.newHands = 8;
+  view.status.schedules[0]!.reason = 'event_trigger';
+  view.status.schedules[0]!.triggerKind = 'large_investment';
+  view.status.schedules[0]!.state = 'running';
   view.status.mode = 'live';
   view.status.awaitingReview = 0;
   view.status.published = 1;
   view.status.adoptedDecisions = 2;
   view.status.evaluatedDecisions = 3;
+  view.status.activity.currentRun!.adoptedDecisions = 2;
+  view.status.activity.currentRun!.evaluatedDecisions = 3;
   view.publications = [
     {
       id: 'pub-test',
@@ -37,14 +96,22 @@ test('research observations refresh modes and publication status without public 
       expiresAt: '2026-09-23T02:00:00.000Z',
       evidenceCutoff: '2026-09-22T01:00:00.000Z',
       guidance: 'Consider the price and verified opportunities.',
+      observation: 'Observed pressure is provisional.',
+      limitations: ['Small pooled sample.'],
+      recipeId: 'opponent-guidance-v1',
       approvalSource: 'manual',
     },
   ];
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(panel).toContainText('Jev can use approved advice');
   await expect(panel).toContainText('2 / 3 live decisions');
+  await expect(progress).toContainText('8 / 10 new hands');
+  await expect(progress).toContainText('Large investment');
+  await expect(progress).toContainText('running');
   await panel.getByText('Published advice history', { exact: true }).click();
   await expect(panel).toContainText('Consider the price and verified opportunities.');
+  await expect(panel).toContainText('Small pooled sample.');
+  await expect(panel).toContainText('opponent-guidance-v1');
   view.publications[0]!.status = 'withdrawn';
   view.status.withdrawn = 1;
   view.status.published = 0;

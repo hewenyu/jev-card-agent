@@ -18,10 +18,18 @@ export function actualInputFacts(request: Raw, selected: unknown) {
     ...entries.filter(([id]) => id === selected),
     ...entries.filter(([id]) => id !== selected),
   ];
+  const position = object(harness.position).hero;
   return {
+    heroPosition:
+      typeof position === 'string' &&
+      ['BTN', 'BTN/SB', 'SB', 'BB', 'UTG', 'HJ', 'CO'].includes(position)
+        ? position
+        : null,
     betting: {
       potChips: finite(betting.potChips),
       heroStackChips: finite(betting.heroStackChips),
+      heroStackBb: finite(betting.heroStackBb),
+      potBb: finite(betting.potBb),
       heroStreetBetChips: finite(betting.heroStreetBetChips),
       callChips: finite(betting.callChips),
       contestablePotBeforeCallChips: finite(betting.contestablePotBeforeCallChips),

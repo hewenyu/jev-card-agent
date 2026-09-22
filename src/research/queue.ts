@@ -5,6 +5,11 @@ import { DatabaseSync } from 'node:sqlite';
 import type { ProviderAttempt, ProviderCall, ProviderMeter } from '../core/types.js';
 import type { ResearchBatchV2 } from './contracts.js';
 import type { AsyncResearchConfig } from './config.js';
+import {
+  ResearchScheduler,
+  preservesPendingTriggers,
+  type ResearchScheduleEntry,
+} from './scheduling.js';
 export type ResearchJobState =
   'pending' | 'running' | 'completed' | 'failed' | 'superseded' | 'cancelled';
 export interface ResearchJob {
@@ -17,6 +22,7 @@ export interface ResearchJob {
   deadlineAt: number | null;
 }
 export interface ResearchQueueStatus {
+  schedules?: ResearchScheduleEntry[];
   pending: number;
   runningJobs: number;
   completed: number;
@@ -32,6 +38,7 @@ export interface ResearchQueueStatus {
 /** Short transactions only. Model network waits never hold a database lock. */
 export class ResearchQueue {
   readonly db: DatabaseSync;
+  readonly scheduler: ResearchScheduler;
   constructor(path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
@@ -43,29 +50,44 @@ export class ResearchQueue {
         generation INTEGER NOT NULL DEFAULT 0, owner TEXT, lease_until INTEGER, deadline_at INTEGER,
         created_at TEXT NOT NULL, completed_at TEXT, error TEXT, outcome TEXT, delivered INTEGER NOT NULL DEFAULT 0);
       CREATE INDEX IF NOT EXISTS research_jobs_state ON research_jobs(state,created_at);
+      CREATE INDEX IF NOT EXISTS research_jobs_completed ON research_jobs(completed_at);
+      CREATE INDEX IF NOT EXISTS research_jobs_scope ON research_jobs(task_type,scope_key);
       CREATE TABLE IF NOT EXISTS research_attempts (
         id TEXT PRIMARY KEY, job_id TEXT NOT NULL, generation INTEGER NOT NULL,
         started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL,
         call TEXT NOT NULL, attempt TEXT, cost_usd REAL);
-      CREATE INDEX IF NOT EXISTS research_attempts_job ON research_attempts(job_id,started_at);`);
+      CREATE INDEX IF NOT EXISTS research_attempts_job ON research_attempts(job_id,started_at);
+      CREATE INDEX IF NOT EXISTS research_attempts_started ON research_attempts(started_at);`);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      if (
+        !this.db
+          .prepare('PRAGMA table_info(research_jobs)')
+          .all()
+          .some((row) => row.name === 'priority')
+      )
+        this.db.exec('ALTER TABLE research_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0');
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    this.scheduler = new ResearchScheduler(this.db);
   }
   shouldSchedule(batch: ResearchBatchV2, minimum: number): boolean {
-    const row = this.db
-      .prepare(
-        'SELECT batch FROM research_jobs WHERE task_type=? AND scope_key=? ORDER BY rowid DESC LIMIT 1',
-      )
-      .get(batch.taskType, batch.scopeKey);
-    if (!row) return batch.eligibleHandIds.length >= minimum;
-    const previous = JSON.parse(String(row.batch)) as ResearchBatchV2;
-    if (batch.evidenceEventWatermark <= previous.evidenceEventWatermark) return false;
-    const seen = new Set(previous.eligibleHandIds);
-    return batch.eligibleHandIds.filter((id) => !seen.has(id)).length >= minimum;
+    const evaluation = this.scheduler.evaluate(batch, minimum);
+    return (
+      evaluation.eligible &&
+      (evaluation.entry.newHands >= minimum || !!evaluation.entry.triggerKind)
+    );
   }
+
   enqueue(
     batch: ResearchBatchV2,
     model: string,
     maxPending = 8,
     now = new Date().toISOString(),
+    priority = 0,
   ): string | null {
     const fingerprint = createHash('sha256')
       .update(
@@ -87,7 +109,7 @@ export class ResearchQueue {
       }
       const old = this.db
         .prepare(
-          "SELECT id,batch FROM research_jobs WHERE state='pending' AND task_type=? AND scope_key=?",
+          "SELECT id,batch,created_at,priority FROM research_jobs WHERE state='pending' AND task_type=? AND scope_key=?",
         )
         .get(batch.taskType, batch.scopeKey);
       if (
@@ -95,6 +117,15 @@ export class ResearchQueue {
         (JSON.parse(String(old.batch)) as ResearchBatchV2).evidenceEventWatermark >=
           batch.evidenceEventWatermark
       ) {
+        this.db.exec('COMMIT');
+        return null;
+      }
+      if (
+        old &&
+        !preservesPendingTriggers(JSON.parse(String(old.batch)) as ResearchBatchV2, batch)
+      ) {
+        // Execute the frozen salient case first. Later evidence can form the next batch;
+        // merely retaining its priority while dropping its examples would lose the research.
         this.db.exec('COMMIT');
         return null;
       }
@@ -115,9 +146,17 @@ export class ResearchQueue {
       const id = randomUUID();
       this.db
         .prepare(
-          "INSERT INTO research_jobs(id,task_type,scope_key,fingerprint,batch,state,created_at) VALUES(?,?,?,?,?,'pending',?)",
+          "INSERT INTO research_jobs(id,task_type,scope_key,fingerprint,batch,state,created_at,priority) VALUES(?,?,?,?,?,'pending',?,?)",
         )
-        .run(id, batch.taskType, batch.scopeKey, fingerprint, JSON.stringify(batch), now);
+        .run(
+          id,
+          batch.taskType,
+          batch.scopeKey,
+          fingerprint,
+          JSON.stringify(batch),
+          old ? String(old.created_at) : now,
+          Math.min(1, Math.max(0, priority, Number(old?.priority ?? 0))),
+        );
       this.db.exec('COMMIT');
       return id;
     } catch (error) {
@@ -140,7 +179,7 @@ export class ResearchQueue {
       }
       const row = this.db
         .prepare(
-          `SELECT * FROM research_jobs WHERE state='pending' ${jobId ? 'AND id=?' : ''} ORDER BY created_at,rowid LIMIT 1`,
+          `SELECT * FROM research_jobs WHERE state='pending' ${jobId ? 'AND id=?' : ''} ORDER BY (julianday(created_at)*86400000-priority*60000),created_at,rowid LIMIT 1`,
         )
         .get(...(jobId ? [jobId] : []));
       if (!row) {
@@ -293,6 +332,7 @@ export class ResearchQueue {
       )
       .get()!;
     return {
+      schedules: this.scheduler.entries(),
       pending: counts.pending ?? 0,
       runningJobs: counts.running ?? 0,
       completed: counts.completed ?? 0,
