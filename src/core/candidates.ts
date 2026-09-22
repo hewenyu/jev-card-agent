@@ -1,6 +1,7 @@
 import type { Candidate, PokerState } from './types.js';
+import { callAmount } from './poker-math.js';
 
-export const CANDIDATE_VERSION = 'legal-raise-to-v1';
+export const CANDIDATE_VERSION = 'street-sized-raise-to-v2';
 export function validateCandidate(candidate: Candidate, state: PokerState): boolean {
   if (!state.turnToken || !state.handId || state.complete) return false;
   return state.validActions.some((legal) => {
@@ -19,7 +20,7 @@ export function validateCandidate(candidate: Candidate, state: PokerState): bool
 export function buildCandidates(state: PokerState): Candidate[] {
   if (!state.turnToken || !state.handId || state.complete) return [];
   const heroBet = state.seats.find((s) => s.seat === state.heroSeat)?.bet ?? 0;
-  const toCall = state.validActions.find((a) => a.action === 'call')?.amount ?? 0;
+  const toCall = callAmount(state);
   const candidates: Candidate[] = [];
   for (const legal of state.validActions) {
     if (legal.action !== 'raise') {
@@ -32,9 +33,32 @@ export function buildCandidates(state: PokerState): Candidate[] {
     }
     if (legal.min === undefined || legal.max === undefined) continue;
     const currentTotal = heroBet + toCall;
+    const limpers = new Set(
+      state.history
+        .filter(
+          (h) =>
+            h.street === 'preflop' &&
+            h.action === 'call' &&
+            h.seat !== state.heroSeat &&
+            !state.history.some((entry) => entry.street === 'preflop' && entry.action === 'raise'),
+        )
+        .map((h) => h.seat),
+    ).size;
+    const sizes =
+      state.street === 'preflop'
+        ? currentTotal <= state.bigBlind
+          ? [2.2, 2.5, 3 + limpers].map((multiple) => Math.round(multiple * state.bigBlind))
+          : [2.5, 3.5].map((multiple) => Math.round(multiple * currentTotal))
+        : [1 / 3, 0.5, 2 / 3, 1].map(
+            (fraction) => currentTotal + Math.round((state.pot + toCall) * fraction),
+          );
     const targets = [
       legal.min,
-      ...[0.5, 1].map((f) => currentTotal + Math.round((state.pot + toCall) * f)),
+      ...sizes,
+      // Preserve an intermediate wager when pot-sized targets all exceed a short stack.
+      ...(state.street !== 'preflop' && sizes.every((size) => size >= legal.max!)
+        ? [currentTotal + Math.round((legal.max - currentTotal) / 2)]
+        : []),
       legal.max,
     ];
     for (const target of targets) {

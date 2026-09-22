@@ -1,0 +1,829 @@
+{
+  "version": "independent-harness-scenarios-v1",
+  "description": "Synthetic scenarios designed from poker rules and ordinary strategic cases, independently of recorded overnight hands. Only actor-visible cards are present; no future board or opponent private cards. Allowed actions are deliberately broad where several sizes or lines are reasonable. A failed strategic guardrail requires review, not an assertion that all excluded actions have proven negative EV.",
+  "assembly": "For each scenario: {...createInitialState(), ...baseState, ...scenario.state, handId: scenario.id}. Build candidates and context using production functions. expected is evaluation metadata only and MUST NOT be sent to Jev.",
+  "baseState": {
+    "tableId": "synthetic-harness-table",
+    "heroSeat": 0,
+    "dealerSeat": 1,
+    "actorSeat": 0,
+    "smallBlind": 10,
+    "bigBlind": 20,
+    "turnToken": "synthetic-not-authorized",
+    "lastTableSeq": 100,
+    "history": [],
+    "handStartStacks": {},
+    "complete": false,
+    "historyIncomplete": true,
+    "waitingReason": null
+  },
+  "scenarios": [
+    {
+      "id": "free-river-high-card",
+      "expected": {
+        "acceptableActions": ["check", "raise", "all_in"],
+        "rationale": "Free check preserves the pot claim at zero cost; folding cannot save chips. This case tests the free-check dominance rule, not whether every raise is sensible.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "river",
+        "holeCards": ["7c", "2d"],
+        "board": ["Ah", "Ks", "Qd", "Jh", "9c"],
+        "pot": 400,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 1000,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 1000,
+            "bet": 0,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "check"
+          },
+          {
+            "action": "raise",
+            "min": 20,
+            "max": 1000
+          },
+          {
+            "action": "all_in"
+          }
+        ]
+      }
+    },
+    {
+      "id": "free-big-blind-option",
+      "expected": {
+        "acceptableActions": ["check", "raise", "all_in"],
+        "rationale": "The big blind has already matched the limps; a legal free check dominates folding. Raise selection is not graded by this narrow guardrail.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "preflop",
+        "holeCards": ["7c", "2d"],
+        "board": [],
+        "pot": 60,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 980,
+            "bet": 20,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 980,
+            "bet": 20,
+            "status": "active"
+          },
+          {
+            "seat": 2,
+            "name": "Opponent 2",
+            "stack": 980,
+            "bet": 20,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "check"
+          },
+          {
+            "action": "raise",
+            "min": 40,
+            "max": 1000
+          },
+          {
+            "action": "all_in"
+          }
+        ],
+        "dealerSeat": 1
+      }
+    },
+    {
+      "id": "private-royal-river-value",
+      "expected": {
+        "acceptableActions": ["raise", "all_in"],
+        "rationale": "Private royal flush is unbeatable and no river card remains. Seek value after the opponent checks; checking cannot earn an additional call.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "river",
+        "holeCards": ["Ah", "Kh"],
+        "board": ["Qh", "Jh", "Th", "2c", "3d"],
+        "pot": 800,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 800,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 800,
+            "bet": 0,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "check"
+          },
+          {
+            "action": "raise",
+            "min": 20,
+            "max": 800
+          },
+          {
+            "action": "all_in"
+          }
+        ],
+        "dealerSeat": 0,
+        "history": [
+          {
+            "handId": "private-royal-river-value",
+            "tableSeq": 99,
+            "seat": 1,
+            "name": "Opponent 1",
+            "action": "check",
+            "street": "river",
+            "amount": null,
+            "toCallBefore": 0,
+            "actionId": null,
+            "timestamp": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "private-quads-face-river-bet",
+      "expected": {
+        "acceptableActions": ["call", "raise", "all_in"],
+        "rationale": "Four aces cannot lose on this board. Continue against the 400-chip wager; whether to call or raise depends on the opponent.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "river",
+        "holeCards": ["Ac", "Ad"],
+        "board": ["Ah", "As", "7c", "3d", "2h"],
+        "pot": 1400,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 1200,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 800,
+            "bet": 400,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "call",
+            "amount": 400
+          },
+          {
+            "action": "raise",
+            "min": 800,
+            "max": 1200
+          },
+          {
+            "action": "all_in"
+          }
+        ]
+      }
+    },
+    {
+      "id": "river-unpaired-facing-pot",
+      "expected": {
+        "acceptableActions": ["fold"],
+        "rationale": "Seven high has no remaining draw and cannot beat a normal value range. There is no supplied bluff evidence to justify paying a pot-sized wager.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "river",
+        "holeCards": ["7c", "2d"],
+        "board": ["Ah", "Jd", "9s", "5h", "3c"],
+        "pot": 800,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 1500,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 1100,
+            "bet": 400,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "call",
+            "amount": 400
+          },
+          {
+            "action": "raise",
+            "min": 800,
+            "max": 1500
+          },
+          {
+            "action": "all_in"
+          }
+        ]
+      }
+    },
+    {
+      "id": "turn-unpaired-facing-pot",
+      "expected": {
+        "acceptableActions": ["fold"],
+        "rationale": "Unpaired seven high has no one-card straight or flush draw and faces a pot-sized bet. Avoid paying for bare overoptimistic random-range equity.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "turn",
+        "holeCards": ["7c", "2d"],
+        "board": ["Ah", "Ks", "9c", "4h"],
+        "pot": 1200,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 1600,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 1000,
+            "bet": 600,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "call",
+            "amount": 600
+          },
+          {
+            "action": "raise",
+            "min": 1200,
+            "max": 1600
+          },
+          {
+            "action": "all_in"
+          }
+        ]
+      }
+    },
+    {
+      "id": "turn-four-heart-board-no-heart",
+      "expected": {
+        "acceptableActions": ["fold"],
+        "rationale": "Hero has neither a heart nor a made pair. A fifth board heart is not a hero-specific flush draw; substantial pressure calls for folding without bluff evidence.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "turn",
+        "holeCards": ["Qc", "Jd"],
+        "board": ["Ah", "Kh", "8h", "3h"],
+        "pot": 800,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 1400,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 1000,
+            "bet": 400,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "call",
+            "amount": 400
+          },
+          {
+            "action": "raise",
+            "min": 800,
+            "max": 1400
+          },
+          {
+            "action": "all_in"
+          }
+        ]
+      }
+    },
+    {
+      "id": "flop-cheap-nut-flush-draw",
+      "expected": {
+        "acceptableActions": ["call", "raise"],
+        "rationale": "An ace-high flush draw and overcard face a 100-chip price into 700. Continuing is reasonable; calling or a supported semi-bluff raise may be used. No clean-outs guarantee is claimed.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "flop",
+        "holeCards": ["Ah", "Jh"],
+        "board": ["Kh", "7h", "2c"],
+        "pot": 700,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 1800,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 1700,
+            "bet": 100,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "call",
+            "amount": 100
+          },
+          {
+            "action": "raise",
+            "min": 200,
+            "max": 1800
+          },
+          {
+            "action": "all_in"
+          }
+        ]
+      }
+    },
+    {
+      "id": "flop-top-set-moderate-bet",
+      "expected": {
+        "acceptableActions": ["call", "raise", "all_in"],
+        "rationale": "Top set on a dry board is a strong value hand facing a moderate wager. Continue; the precise value line is deliberately not fixed.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "flop",
+        "holeCards": ["Kc", "Kd"],
+        "board": ["Kh", "7s", "2c"],
+        "pot": 600,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 1600,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 1400,
+            "bet": 200,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "call",
+            "amount": 200
+          },
+          {
+            "action": "raise",
+            "min": 400,
+            "max": 1600
+          },
+          {
+            "action": "all_in"
+          }
+        ]
+      }
+    },
+    {
+      "id": "preflop-aces-facing-open",
+      "expected": {
+        "acceptableActions": ["call", "raise", "all_in"],
+        "rationale": "Pocket aces facing a modest three-big-blind open should continue. Several raise sizes or a trap are permitted.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "preflop",
+        "holeCards": ["Ac", "Ad"],
+        "board": [],
+        "pot": 90,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 1500,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 1490,
+            "bet": 10,
+            "status": "active"
+          },
+          {
+            "seat": 2,
+            "name": "Opponent 2",
+            "stack": 1480,
+            "bet": 20,
+            "status": "active"
+          },
+          {
+            "seat": 3,
+            "name": "Opponent 3",
+            "stack": 1440,
+            "bet": 60,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "call",
+            "amount": 60
+          },
+          {
+            "action": "raise",
+            "min": 100,
+            "max": 1500
+          },
+          {
+            "action": "all_in"
+          }
+        ],
+        "dealerSeat": 0
+      }
+    },
+    {
+      "id": "preflop-weak-offsuit-multiway",
+      "expected": {
+        "acceptableActions": ["fold"],
+        "rationale": "Seven-deuce offsuit faces an open and cold call with players still present. Poor high-card strength and connectivity do not justify routine speculative calling.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "preflop",
+        "holeCards": ["7c", "2d"],
+        "board": [],
+        "pot": 150,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 1500,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 1490,
+            "bet": 10,
+            "status": "active"
+          },
+          {
+            "seat": 2,
+            "name": "Opponent 2",
+            "stack": 1480,
+            "bet": 20,
+            "status": "active"
+          },
+          {
+            "seat": 3,
+            "name": "Opponent 3",
+            "stack": 1440,
+            "bet": 60,
+            "status": "active"
+          },
+          {
+            "seat": 4,
+            "name": "Opponent 4",
+            "stack": 1440,
+            "bet": 60,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "call",
+            "amount": 60
+          },
+          {
+            "action": "raise",
+            "min": 100,
+            "max": 1500
+          },
+          {
+            "action": "all_in"
+          }
+        ],
+        "dealerSeat": 0
+      }
+    },
+    {
+      "id": "preflop-ace-king-suited-button",
+      "expected": {
+        "acceptableActions": ["raise", "all_in"],
+        "rationale": "Ace-king suited on the button in an unopened three-handed pot should normally open for value rather than fold or routinely limp. Exact sizing is not graded.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "preflop",
+        "holeCards": ["Ac", "Kc"],
+        "board": [],
+        "pot": 30,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 1500,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 1490,
+            "bet": 10,
+            "status": "active"
+          },
+          {
+            "seat": 2,
+            "name": "Opponent 2",
+            "stack": 1480,
+            "bet": 20,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "call",
+            "amount": 20
+          },
+          {
+            "action": "raise",
+            "min": 40,
+            "max": 1500
+          },
+          {
+            "action": "all_in"
+          }
+        ],
+        "dealerSeat": 0
+      }
+    },
+    {
+      "id": "royal-board-profitable-split-call",
+      "expected": {
+        "acceptableActions": ["call", "all_in"],
+        "rationale": "Both players must use the board royal flush. Calling 600 creates a 1600 pot, of which hero receives 800: a guaranteed positive 200-chip incremental result under the stated no-rake synthetic rules. Never label a split as an outright win.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "river",
+        "holeCards": ["2c", "3d"],
+        "board": ["Ah", "Kh", "Qh", "Jh", "Th"],
+        "pot": 1000,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 600,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 0,
+            "bet": 600,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "call",
+            "amount": 600
+          },
+          {
+            "action": "all_in"
+          }
+        ]
+      }
+    },
+    {
+      "id": "river-underpair-facing-overbet",
+      "expected": {
+        "acceptableActions": ["fold"],
+        "rationale": "A weak underpair faces a five-times-previous-pot shove. No opponent bluff evidence is supplied; random-range showdown equity is not a justification for this bluff catch.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "river",
+        "holeCards": ["8c", "8d"],
+        "board": ["Ah", "Ks", "Qh", "9s", "2c"],
+        "pot": 1200,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 1000,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 0,
+            "bet": 1000,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "call",
+            "amount": 1000
+          },
+          {
+            "action": "all_in"
+          }
+        ]
+      }
+    },
+    {
+      "id": "river-strong-full-house-value",
+      "expected": {
+        "acceptableActions": ["call", "raise", "all_in"],
+        "rationale": "Aces full of kings face a quarter-pot final calling price. This is strong value despite the theoretical possibility of four kings; continue without asserting invulnerability.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "river",
+        "holeCards": ["Ac", "Ad"],
+        "board": ["Ah", "Ks", "Kd", "7c", "2h"],
+        "pot": 1200,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 1400,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 1100,
+            "bet": 300,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "call",
+            "amount": 300
+          },
+          {
+            "action": "raise",
+            "min": 600,
+            "max": 1400
+          },
+          {
+            "action": "all_in"
+          }
+        ]
+      }
+    },
+    {
+      "id": "turn-cheap-open-ended-draw",
+      "expected": {
+        "acceptableActions": ["call", "raise"],
+        "rationale": "Eight one-card straight completions and a 10% calling threshold make continuation reasonable against this small wager. Outs are not guaranteed winners; a raise needs a credible semi-bluff rationale.",
+        "claim": "Diagnostic guardrail, not a proof of action EV or guaranteed profitability."
+      },
+      "state": {
+        "street": "turn",
+        "holeCards": ["8c", "9d"],
+        "board": ["6h", "7s", "Kc", "2d"],
+        "pot": 360,
+        "seats": [
+          {
+            "seat": 0,
+            "name": "Hero",
+            "stack": 1000,
+            "bet": 0,
+            "status": "active"
+          },
+          {
+            "seat": 1,
+            "name": "Opponent 1",
+            "stack": 960,
+            "bet": 40,
+            "status": "active"
+          }
+        ],
+        "validActions": [
+          {
+            "action": "fold"
+          },
+          {
+            "action": "call",
+            "amount": 40
+          },
+          {
+            "action": "raise",
+            "min": 80,
+            "max": 1000
+          },
+          {
+            "action": "all_in"
+          }
+        ]
+      }
+    }
+  ]
+}

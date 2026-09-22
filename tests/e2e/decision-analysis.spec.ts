@@ -15,6 +15,8 @@ async function fixture(page: Page) {
     ...detail.decisions[0]!,
     context: {
       ...detail.decisions[0]!.context,
+      harness: undefined,
+      opponentMemory: undefined,
       holeCards: ['Ah', 'Kd'],
       opponents: [
         { name: 'Observed rival', hands: 10, vpip: 4, pfr: 2, facedBet: 5, foldedToBet: 1 },
@@ -174,6 +176,86 @@ test('replay presents provider analysis, actual summary and evidence with sample
     .locator('.analysis-recommendation > .analysis-prose')
     .evaluate((element) => ({ width: element.clientWidth, scroll: element.scrollWidth }));
   expect(prose.scroll).toBeLessThanOrEqual(prose.width);
+});
+
+test('harness replay separates calculated facts, random-range assumptions and audit-only outcomes on mobile', async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  const decision: DecisionView = {
+    ...data.first,
+    modelInput: {
+      street: 'flop',
+      holeCards: ['Ah', 'Kd'],
+      evidencePolicy: 'Saved projected request',
+    },
+    modelQuestions: {
+      action: {
+        instructions: 'Choose a legal candidate',
+        criteria: { call: { additionalChips: 100 } },
+      },
+    },
+    context: {
+      ...data.first.context,
+      harness: {
+        version: 'poker-harness-v1',
+        cards: {
+          madeHand: { name: 'one_pair', ranks: [14, 13, 9, 5] },
+          bestFive: { playsBoard: false },
+          board: { paired: false, maximumSameSuit: 2 },
+          draws: { straightCompletionCards: [], flushCompletionCards: [] },
+        },
+        position: { hero: 'BTN' },
+        betting: {
+          heroStackChips: 980,
+          heroStreetBetChips: 20,
+          callChips: 100,
+          contestablePotBeforeCallChips: 300,
+          requiredEquityToCall: 0.25,
+          activeOpponents: 2,
+          priceQualification: 'Break-even showdown share if betting ends after calling.',
+        },
+        uniformShowdownReference: {
+          equity: 0.625,
+          samples: 1200,
+          opponents: 2,
+          standardError: 0.01,
+        },
+      },
+      opponentMemory: { opponents: [{ name: 'Observed rival', observedHands: 10 }] },
+    },
+  };
+  await page.route('**/api/hands/*', (route) =>
+    route.fulfill({ json: { ...data.detail, decisions: [decision] } }),
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/#replay');
+  const evidence = page.getByLabel('Poker harness evidence', { exact: true });
+  await expect(evidence).toBeVisible();
+  await expect(evidence).toContainText('Jev selects the final action');
+  await expect(evidence).toContainText('one pair');
+  await expect(evidence).toContainText('Rank / kickers: A · K · 9 · 5');
+  await expect(evidence).toContainText('980 chips');
+  await expect(evidence).toContainText('20 chips');
+  await expect(evidence).toContainText('100 chips');
+  await expect(evidence).toContainText('25%');
+  const reference = page.getByLabel('Uniform random range reference');
+  await expect(reference).toContainText('62.5%');
+  await expect(reference).toContainText('not the actual win probability');
+  await expect(reference).toContainText('Audit reference · excluded from Jev input');
+  await page.getByText('Actual Jev input', { exact: true }).click();
+  const actualInput = page
+    .locator('details')
+    .filter({ has: page.getByText('Actual Jev input', { exact: true }) });
+  await expect(actualInput.locator('pre')).toContainText('Saved projected request');
+  await expect(actualInput.locator('pre')).not.toContainText('uniformShowdownReference');
+  await page.getByText('Decision instructions and candidate costs', { exact: true }).click();
+  await expect(page.locator('pre').filter({ hasText: 'additionalChips' })).toContainText('100');
+  await page.getByText('Verified historical outcomes · 1 audit only', { exact: true }).click();
+  await expect(page.getByText('Retained for audit;', { exact: false })).toBeVisible();
+  await page.getByText('Opponent memory available at this turn', { exact: true }).click();
+  await expect(evidence.locator('pre').last()).toContainText('Observed rival');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
 
 test('replay identifies disabled DeepSeek thinking while retaining analysis and the final Jev choice', async ({

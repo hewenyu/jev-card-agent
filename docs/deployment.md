@@ -15,7 +15,7 @@ cp -n .env.example .env
 chmod 600 .env
 ```
 
-也可以下载仓库源码后进入解压目录执行后两条命令。已有 `.env` 应保留，不要覆盖。在 `.env` 中填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY` 与内部 `API_TOKEN`，保留费用账本，并设置 Jev 单次请求 10 秒、整次决策 40 秒。费用只记录，不按金额限制调用。所有者本轮选择纯 Jev 持续收集真实对局数据；以下是目标配置，实际上线完成时间与集成证据见[验证报告](verification.md)，不能把配置说明当成上线验收。
+也可以下载仓库源码后进入解压目录执行后两条命令。已有 `.env` 保留，不要覆盖。在 `.env` 中填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY` 与内部 `API_TOKEN`，保留费用账本，并设置 Jev 单次请求 10 秒、整次决策 40 秒。费用只记录，不按金额限制调用。当前实现为纯 Jev [harness](harness.md)；以下配置说明不代表新版已部署或已经盈利，实际发布时间与证据见[验证报告](verification.md)。
 
 ```dotenv
 BIND_ADDRESS=127.0.0.1
@@ -29,7 +29,7 @@ JEV_DECISION_TIMEOUT_MS=40000
 
 `BOT_STRATEGY=jev` 让 Jev 根据当前局面与有界上下文直接选择合法行动，不请求 DeepSeek 或其他分析模型。首次调用后最多重试 3 次，共享 40 秒决策期限及平台行动期限，每次请求最多 10 秒。每个提交动作必须来自有效 Jev 结果；失败时不提交本地动作，记录诊断并持久停牌。移除旧配置中的 `RUN_BUDGET_USD` 和 `TOTAL_BUDGET_USD`，它们不再是运行配置。
 
-`AUTO_START_BOT=true` 在服务就绪且不存在持久模型失败停牌时自动开始一个 Run，不限制手数或时长，启用 auto-rebuy。先持续运行数小时收集数据，完整原始牌局和决策保存在同一持久卷；后台不会根据短期输赢自动改写策略。后续复盘和 harness 对照见[评估文档](evaluation.md)。
+`AUTO_START_BOT=true` 在服务就绪且不存在持久失败停牌时自动开始 Run，不限制手数或时长，启用 auto-rebuy。新版通过牌型/下注工具、按街候选和长期对手记忆辅助 Jev；均匀随机摊牌参考仅留作审计、不发送给 Jev。完整原始牌局及决策保存在原持久卷；不根据短期输赢自动改写策略。冻结输入对照与真实盈利评估见[评估文档](evaluation.md)。
 
 ### 可选分析模型
 
@@ -88,9 +88,11 @@ sh scripts/manage.sh logs
 
 日常停止、启动和重启使用上述管理入口。健康检查只表示 HTTP 可响应，Bot 实际连接与错误查看控制台或日志。公开日志前移除私有运行标识和牌局信息。`backup` 使用运行中容器内的 Node.js SQLite online backup 写入 `/app/data/backups/`，再通过 `docker compose cp` 复制到宿主机；备份默认保存于被 Git 忽略的 `data/backups/`，包含敏感记录，不公开上传。
 
-### 修正旧版对手统计
+### 长期记忆与历史统计迁移
 
-从早期版本更新到 `visible-context-v5` 时，旧 checkpoint 可能含错街行动累计的对手统计。先更新宿主机 `scripts/`，备份并安全离桌，再用新镜像离线重建一次；不要清理原始牌局或决策：
+`visible-context-v6` 使用新增 `opponent_encounters` 派生表。首次读取时根据已保存结算惰性回填，之后按事件游标增量处理；原 Run、手牌、原始事件、请求、资金与费用表不清理。无需为了创建长期记忆重置数据库。双时间截止限制历史查询，旧数据也只能在当时已经收到且已结束后进入记忆。
+
+以下是从更早版本迁移错街 checkpoint 统计的历史操作；已完成该修正的部署不必重复。先更新宿主机 `scripts/`，备份并安全离桌，再离线重建：
 
 ```sh
 sh scripts/manage.sh backup

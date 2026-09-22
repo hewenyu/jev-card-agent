@@ -14,6 +14,7 @@ export interface DecisionTask {
   deadlineAt: number;
   state: PokerState;
   recovered: boolean;
+  recoveryDeadlineKnown?: boolean;
   requireJev?: boolean;
   opponents: OpponentStats[];
 }
@@ -46,6 +47,7 @@ export async function decide(
       task.state.lastTableSeq,
     ) ?? [],
   );
+  context.opponentMemory = dependencies.store.getOpponentMemory?.(task.state, createdAt) ?? [];
   let analysisProgress: DecisionProgress | undefined;
   const progressAttempts = new Map<string, ProviderAttempt>();
   let frozen = false;
@@ -77,7 +79,7 @@ export async function decide(
   const failedAttempts: ProviderAttempt[] = [];
   let fallbackReason: string | null = !candidates.length
     ? 'no_legal_candidates'
-    : task.recovered
+    : task.recovered && !task.recoveryDeadlineKnown
       ? 'recovered_turn_unknown_remaining_time'
       : null;
   let timer: ReturnType<typeof setTimeout> | undefined;

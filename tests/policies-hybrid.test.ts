@@ -319,7 +319,9 @@ describe('Jev-directed optional analysis', () => {
     expect(result.attempts?.map((a) => a.provider)).toEqual(['jev', 'responses', 'jev']);
     expect(initial.calls).toHaveLength(2);
     expect(initial.calls[1]?.state).toMatchObject({
-      ...context,
+      holeCards: context.holeCards,
+      board: context.board,
+      harness: { cards: context.harness?.cards, betting: context.harness?.betting },
       untrusted_advisory: expect.any(String),
     });
     const first = initial.calls[0]?.questions as Record<string, unknown>;

@@ -37,17 +37,17 @@ flowchart LR
   T --> E[Replay, evaluation and analytics]
 ```
 
-The selected deployment target is **pure Jev (`BOT_STRATEGY=jev`)**: Jev receives the visible state, hand session, opponent statistics and history summary, then directly chooses a legal candidate. Data collection is the current priority: the target is to collect several hours of real hands and decisions before reviewing them and designing strategy comparisons. This is a collection target, not a claim that the sample is already complete. The running agent does not automatically rewrite its strategy. Deployment and validation status are recorded separately in the [verification report](docs/verification.md).
+The current implementation uses **pure Jev (`BOT_STRATEGY=jev`)** with a [poker harness](docs/harness.md): deterministic card and betting facts, position, street-sized legal candidates, current-hand context and completed opponent encounters. Jev makes the final choice. The runtime does not automatically rewrite strategy. Deployment and executed validation are recorded separately in the [verification report](docs/verification.md).
 
 The dedicated **DeepSeekProvider** and standard Responses / Messages adapters remain available for optional combined-policy experiments. Extra analysis requires explicitly selecting `jev-reasoning` and configuring its provider; pure Jev does not call DeepSeek, GPT or Claude.
 
-Each hand has a persistent session. Inputs include visible action history, opponent statistics with sample counts, recent verified results and earlier decisions from that same hand, bounded by the current decision’s cutoff and input size limits. Database history remains stored when older context is omitted from a model request. Replay preserves the saved input rather than adding later information.
+Each hand has a persistent session. Following Pi’s separation of stored history and model context, the full event/decision history remains in SQLite while each request uses a compact projection. Unrelated recent profit streaks, repeated identifiers and duplicated context are omitted. Opponent memory uses at most 200 completed encounters per current opponent; completion and receipt must both precede the decision. Public showdown examples and street counts retain source evidence and sample limits. Missing price metadata is not guessed.
 
 For successful Jev requests, records retain the original request and the schema-parsed `model`, `usage` and `answers`; they do not archive the verbatim HTTP response. Failed calls retain attempts, status and available diagnostic details, which may be incomplete.
 
 Every submitted live action must come from Jev. Jev gets an initial attempt and **at most three retries**, with **10 seconds per request and 40 seconds for the whole decision**, always bounded by the platform action deadline. Costs are recorded for review and never impose a monetary limit. If no valid Jev result is available, the runtime records the failed decision, submits no locally chosen action and stops playing. This stop persists across restarts; an operator must explicitly resume through the private management interface. The platform may apply its own timeout action, which is not a Jev choice. Authentication, provider balance, model identity and ledger failures are not blindly retried.
 
-Decision views show saved analysis, the thinking text or summary actually returned by the provider, Jev probabilities and the final choice. Missing thinking is marked unavailable; the application does not invent it. Jev probabilities are not poker equity or expected profit.
+Decision views preserve the supplied facts, actual provider output and final Jev choice. Card tools supply made hands, board texture and draws. A seeded 1,200-sample uniform-random showdown reference remains in the full audit context, with its assumptions and sampling error, but is **omitted from the actual Jev request**. It is not equity against the opponent’s betting range or action EV. Jev’s own probabilities are also not poker equity. Missing provider thinking is marked unavailable, never invented.
 
 ## Account chips and rebuys
 
@@ -95,7 +95,7 @@ JEV_TIMEOUT_MS=10000
 JEV_DECISION_TIMEOUT_MS=40000
 ```
 
-Set these values explicitly after copying `.env.example`. Preserve the cost ledger when switching strategies. Auto-start has no hand or duration cap and enables auto-rebuy; a persisted model-failure stop blocks automatic play until an operator resumes it. There is no application monetary budget gate. Recorded raw game events and decision history are retained, while model session inputs stay bounded. Future review findings injected into the harness should be versioned and compared on the same frozen inputs.
+Set these values explicitly after copying `.env.example`. Preserve the cost ledger when switching strategies. Auto-start has no hand or duration cap and enables auto-rebuy; a persisted model-failure stop blocks automatic play until an operator resumes it. There is no application monetary budget gate. Recorded raw game events and decision history are retained, while model session inputs stay bounded. Harness changes carry explicit versions and are compared on frozen inputs without assigning historical returns to alternative actions. Reconnecting to a previously observed turn reuses its original deadline; it does not grant another action window.
 
 Then run `npm run build` and `npm run start`. Without auto-start, the server only serves the console. The standalone `bot` command is a separate entry point; use one runtime per Bot and database. Real model calls cost money, and hand/time limits do not guarantee that many hands will finish.
 
@@ -131,10 +131,11 @@ npm run test:e2e
 
 Development uses Vite at `http://127.0.0.1:5173` and the API at `http://127.0.0.1:8787`. Production serves the UI, API and runtime from one Node.js process. Checks cover formatting, lint, types, unit/integration tests, build output, file-size limits and credential hygiene. Browser tests use synthetic data and do not spend model credits. Maintained text files stay below 1,000 lines.
 
-Real Arena runs and provider calls are documented, but they do not establish long-term profitability or a strategy advantage. Recent Opus 5 and Sonnet 5 probes using `high` timed out during analysis; they verified legal Jev continuation, **not successful high-effort analysis**. Saved provider thinking may be absent. Current evidence and limitations are in the [verification report](docs/verification.md).
+The frozen 2026-09-21 pure-Jev run had **295 verified settlements, −10,551 chips and 519 accepted Jev actions, with no local fallback**. Its losses drove the harness redesign; they do not establish a profitable replacement. Profitability remains a live evaluation objective, measured by net chips and bb/100 alongside sample size and drawdown. Historical provider probes and current verification remain in the [verification report](docs/verification.md).
 
 ## Documentation
 
+- [Pure Jev harness and evidence contract](docs/harness.md)
 - [Architecture and scope](docs/architecture.md)
 - [Evaluation methodology and cost accounting](docs/evaluation.md)
 - [OpenPoker and model contracts](docs/transports.md)

@@ -80,7 +80,15 @@ describe('policies', () => {
     expect(result.model).toBe('jev-1.13.0');
     expect(result.candidateId).toBe('check');
     expect(result.usage?.input_tokens).toBe(100);
-    expect(body.state).toEqual(context);
+    expect(body.state).toMatchObject({
+      holeCards: context.holeCards,
+      board: context.board,
+      harness: { version: context.harness?.version, betting: context.harness?.betting },
+      currentHandActions: [],
+    });
+    expect(body.state).not.toHaveProperty('recentOutcomes');
+    expect(body.state).not.toHaveProperty('handId');
+    expect(body.state).not.toHaveProperty('harness.uniformShowdownReference');
     expect(JSON.stringify(result.request)).not.toContain('fixture-key');
   });
   it('rejects unknown candidate IDs and non-normalized distributions', async () => {

@@ -4,6 +4,7 @@ import type { ActionPayload, ServerEvent } from '../openpoker/protocol.js';
 import type { HistoricalOutcome } from '../core/index.js';
 import type { SessionTurn } from '../core/session.js';
 import type { FundingEventView, FundingView, LiveDecisionProgress } from '../shared/api.js';
+import type { OpponentMemory } from '../core/opponent-memory.js';
 
 export type RuntimePhase =
   | 'idle'
@@ -84,6 +85,7 @@ export interface RuntimeCheckpoint {
 }
 /** Synchronous methods are SQLite transactions. Throw on failure: no unrecorded action is sent. */
 export interface RuntimeStore {
+  getOpponentMemory?(state: PokerState, asOf: string): OpponentMemory[];
   loadFundingState?(): Partial<FundingView> | undefined;
   saveFundingEvent?(event: FundingEventView, dedupeKey?: string): void;
   sessionTurns?(tableId: string, handId: string, asOf: string, beforeSeq: number): SessionTurn[];

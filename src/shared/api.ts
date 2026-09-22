@@ -61,6 +61,9 @@ export interface DecisionView {
   street: string;
   createdAt: string;
   context: Record<string, unknown>;
+  /** Saved Jev request fields, recursively redacted; never reconstructed from audit context. */
+  modelInput?: Record<string, unknown>;
+  modelQuestions?: Record<string, unknown>;
   candidates: CandidateView[];
   selectedCandidateId: string | null;
   source: string;

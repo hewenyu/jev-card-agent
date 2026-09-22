@@ -68,6 +68,10 @@ export class PokerRuntime extends EventEmitter {
   private activeTask: DecisionTask | null = null;
   private decisionTasks = new Set<Promise<void>>();
   private knownTurns = new Set<string>();
+  private turnDeadlines = new Map<
+    string,
+    { tableId: string; deadlineAt: number; decisionDeadlineAt: number }
+  >();
   private completedHands = new Set<string>();
   private observedHands = new Set<string>();
   private pending = new Map<string, StoredAction>();
@@ -172,6 +176,7 @@ export class PokerRuntime extends EventEmitter {
     this.leaveVerification = false;
     this.retryCount = 0;
     this.knownTurns.clear();
+    this.turnDeadlines.clear();
     this.completedHands.clear();
     this.observedHands.clear();
     this.pending.clear();
@@ -446,6 +451,7 @@ export class PokerRuntime extends EventEmitter {
     if (previous.handId !== this.snapshot.state.handId) {
       this.cancelTask();
       this.knownTurns.clear();
+      this.turnDeadlines.clear();
       this.blockedAuthorities.clear();
     }
     if ((event.type === 'hand_start' || event.type === 'your_turn') && this.snapshot.state.handId) {
@@ -582,15 +588,28 @@ export class PokerRuntime extends EventEmitter {
     this.knownTurns.add(key);
     const eventTime = typeof event.ts === 'string' ? Date.parse(event.ts) : NaN;
     const startedAt = Number.isFinite(eventTime) ? Math.min(Date.now(), eventTime) : Date.now();
+    const remembered = this.turnDeadlines.get(key);
+    const timing = remembered?.tableId === state.tableId ? remembered : undefined;
     const deadlineAt =
+      timing?.deadlineAt ??
       startedAt +
-      (recovered ? Math.min(3000, this.options.turnTimeoutMs) : this.options.turnTimeoutMs);
+        (recovered ? Math.min(3000, this.options.turnTimeoutMs) : this.options.turnTimeoutMs);
+    const decisionDeadlineAt =
+      timing?.decisionDeadlineAt ??
+      Math.min(
+        Date.now() + this.options.decisionTimeoutMs,
+        deadlineAt - this.options.submissionReserveMs,
+      );
+    // Only a live your_turn establishes time. Resync timestamps must never reset that clock.
+    if (!recovered && !timing)
+      this.turnDeadlines.set(key, { tableId: state.tableId, deadlineAt, decisionDeadlineAt });
     const task: DecisionTask = {
       key,
       controller: new AbortController(),
       state: structuredClone(state),
       deadlineAt,
       recovered,
+      recoveryDeadlineKnown: recovered && !!timing,
       requireJev: this.requireJev,
       opponents: this.opponents.snapshot(),
     };
@@ -604,6 +623,7 @@ export class PokerRuntime extends EventEmitter {
       0,
       Math.min(
         this.options.decisionTimeoutMs,
+        decisionDeadlineAt - Date.now(),
         deadlineAt - Date.now() - this.options.submissionReserveMs,
       ),
     );

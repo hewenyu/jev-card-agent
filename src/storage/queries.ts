@@ -205,6 +205,13 @@ function handView(row: Row): HandSummary {
 }
 function decisionView(row: Row): DecisionView {
   const proposal = json<Partial<Proposal>>(row.proposal, {});
+  const request = proposal.source === 'jev' && row.source === 'jev' ? proposal.request : undefined;
+  const publicObject = (value: unknown): Record<string, unknown> | undefined =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (redact(value) as Record<string, unknown>)
+      : undefined;
+  const modelInput = publicObject(request?.state);
+  const modelQuestions = publicObject(request?.questions);
   return {
     id: String(row.id),
     runId: String(row.run_id),
@@ -212,6 +219,8 @@ function decisionView(row: Row): DecisionView {
     street: String(row.street),
     createdAt: String(row.created_at),
     context: redact(json(row.context, {})) as Record<string, unknown>,
+    ...(modelInput ? { modelInput } : {}),
+    ...(modelQuestions ? { modelQuestions } : {}),
     candidates: json<Candidate[]>(row.candidates, []).map((c) => ({
       id: c.id,
       label: c.label,

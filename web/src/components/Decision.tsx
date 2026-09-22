@@ -78,8 +78,37 @@ export function Decision({ decision }: { decision: DecisionView }) {
         </div>
       </div>
       <details className="context-details">
+        <summary>Actual Jev input</summary>
+        {decision.modelInput ? (
+          <>
+            <p className="annotation">
+              Saved request state for this Jev response, with private fields removed. This is not
+              reconstructed from the audit context.
+            </p>
+            <pre>{JSON.stringify(decision.modelInput, null, 2)}</pre>
+          </>
+        ) : (
+          <p className="annotation">
+            The actual Jev request state is not available in this record.
+          </p>
+        )}
+      </details>
+      {decision.modelQuestions && (
+        <details className="context-details">
+          <summary>Decision instructions and candidate costs</summary>
+          <p className="annotation">
+            Saved questions sent with this Jev request, including its instructions and candidate
+            criteria.
+          </p>
+          <pre>{JSON.stringify(decision.modelQuestions, null, 2)}</pre>
+        </details>
+      )}
+      <details className="context-details">
         <summary>Inspect decision context</summary>
-        <p className="annotation">Information available at this decision’s cutoff.</p>
+        <p className="annotation">
+          Information available at this decision’s cutoff. The record includes audit history;
+          versions with a poker harness send a compact projection to Jev, excluding recent outcomes.
+        </p>
         <pre>{JSON.stringify(decision.context, null, 2)}</pre>
       </details>
     </div>

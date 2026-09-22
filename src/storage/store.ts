@@ -14,6 +14,7 @@ import { json, openDatabase } from './database.js';
 import { proposalCost } from './cost.js';
 import { recentOutcomes } from './history.js';
 import { sessionTurns } from './session.js';
+import { getOpponentMemory, initializeOpponentMemory } from './opponent-memory.js';
 import { STRATEGY_VERSIONS } from '../core/index.js';
 import type { FundingEventView } from '../shared/api.js';
 import {
@@ -32,6 +33,7 @@ export class Store implements RuntimeStore {
   ) {
     this.db = openDatabase(filename);
     initializeFunding(this.db);
+    initializeOpponentMemory(this.db);
   }
 
   beginRun(run: Parameters<RuntimeStore['beginRun']>[0]): void {
@@ -85,6 +87,10 @@ export class Store implements RuntimeStore {
   clearDecisionBlock(): void {
     this.db.prepare("DELETE FROM meta WHERE key='decision_block'").run();
   }
+  getOpponentMemory(state: PokerState, asOf: string) {
+    return getOpponentMemory(this.db, state, asOf);
+  }
+
   recentOutcomes(asOf: string, excludeHandId: string) {
     return recentOutcomes(this, asOf, excludeHandId);
   }

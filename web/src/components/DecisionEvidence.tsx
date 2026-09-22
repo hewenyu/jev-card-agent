@@ -1,5 +1,6 @@
 import { number, signed, time } from '../api';
 import { Cards } from './UI';
+import { HarnessEvidence } from './HarnessEvidence';
 import { asRecord, asRecords, cards, finite, text } from './analysis-data';
 
 function observedRate(count: unknown, opportunities: unknown): string {
@@ -36,6 +37,7 @@ export function DecisionEvidence({ context }: { context: Record<string, unknown>
   const history = asRecords(context.history);
   const session = asRecord(context.session);
   const previousTurns = asRecords(session.previousTurns);
+  const hasHarness = Object.keys(asRecord(context.harness)).length > 0;
   return (
     <section className="analysis-evidence" aria-label="Decision input evidence">
       <div className="analysis-section-heading">
@@ -43,7 +45,9 @@ export function DecisionEvidence({ context }: { context: Record<string, unknown>
         <h4>The evidence behind the choice</h4>
         <p className="annotation">
           {text(context.asOf) ? `Frozen ${time(String(context.asOf))}. ` : ''}
-          These are the recorded inputs, including the samples behind each opponent statistic.
+          {hasHarness
+            ? 'This record preserves visible state and audit history. Jev receives the calculated evidence and a compact selection of this context.'
+            : 'These are the recorded inputs, including the samples behind each opponent statistic.'}
         </p>
       </div>
       <div className="analysis-state-grid">
@@ -64,6 +68,7 @@ export function DecisionEvidence({ context }: { context: Record<string, unknown>
           <strong>{chips(context.toCall)}</strong>
         </div>
       </div>
+      <HarnessEvidence context={context} />
       <h5>Opponent observations</h5>
       {!opponents.length ? (
         <p className="analysis-empty">No opponent samples were recorded in this input.</p>
@@ -132,7 +137,16 @@ export function DecisionEvidence({ context }: { context: Record<string, unknown>
         )}
       </details>
       <details className="analysis-evidence-details">
-        <summary>Earlier turns in this session · {previousTurns.length} included</summary>
+        <summary>
+          Earlier turns in this session · {previousTurns.length}{' '}
+          {hasHarness ? 'recorded' : 'included'}
+        </summary>
+        {hasHarness && (
+          <p className="annotation">
+            Jev receives compact prior actions and their sources. Full prior analysis remains here
+            for replay.
+          </p>
+        )}
         {!previousTurns.length ? (
           <p className="analysis-empty">No earlier turn analysis is included in this input.</p>
         ) : (
@@ -159,7 +173,9 @@ export function DecisionEvidence({ context }: { context: Record<string, unknown>
         )}
       </details>
       <details className="analysis-evidence-details">
-        <summary>Verified historical outcomes · {outcomes.length} included</summary>
+        <summary>
+          Verified historical outcomes · {outcomes.length} {hasHarness ? 'audit only' : 'included'}
+        </summary>
         {!outcomes.length ? (
           <p className="analysis-empty">No verified earlier outcomes were included.</p>
         ) : (
@@ -188,7 +204,9 @@ export function DecisionEvidence({ context }: { context: Record<string, unknown>
           </ul>
         )}
         <p className="annotation">
-          These are past results known at the cutoff, not a score for the current choice.
+          {hasHarness
+            ? 'Retained for audit; recent outcomes are excluded from this version’s Jev input. Past profit is not evidence that a current action will be profitable.'
+            : 'These are past results known at the cutoff, not a score for the current choice.'}
         </p>
       </details>
     </section>

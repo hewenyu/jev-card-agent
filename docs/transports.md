@@ -2,7 +2,7 @@
 
 ## 已确定的接入
 
-采用 Node.js + TypeScript 自托管 Bot，通过 `wss://openpoker.ai/ws` 连接 OpenPoker。正式组合策略由后端先调用推理服务的 HTTPS API，再调用 Jev 的请求—响应 API 作最终选择。HTTP webhook、异步结果回调和远程决策 worker 不在交付范围内。
+采用 Node.js + TypeScript 自托管 Bot，通过 `wss://openpoker.ai/ws` 连接 OpenPoker。当前纯 Jev 模式由后端冻结局面、计算扑克事实、检索历史对手证据并投影为紧凑请求，调用 Jev API 作最终选择。投影移除均匀随机范围摊牌参考，仅在完整审计上下文保留该计算。额外推理仅属于显式启用的组合策略实验。HTTP webhook、异步结果回调和远程决策 worker 不在交付范围内。
 
 | 服务              | 地址                                             | 用途                                    |
 | ----------------- | ------------------------------------------------ | --------------------------------------- |
@@ -21,7 +21,7 @@ Bot 主动外连，无需为了接收牌局事件开放公网 webhook。产品�
 
 实时表格包含公共牌、Bot 自己的当前手牌、底池、座位名称、筹码、当前投注、弃牌状态、行动座位及牌局标识。Bot 所有者明确要求公开自己的手牌；不包含未公开的对手底牌。SSE 同时提供当前决策阶段，`GET /api/live/decisions` 提供当前手已保存的决策及分析。合法动作授权、turn token、鉴权密钥和运行错误不进入公共投影。已结束手牌的脱敏历史由历史 API 提供。
 
-模型调用由后端配置控制：本轮目标 `REASONING_MODE=always` 每次先请求 DeepSeek Flash 关闭 thinking 的分析，再让 Jev 选择；`always` 不等于开启思考。一个 session 对应一手牌，输入由持久化的、截止当前回合可见的同手历史重建；不依赖供应商会话存储。仅 `REASONING_MODE=adaptive` 使用旧的 Jev 按需分析门控。浏览器只读取调用进度与已经保存的结果，不能改策略或触发额外调用。
+模型调用由后端配置控制：`BOT_STRATEGY=jev` 使用纯 Jev harness，不调用额外分析模型。一个 session 对应一手牌，保存完整事件，模型请求单独精简；长期对手证据必须在当前决策前完成并收到，不依赖供应商托管会话。只有显式启用 `jev-reasoning` 才使用 `always` 分析或 `adaptive` 路由。浏览器只读取进度和结果，不能改策略或触发调用。
 
 `recentEvents` 最多保留当前 Run、当前桌、当前手牌的 32 个公开事件，包括开始、玩家动作和结算。`ChipMovement` 使用稳定 ID、座位、整数筹码金额及 `to-pot` / `from-pot` 方向。下注金额仅取协议的 `contribution_delta` 或已知的 `stack_before - stack_after`；raise-to 总额不能当作本次投入筹码。结算只使用 `hand_result.payouts` 的 `{seat, amount}` 数组。无法核实的筹码变化不生成动画；桌面状态仍按已验证 Runtime 快照更新。
 
@@ -41,7 +41,7 @@ TypeSafe [API](https://docs.typesafe.ai/api)、[文档索引](https://docs.types
 
 OpenPoker 公开场当前行动窗口为 45 秒，重连不延长。TypeSafe SDK 的单次 timeout 默认 10 秒、默认重试 2 次，Retry-After 等待可到 60 秒；不能直接当作实时决策总预算。
 
-Runtime 使用覆盖完整请求、响应读取和重试的 AbortSignal，保留提交余量；Jev 最终失败不提交本地行动并持久停牌。迟到结果不能用于新回合。
+Runtime 使用覆盖请求、响应读取和重试的 AbortSignal。纯 Jev 单次 10 秒、整次决策 40 秒，首次后最多重试 3 次并保留提交余量，不作金额限制。同一进程已观察过的同桌、同手、同 turn token 重连回合复用原始行动与决策 deadline；冷恢复缺少原期限证据时停牌，不从恢复时刻重新计时。Jev 最终失败不提交本地行动并持久停牌，迟到结果不能用于新回合。
 
 依据：[RequestOptions](https://docs.typesafe.ai/sdk/javascript/api/interfaces/RequestOptions)、[RetryPolicy](https://docs.typesafe.ai/sdk/javascript/api/interfaces/RetryPolicy)、[OpenPoker Reconnection](https://docs.openpoker.ai/building-bots/reconnection-idempotency/)。
 
@@ -94,6 +94,6 @@ DeepSeek 通过 `REASONING_PROVIDER=deepseek` 明确选择专用 provider，默�
 
 缓存输入保留供应商原 usage，并按 Messages 口径将 `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` 归一化为总输入，分别保存缓存字段；不得直接套用其他协议的总输入字段。缓存读取按独立费率，非缓存输入与缓存写入按普通输入费率计价。DeepSeek 专属 `DEEPSEEK_INPUT_PRICE_PER_MILLION`、`DEEPSEEK_CACHE_READ_INPUT_PRICE_PER_MILLION`、`DEEPSEEK_OUTPUT_PRICE_PER_MILLION` 默认分别为 $0.30、$0.006、$1.20，使用本次官方 Flash 文档的保守峰值。官方谷值为其一半；预留不能假设必定命中缓存或处于谷时，估算价不代替最终供应商账单。
 
-所有者已选择本轮目标 `DEEPSEEK_MODEL=deepseek-flash`、`DEEPSEEK_THINKING=disabled`，请求不发送 `output_config.effort`。分析单次 10 秒，首次之后最多 3 次重试并共享 40 秒 Hybrid deadline；最终行动仍由 Jev 决定，不自动调用 GPT 或 Claude 兜底。实际集成与上线状态另记验证报告。
+历史组合策略选择过 `DEEPSEEK_MODEL=deepseek-flash`、`DEEPSEEK_THINKING=disabled`，不发送 `output_config.effort`，分析单次 10 秒、最多重试 3 次并共享 40 秒 Hybrid deadline。当前纯 Jev 不执行这条分析链；如另行开展组合实验，最终动作仍须来自 Jev，不自动调用 GPT 或 Claude 兜底。历史集成与当前部署证据见验证报告。
 
 合同依据：[Anthropic API 兼容说明](https://api-docs.deepseek.com/guides/anthropic_api)、[Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode)、[Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing)。支持字段与官方价格是文档证据；真实返回、延迟及思考开关对比另记[验证报告](verification.md)。
