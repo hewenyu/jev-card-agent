@@ -26,7 +26,7 @@ Overview shows settled profit and win rate for the selected run. Win rate is the
 
 The run selector follows the current run by default. Selecting history pins that choice; selecting the current run again restores following. Historical scores show their last recorded source and time; older balance sums are explicitly labelled estimates, not official scores. Score curves do not join different seasons or legacy estimates onto current observations. Account details and funding events remain below the Live table; Overview stays statistics-only.
 
-The top-right GitHub link opens this repository. While the live Bot is playing at a known table, “Watch on OpenPoker” opens that table’s official arena page; it updates when the table changes and is hidden when the Bot is stopped or unseated.
+The top-right GitHub link opens this repository. In Live table, “Watch on OpenPoker” directly opens the current table’s official arena page in a new tab. The link remains available while the Bot reconnects or finishes its current hand before stopping and updates when the table changes. When stopped, unseated, or viewing a demo, the same entry is disabled and says “Waiting for a live table”; it never opens an old or synthetic table. The existing Run selector chooses recorded runs; it is unrelated to the official table link.
 
 ## How decisions work
 

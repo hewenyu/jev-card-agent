@@ -301,3 +301,13 @@ Production inspection found that the public runtime projection omitted worker st
 The regression scope includes differing official score and chip totals, signed/absent scores, buy-in and cash-out transfers, preserved historical rows, startup reconciliation, final reconciliation before stopping, current Overview/Live agreement, and intentional historical selection. Engineering checks and deployment observations are reported separately; account score is not evidence of strategy profitability.
 
 发布前本地 `npm run check` 全部通过：52 个文件、395 项 Vitest，包含真实本地 WebSocket 上的启动/离桌顺序，以及原数据库旧列逐值不变的迁移回归；lint、格式、类型、构建与仓库检查通过，最长实现文件 991 行。浏览器全套 54 项通过，更新一处已改变的说明文案断言后，其所属文件 8 项复验通过；最终发布流水线再次执行完整浏览器套件。Overview/Live 桌面截图已目检，5 个配置私有值在跟踪源码与 144 个构建文件中零匹配。本轮无需额外供应商模型诊断，未改变 Jev 的行动选择逻辑。
+
+生产 1.2.2 的 GitHub 检查最终通过 395 项单元测试及 57 项浏览器测试。部署前后逐值哈希比较 14 张表、54,356 条原有记录，原字段未变。真实入桌前积分为 8,636；入桌后离桌余额 6,636、在桌筹码 2,000，官方积分仍为 8,636。03:03 UTC 离桌核验时，官方积分、余额、当前 funding 和该 Run 的 performance 均为 8,586，在桌筹码为零；`after_leave` 快照先于 Run 结束保存。匿名生产浏览器随后确认 Overview/Live 同分，并在恢复对局后自动跟随新 Run。
+
+## 1.2.3 官方牌桌入口 / Official table navigation
+
+停牌时没有当前牌桌，原界面会完全移除 Watch 链接。此次改为保留固定入口：有有效实时牌桌时直接在新标签打开对应 OpenPoker arena，无牌桌时显示禁用状态和等待说明。恢复连接或等待当前手结束期间，只要当前牌桌仍有效，也保留跳转。手机顶部历史 Run 选择器恢复紧凑排列。
+
+The official table control stays visible and shows a waiting state when no current live table is available. Active table links use the current table ID and open in a new tab. This interface update does not change Jev decisions, account reconciliation, or stored history.
+
+发布前本地 `npm run check` 全部通过（395 项 Vitest、lint、格式、类型、构建及仓库检查）；57 项 Playwright 通过，包含官方链接换桌、恢复/收尾状态、新标签目标地址、无桌等待与 390px 紧凑排版。5 个配置私有值在 144 个构建产物中零匹配。跳转测试拦截官方目标页面，仅验证实际点击的 URL，不宣称验证了第三方直播内容。

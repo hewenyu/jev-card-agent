@@ -113,3 +113,13 @@
 .arena-watch-link:hover {
   text-decoration: underline;
 }
+.arena-watch-link:disabled {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-decoration: none;
+}
+.arena-watch-waiting {
+  color: var(--muted);
+  font-size: 10px;
+}

@@ -31,7 +31,7 @@ export function Live({
   const arenaUrl =
     runtime.mode === 'live' &&
     runtime.running &&
-    runtime.status === 'playing' &&
+    ['playing', 'recovering', 'connecting', 'stopping'].includes(runtime.status) &&
     runtime.table?.tableId
       ? `https://openpoker.ai/arena/${encodeURIComponent(runtime.table.tableId)}`
       : null;
@@ -68,7 +68,7 @@ export function Live({
           action={
             <div className="table-heading-actions">
               <Status>{runtime.status}</Status>
-              {arenaUrl && (
+              {arenaUrl ? (
                 <a
                   className="arena-watch-link"
                   href={arenaUrl}
@@ -77,6 +77,13 @@ export function Live({
                 >
                   Watch on OpenPoker <Icon name="external" size={13} />
                 </a>
+              ) : (
+                <>
+                  <button className="arena-watch-link" type="button" disabled>
+                    Watch on OpenPoker <Icon name="external" size={13} />
+                  </button>
+                  <span className="arena-watch-waiting">Waiting for a live table</span>
+                </>
               )}
             </div>
           }

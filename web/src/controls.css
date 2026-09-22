@@ -292,15 +292,7 @@ summary {
   text-decoration: underline;
 }
 @media (max-width: 540px) {
-  .topbar-controls > .repository-link {
-    order: 1;
-    margin-left: auto;
-  }
   .topbar-controls > .run-selector {
-    order: 2;
-    flex-basis: 100%;
-  }
-  .topbar-controls > .button {
-    order: 3;
+    flex: 1 1 130px;
   }
 }

@@ -38,7 +38,7 @@ async function fixture(page: Page) {
   return { state, focus };
 }
 
-test('official arena link follows the current playing table and hides for stopped, absent or demo tables', async ({
+test('official arena link follows the current table through recovery and drain, and hides when unseated', async ({
   page,
 }) => {
   const { state, focus } = await fixture(page);
@@ -47,12 +47,37 @@ test('official arena link follows the current playing table and hides for stoppe
   await expect(link).toHaveAttribute('href', 'https://openpoker.ai/arena/table-first');
   await expect(link).toHaveAttribute('target', '_blank');
   await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  for (const status of ['recovering', 'connecting', 'stopping']) {
+    state.runtime.status = status;
+    await focus();
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute('href', 'https://openpoker.ai/arena/table-first');
+  }
   state.runtime.table = { ...state.runtime.table!, tableId: 'table-next', stateSeq: 2 };
   await focus();
   await expect(link).toHaveAttribute('href', 'https://openpoker.ai/arena/table-next');
+  await page
+    .context()
+    .route('https://openpoker.ai/arena/table-next', (route) =>
+      route.fulfill({ contentType: 'text/html', body: '<title>Official table target</title>' }),
+    );
+  const opened = page.waitForEvent('popup');
+  await link.click();
+  const officialTable = await opened;
+  await expect(officialTable).toHaveURL('https://openpoker.ai/arena/table-next');
+  await officialTable.close();
+  for (const status of ['queued', 'cooldown']) {
+    state.runtime.status = status;
+    await focus();
+    await expect(link).toHaveCount(0);
+  }
   state.runtime = { ...state.runtime, running: false, status: 'stopped' };
   await focus();
   await expect(link).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Watch on OpenPoker', exact: true }),
+  ).toBeDisabled();
+  await expect(page.getByText('Waiting for a live table', { exact: true })).toBeVisible();
   state.runtime = { ...state.runtime, running: true, status: 'playing', table: null };
   await focus();
   await expect(link).toHaveCount(0);
@@ -92,6 +117,7 @@ test('GitHub opens the repository safely and both public links fit desktop and m
     await expect(page.getByRole('link', { name: 'Watch on OpenPoker', exact: true })).toBeVisible();
     const githubBox = (await github.boundingBox())!;
     const selectorBox = (await select.boundingBox())!;
+    if (width === 390) expect(Math.abs(githubBox.y - selectorBox.y)).toBeLessThan(20);
     const separated =
       githubBox.x >= selectorBox.x + selectorBox.width ||
       selectorBox.x >= githubBox.x + githubBox.width ||
