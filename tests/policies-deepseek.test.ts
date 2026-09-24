@@ -4,7 +4,8 @@ import type { Candidate, ProviderAttempt } from '../src/core/types.js';
 import { DeepSeekProvider } from '../src/policies/deepseek.js';
 import { ProviderError } from '../src/policies/metering.js';
 import { loadConfig } from '../src/server/config.js';
-import { Controller, ledgerFor, reasoningFor } from '../src/server/controller.js';
+import { Controller } from '../src/server/controller.js';
+import { ledgerFor, reasoningFor } from '../src/evaluation/legacy/providers.js';
 import { OpenPokerClient } from '../src/openpoker/client.js';
 import { Store } from '../src/storage/store.js';
 
@@ -252,7 +253,7 @@ describe('dedicated DeepSeek Messages contract', () => {
 });
 
 describe('DeepSeek configuration and ledger', () => {
-  it('persists effective provider configuration without credentials or an unapplied effort', async () => {
+  it('keeps offline reasoning settings out of live Jev configuration and never persists credentials', async () => {
     const db = store();
     vi.spyOn(OpenPokerClient.prototype, 'activeGame').mockRejectedValue(
       new Error('Synthetic startup failure'),
@@ -267,7 +268,7 @@ describe('DeepSeek configuration and ledger', () => {
     const controller = new Controller(config, db);
     try {
       await controller.start({
-        strategy: 'jev-reasoning',
+        strategy: 'jev',
         buyIn: 2000,
         maxHands: 1,
         maxMinutes: 1,
@@ -275,13 +276,7 @@ describe('DeepSeek configuration and ledger', () => {
         autoRebuy: false,
       });
       const serialized = String(db.db.prepare('SELECT config FROM runs').get()?.config);
-      expect(JSON.parse(serialized).reasoning).toEqual({
-        provider: 'deepseek',
-        protocol: 'messages',
-        model: 'deepseek-flash',
-        thinking: 'disabled',
-        timeoutMs: 10000,
-      });
+      expect(JSON.parse(serialized)).not.toHaveProperty('reasoning');
       expect(serialized).not.toContain('private-');
     } finally {
       await controller.close();

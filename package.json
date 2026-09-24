@@ -1,6 +1,6 @@
 {
   "name": "jev-card-agent",
-  "version": "1.4.3",
+  "version": "2.0.0",
   "private": true,
   "description": "Autonomous Jev poker agent and evaluation console for OpenPoker.ai",
   "type": "module",
@@ -25,10 +25,12 @@
     "check:repo": "node scripts/check-repo.mjs",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm test && npm run build && npm run check:repo",
     "research": "node --env-file-if-exists=.env --import tsx src/cli/research.ts",
-    "duelloop": "node --env-file-if-exists=.env --import tsx src/cli/duelloop.ts"
+    "duelloop": "node --env-file-if-exists=.env --import tsx src/cli/duelloop.ts",
+    "migrate:duelloop": "node --env-file-if-exists=.env --import tsx src/cli/migrate-duelloop.ts"
   },
   "dependencies": {
     "@fastify/static": "^10.1.4",
+    "duelloop": "file:vendor/duelloop-0.2.2.tgz",
     "fastify": "^5.6.2",
     "pino": "^9.13.1",
     "react": "^19.1.1",
@@ -45,7 +47,6 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.0.3",
     "concurrently": "^9.2.1",
-    "duelloop": "file:vendor/duelloop-0.2.1.tgz",
     "eslint": "^9.36.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^5.2.0",

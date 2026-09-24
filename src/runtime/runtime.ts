@@ -18,15 +18,18 @@ import {
 } from '../openpoker/protocol.js';
 import { LobbyLifecycle } from './lobby.js';
 import { FundingMonitor } from './funding.js';
-import { authorityKey, decide, type DecisionTask } from './decision.js';
+import type { DecisionTask } from './engine.js';
 import {
   actionAuthorityKey,
   decisionStateKey,
   runtimeDefaults as defaults,
   atHandBoundary,
+  authorityKey,
+  validateStartOptions,
 } from './authority.js';
 import { markAcknowledged, markSent } from './timing.js';
 import { recordDecision } from './recording.js';
+import { runtimeStatus } from './status.js';
 import type {
   DecisionRecord,
   RuntimeDependencies,
@@ -71,6 +74,7 @@ export class PokerRuntime extends EventEmitter {
   private completedHands = new Set<string>();
   private observedHands = new Set<string>();
   private pending = new Map<string, StoredAction>();
+  private resuming = new Set<string>();
   private retryCount = 0;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private durationTimer?: ReturnType<typeof setTimeout>;
@@ -129,14 +133,7 @@ export class PokerRuntime extends EventEmitter {
     await Promise.allSettled([...this.decisionTasks]);
   }
   status(): RuntimeStatus {
-    const value = structuredClone(this.snapshot);
-    if (
-      value.decision &&
-      (value.decision.handId !== value.state.handId ||
-        value.decision.tableId !== value.state.tableId)
-    )
-      value.decision = null;
-    return value;
+    return runtimeStatus(this.snapshot);
   }
   get state(): PokerState {
     return structuredClone(this.snapshot.state);
@@ -146,24 +143,7 @@ export class PokerRuntime extends EventEmitter {
     if (this.running || this.finishing) throw new Error('Runtime is already running or finishing');
     this.options = { ...defaults, ...options };
     this.requireJev = options.kind !== 'demo' && options.strategy !== 'baseline';
-    if (
-      !Number.isInteger(this.options.buyIn) ||
-      this.options.buyIn < 1000 ||
-      this.options.buyIn > 5000
-    ) {
-      throw new Error('Public buyIn must be an integer from 1000 to 5000');
-    }
-    for (const key of [
-      'maxHands',
-      'maxDurationMs',
-      'decisionTimeoutMs',
-      'reconnectMinMs',
-      'reconnectMaxMs',
-      'maxReconnectAttempts',
-    ] as const) {
-      if (!Number.isFinite(this.options[key]) || this.options[key] < 0)
-        throw new Error(`Invalid ${key}`);
-    }
+    validateStartOptions(this.options);
     this.lifetime = new AbortController();
     this.lobby.resetSeason();
     this.stopRequested = false;
@@ -483,7 +463,7 @@ export class PokerRuntime extends EventEmitter {
       !this.snapshot.state.complete &&
       ['hand_start', 'your_turn', 'resync_response'].includes(event.type)
     )
-      this.dependencies.store.pinKnowledge?.(this.snapshot.state, new Date().toISOString());
+      this.dependencies.engine.pin(this.snapshot.state, new Date().toISOString());
     this.dependencies.store.saveCheckpoint({
       opponents: this.opponents.exportState(),
       tableId: this.snapshot.state.tableId,
@@ -585,8 +565,29 @@ export class PokerRuntime extends EventEmitter {
         this.stop(true);
         return;
       }
-      if (Date.now() < pending.deadlineAt) this.submit(pending);
-      else {
+      if (this.resuming.has(key)) return;
+      if (Date.now() < pending.deadlineAt) {
+        this.resuming.add(key);
+        const action = pending;
+        const restore = this.dependencies.engine
+          .resume(action, structuredClone(state))
+          .then(() => {
+            if (
+              this.running &&
+              this.snapshot.connected &&
+              !this.leaving &&
+              this.pending.has(action.id) &&
+              authorityKey(this.snapshot.state) === key
+            )
+              this.submit(action);
+          })
+          .catch((error) => this.fail(error))
+          .finally(() => {
+            this.resuming.delete(key);
+            this.decisionTasks.delete(restore);
+          });
+        this.decisionTasks.add(restore);
+      } else {
         this.dependencies.store.updateAction(pending.id, 'unresolved', {
           reason: 'deadline_elapsed',
         });
@@ -598,7 +599,7 @@ export class PokerRuntime extends EventEmitter {
     this.knownTurns.add(key);
     const eventTime = typeof event.ts === 'string' ? Date.parse(event.ts) : NaN;
     const startedAt = Number.isFinite(eventTime) ? Math.min(receivedAt, eventTime) : receivedAt;
-    const remembered = this.turnDeadlines.get(key);
+    const remembered = this.turnDeadlines.get(key) ?? this.dependencies.engine.loadTurn(key);
     const timing = remembered?.tableId === state.tableId ? remembered : undefined;
     const deadlineAt =
       timing?.deadlineAt ??
@@ -613,6 +614,14 @@ export class PokerRuntime extends EventEmitter {
     // Only a live your_turn establishes time. Resync timestamps must never reset that clock.
     if (!recovered && !timing)
       this.turnDeadlines.set(key, { tableId: state.tableId, deadlineAt, decisionDeadlineAt });
+    if (!recovered && !timing)
+      this.dependencies.engine.rememberTurn(
+        key,
+        state.tableId,
+        receivedAt,
+        deadlineAt,
+        decisionDeadlineAt,
+      );
     const task: DecisionTask = {
       key,
       stateKey: decisionStateKey(state),
@@ -640,18 +649,13 @@ export class PokerRuntime extends EventEmitter {
         deadlineAt - Date.now() - this.options.submissionReserveMs,
       ),
     );
-    const pendingDecision = decide(
-      task,
-      this.dependencies,
-      this.snapshot.runId!,
-      budget,
-      (progress) => {
+    const pendingDecision = this.dependencies.engine
+      .decide(task, this.snapshot.runId!, budget, (progress) => {
         if (this.activeTask !== task || task.controller.signal.aborted || !this.matchesTask(task))
           return;
         this.snapshot.decision = progress;
         this.publish();
-      },
-    )
+      })
       .then((result) => {
         if (!result) return;
         if (
@@ -751,6 +755,7 @@ export class PokerRuntime extends EventEmitter {
       return;
     }
     const sendStarted = Date.now();
+    this.dependencies.engine.beforeSend(action, this.snapshot.state);
     if (this.send(action.payload)) {
       markSent(action.timing, sendStarted);
       if (action.timing)

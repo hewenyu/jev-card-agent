@@ -124,7 +124,7 @@ describe('manual Compose management', () => {
     },
   );
 
-  it.each(['stop', 'restart', 'update'])(
+  it.each(['stop', 'restart', 'update', 'backup'])(
     'leaves the container unchanged when drain fails during %s',
     (action) => {
       const { calls, status } = fixture().run(action, { FAIL_DRAIN: '1' });
@@ -216,6 +216,10 @@ describe('manual Compose management', () => {
     const { calls, status, stdout } = test.run('backup');
     expect(status).toBe(0);
     expect(calls).toEqual([
+      psRunning,
+      exec,
+      ['drain-start'],
+      ['drain-complete'],
       exec,
       ['backup-start'],
       ['backup-complete'],
@@ -231,7 +235,14 @@ describe('manual Compose management', () => {
   it('does not copy or claim success when snapshot creation fails', () => {
     const { status, calls, stdout } = fixture().run('backup', { FAIL_BACKUP: '1' });
     expect(status).toBe(31);
-    expect(calls).toEqual([exec, ['backup-start']]);
+    expect(calls).toEqual([
+      psRunning,
+      exec,
+      ['drain-start'],
+      ['drain-complete'],
+      exec,
+      ['backup-start'],
+    ]);
     expect(stdout).not.toContain('Consistent SQLite backup');
   });
 
@@ -256,7 +267,15 @@ describe('manual Compose management', () => {
       TEST_BACKUP_PATH: '/app/data/jev.sqlite',
     });
     expect(status).toBe(1);
-    expect(calls).toEqual([exec, ['backup-start'], ['backup-complete']]);
+    expect(calls).toEqual([
+      psRunning,
+      exec,
+      ['drain-start'],
+      ['drain-complete'],
+      exec,
+      ['backup-start'],
+      ['backup-complete'],
+    ]);
     expect(stderr).toContain('unexpected container path');
   });
 
@@ -271,6 +290,24 @@ describe('manual Compose management', () => {
     expect(
       statSync(join(test.directory, 'data/backups', basename(researchPath))).mode & 0o777,
     ).toBe(0o600);
+  });
+
+  it('retains facts, SDK and private protocol files with private permissions', () => {
+    const test = fixture();
+    const files = [
+      backupPath.replace('/jev-', '/facts-'),
+      backupPath.replace('/jev-', '/duelloop-'),
+      backupPath.replace('/jev-', '/protocol-final-').replace('.sqlite', '.json'),
+      backupPath.replace('/jev-', '/protocol-development-').replace('.sqlite', '.json'),
+    ];
+    const { status, calls } = test.run('backup', { TEST_BACKUP_PATH: files.join('\n') });
+    expect(status).toBe(0);
+    for (const path of files) {
+      expect(calls).toContainEqual(['compose', 'cp', `app:${path}`, 'data/backups/']);
+      expect(statSync(join(test.directory, 'data/backups', basename(path))).mode & 0o777).toBe(
+        0o600,
+      );
+    }
   });
 
   it('does not report success if the backup cannot be copied', () => {

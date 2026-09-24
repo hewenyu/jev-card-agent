@@ -237,6 +237,19 @@ export class Store implements RuntimeStore {
           decision.proposal.model ?? null,
         );
       if (decision.timing) this.saveDecisionTiming(decision.id, decision.timing);
+      if (decision.status === 'failed' || decision.status === 'cancelled')
+        this.db
+          .prepare(
+            "UPDATE decisions SET status=?,fallback_reason=?,proposal=?,source=?,selected=? WHERE id=? AND status='proposed'",
+          )
+          .run(
+            decision.status,
+            decision.fallbackReason,
+            JSON.stringify(decision.proposal),
+            decision.proposal.source,
+            decision.proposal.candidateId,
+            decision.id,
+          );
       if (failed) {
         this.saveDecisionBlock({
           runId: decision.runId,

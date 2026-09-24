@@ -85,11 +85,11 @@ describe('versioned background reads', () => {
     const store = new Store(':memory:');
     const app = await buildApp(loadConfig({}, true), { store });
     await new Promise<void>((resolve) => setImmediate(resolve));
-    const refresh = vi.spyOn(store, 'refreshKnowledge');
+    const refresh = vi.spyOn(app.controller.researchMonitor, 'refresh');
     try {
       for (let i = 0; i < 100; i++) {
         app.controller.research.emit('update');
-        app.controller.asyncResearch.emit('update');
+        app.controller.frameworkResearch.emit('update');
       }
       expect(refresh).not.toHaveBeenCalled();
       await new Promise<void>((resolve) => setImmediate(resolve));

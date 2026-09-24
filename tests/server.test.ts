@@ -231,7 +231,7 @@ describe('console API and security boundaries', () => {
         await app.inject({
           method: 'POST',
           url: '/api/runtime/start',
-          payload: { strategy: 'baseline' },
+          payload: { strategy: 'jev' },
         })
       ).json().error,
     ).toContain('demo');
@@ -360,12 +360,15 @@ describe('environment configuration', () => {
   });
   it('defaults autostart off and validates explicit strategy and boolean values', () => {
     expect(loadConfig({})).toMatchObject({ autoStartBot: false, botStrategy: 'jev' });
-    expect(loadConfig({ AUTO_START_BOT: 'true', BOT_STRATEGY: 'baseline' })).toMatchObject({
+    expect(loadConfig({ AUTO_START_BOT: 'true', BOT_STRATEGY: 'jev' })).toMatchObject({
       autoStartBot: true,
-      botStrategy: 'baseline',
+      botStrategy: 'jev',
     });
-    expect(loadConfig({ AUTO_START_BOT: 'true', BOT_STRATEGY: 'jev-reasoning' }).botStrategy).toBe(
-      'jev-reasoning',
+    expect(() => loadConfig({ AUTO_START_BOT: 'true', BOT_STRATEGY: 'baseline' })).toThrow(
+      'offline-only',
+    );
+    expect(() => loadConfig({ AUTO_START_BOT: 'true', BOT_STRATEGY: 'jev-reasoning' })).toThrow(
+      'offline-only',
     );
     expect(loadConfig({ AUTO_START_BOT: 'true' }, true).autoStartBot).toBe(false);
     expect(loadConfig({ AUTO_START_BOT: 'true', READ_ONLY_DEMO: 'true' }).autoStartBot).toBe(false);
@@ -424,13 +427,13 @@ describe('opt-in server bot startup', () => {
     const { app, order } = startupFixture();
     const config = loadConfig({
       AUTO_START_BOT: 'true',
-      BOT_STRATEGY: 'baseline',
+      BOT_STRATEGY: 'jev',
     });
     await listenAndStart(app, config);
     expect(order).toEqual(['listen', 'start']);
     expect(app.controller.start).toHaveBeenCalledTimes(1);
     expect(app.controller.start).toHaveBeenCalledWith({
-      strategy: 'baseline',
+      strategy: 'jev',
       buyIn: 2000,
       autoRebuy: true,
       maxHands: 0,

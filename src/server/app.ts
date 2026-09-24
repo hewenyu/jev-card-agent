@@ -11,7 +11,8 @@ import { readSnapshot } from '../storage/read-cache.js';
 import { redact } from '../storage/database.js';
 import type { AppConfig } from './config.js';
 import { isLoopback } from './config.js';
-import { Controller, policyFor, ledgerFor } from './controller.js';
+import { Controller } from './controller.js';
+import { policyFor, ledgerFor } from '../evaluation/legacy/providers.js';
 import { publicRuntime } from './spectator.js';
 import { openSpectatorStream } from './spectator-stream.js';
 import { sessionId } from '../core/session.js';
@@ -25,7 +26,7 @@ declare module 'fastify' {
 
 const startSchema = z
   .object({
-    strategy: z.enum(['jev', 'baseline', 'jev-reasoning']).default('jev'),
+    strategy: z.literal('jev').default('jev'),
     buyIn: z.number().int().min(1000).max(5000).default(2000),
     maxHands: z.number().int().min(0).max(1_000_000).default(0),
     maxMinutes: z.number().min(0).max(525_600).default(0),
@@ -141,14 +142,53 @@ export async function buildApp(config: AppConfig, options: { store?: Store } = {
       .send({ error: error instanceof Error ? error.message : 'Request failed' });
   });
   app.get('/health', () => ({ status: 'ok', service: 'jev-card-agent' }));
-  app.get('/api/research', () => controller.researchMonitor.current());
+  app.get('/api/research', () => ({ ...controller.researchMonitor.current(), legacy: true }));
+  app.get('/api/framework', () => controller.frameworkView() ?? null);
+  app.post('/api/framework/research/pause', async (request) => {
+    const input = z.object({ paused: z.boolean() }).strict().parse(request.body);
+    await controller.frameworkResearch.command({ type: 'pause', paused: input.paused });
+    return { paused: input.paused };
+  });
+  app.post('/api/framework/research/cancel', async (request) => {
+    const input = z
+      .object({ runId: z.string().min(1).max(200) })
+      .strict()
+      .parse(request.body);
+    await controller.frameworkResearch.command({ type: 'cancel', runId: input.runId });
+    return { cancelled: input.runId };
+  });
+  app.post('/api/framework/research/recover', async () => {
+    await controller.frameworkResearch.command({ type: 'recover' });
+    return { recovered: true };
+  });
+  const operator = {
+    actor: z.string().trim().min(1).max(200),
+    reason: z.string().trim().min(1).max(2000),
+  };
+  app.post('/api/framework/activation/pause', async (request) => {
+    const input = z
+      .object({ ...operator, paused: z.boolean() })
+      .strict()
+      .parse(request.body);
+    await controller.frameworkControls.run({ type: 'pause', ...input });
+    return { paused: input.paused };
+  });
+  for (const type of ['approve', 'rollback'] as const)
+    app.post(`/api/framework/releases/${type}`, async (request) => {
+      const input = z
+        .object({ ...operator, releaseDigest: z.string().regex(/^[a-f0-9]{64}$/) })
+        .strict()
+        .parse(request.body);
+      await controller.frameworkControls.run({ type, ...input });
+      return { releaseDigest: input.releaseDigest };
+    });
   app.post('/api/research/pause', async () => {
     await controller.pauseResearch();
-    return { paused: true };
+    return { paused: true, maintenance: true };
   });
   app.post('/api/research/restart', async () => {
     await controller.restartResearch();
-    return { restarted: true };
+    return { restarted: true, maintenance: true };
   });
   app.get('/api/funding/events', (request) =>
     store.recentFundingEvents(pageSchema.parse(request.query)),

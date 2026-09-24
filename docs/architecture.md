@@ -1,316 +1,178 @@
-# jev-card-agent：完整产品设计
+# Architecture: DuelLoop live poker and asynchronous research
 
-状态：完整实现已进入发布与服务器验证。本文定义完整目标，不以分期或阶段性原型作为交付。实际证据与验收见 [evaluation.md](evaluation.md)。
+This document describes the 2.0.0 refactor against the merged 1.4.3 baseline
+`96db76540f2bb48f6eb35d15a426f78c8bf0dd1d`. It describes code and contracts, not a
+claim that this branch has been deployed. See [verification](duelloop-refactor-verification.md).
 
-## 产品目标
+## Ownership
 
-> An autonomous poker agent and decision-model evaluation platform powered by Jev, competing against real bots on OpenPoker.ai.
+| Responsibility                                                                 | Authority                                                           |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| Game rules, matching, legal action authority, settlement and official score    | OpenPoker                                                           |
+| WebSocket, current state, account reconciliation, lease, actual action sending | Host runtime                                                        |
+| Visible poker facts, legal priced candidates and stable identities             | Application poker domain                                            |
+| Strategy, release, trajectory binding, Score decision and research lifecycle   | DuelLoop Store and runtime                                          |
+| Completed public opponent statistics and delayed mathematical audits           | Isolated facts service                                              |
+| Research proposals and independent candidate evaluation                        | SDK research worker with DeepSeek and Jev                           |
+| Explicit activation/rollback                                                   | Authenticated host control using SDK validation and boundary checks |
+| Raw history, application execution journal and public read models              | Application storage                                                 |
 
-交付一个可以公开发布、用于个人演示、正式进入 OpenPoker 牌桌并全自动完成对局的项目。完成本地验证后，由 GitHub Actions 自动发布镜像，再手动部署到服务器。代码、文档、运行命令、测试及展示界面共同构成交付。
+The public browser is a spectator. There is one real Bot process per account and
+persistent store. SDK `start()` does not independently poll the same stream; the
+host drives one SDK decision when an authorized Arena turn arrives.
 
-OpenPoker 提供 6-max No-Limit Texas Hold'em 游戏、匹配、合法动作、结算、赛季和公开观战。本项目负责自主运行、Jev 决策、规则 baseline、对手统计、决策留痕、回放和评估，不实现扑克游戏服务器。接入固定为 WebSocket 自托管 Bot；不建设 HTTP webhook 或异步回调服务。
-
-## 技术选择
-
-| 部分     | 决定                                                               |
-| -------- | ------------------------------------------------------------------ |
-| Runtime  | Node.js 24 LTS、TypeScript strict、ES modules                      |
-| 协议     | ws + Zod；OpenPoker WebSocket V2                                   |
-| Jev      | Node fetch 调用官方 HTTPS API；Choice 选择具体合法行动             |
-| 数据     | Node 内置 node:sqlite，SQLite WAL，数据库文件位于被忽略的数据目录  |
-| 服务端   | Fastify，同进程管理 Bot Runtime 和查询 API                         |
-| 页面     | React + Vite，匿名 REST 查询与 SSE 实时观战，不依赖页面维持 Bot    |
-| 工具链   | npm、ESLint、Prettier、TypeScript、Vitest、Playwright              |
-| 发布运行 | 构建后的 Node 服务提供 API 与静态页面；Docker 配置及持久卷部署说明 |
-
-选择 SQLite 是为了让公开项目能在本机直接运行，并在单 Bot 的持久化服务器上部署，无需先安装数据库服务。数据库迁移、存储查询和 Runtime 分层；它不承担多租户或多主并发写平台。演示模式与真实运行使用明确不同的 Run 类型和数据标记。
-
-## 代码结构与强制质量约束
+## Modules
 
 ```text
 src/
-  core/          # 领域类型、状态 reducer、合法候选、特征与对手统计
-  policies/      # Jev、显式规则 baseline、模型协议
-  openpoker/     # 协议、REST、WS 传输与恢复
-  runtime/       # 生命周期、决策期限、提交确认与失败停牌
-  knowledge/     # 不可变知识版本、每手绑定、检索与验证
-  research/      # 独立确定性统计/审计进程与研究接口
-  storage/       # SQLite schema、迁移、记录、统计与回放查询
-  server/        # 配置、鉴权、控制/查询 API、静态资源
-  cli/           # 演示、真实运行、连接诊断与离线评估入口
-web/
-  src/           # 页面、组件、样式及 API client
-scripts/         # 构建检查、文件长度、凭据泄漏检查
- tests/          # 单元、协议集成、存储/API与浏览器测试
- docs/           # 架构、评估、接入及运行/部署说明
+  core/                  reducer, legal actions and deterministic poker calculations
+  poker/                 shared domain, visible projection and reviewed initial strategy
+  runtime/               WebSocket authority, leases, deadlines, sending and acknowledgment
+  duelloop/live/         Score coordinator, persistent hand bindings and model adapter
+  duelloop/host/         execution journal, outbox, receipts and settled feedback
+  duelloop/research/     SDK assembly, DeepSeek tools, isolated worker and release controls
+  duelloop/              retained independent frozen-history replay tools
+  facts/                 deterministic evidence snapshots and asynchronous audits
+  evaluation/poker/     independent six-max simulator and versioned opponent suites
+  evaluation/legacy/    explicitly offline Choice/Hybrid comparisons
+  storage/               raw history, migration, indexed queries and historical decoders
+  server/                private controls, public projections, SSE and static files
+  shared/                public application contracts without SDK private artifacts
+web/src/                 public statistics, live table, history and decision evidence
 ```
 
-目录示意中的 tests/docs 均位于仓库根目录。采用单 package 的模块化结构，避免为内部类型共享引入额外发布包。
-
-- 每个纳入版本控制的文本文件不得超过 **1000 行**，包括源码、测试和文档；自动检查计入空行与注释。
-- 依赖锁文件也保持在上限内，使用机器可读的紧凑格式；不通过拆分业务语义或压缩手写代码规避限制。
-- 模块按职责拆分，禁止把协议、策略、数据库和页面堆入一个文件。
-- lint、格式检查、类型检查、单元/集成测试、浏览器测试、构建及仓库检查必须有可重复命令，并纳入 CI。
-- 默认测试不调用收费 API、不加入公开 Arena；真实验证使用单独命令及有界配置。
-- .env、数据库、日志、原始私有牌局、浏览器报告与构建产物不提交；示例配置只包含占位值。
-- 公开代码提供许可证、贡献说明、配置说明、清晰的错误诊断与部署文档。
-
-## 系统关系
-
-```mermaid
-flowchart TD
-    O[OpenPoker WS V2] --> R[Poker Runtime]
-    R --> S[State Reducer]
-    S --> C[Context + Opponent Stats]
-    C --> A[Legal Candidates]
-    A --> J[Jev Final Choice]
-    A -. optional hybrid .-> M[Reasoning Analysis]
-    M -. advice .-> J
-    A --> B[Baseline]
-    J --> G[Action Guard]
-    B --> G
-    G --> R
-    R --> O
-    R --> T[Decision Trace]
-    J --> T
-    M --> T
-    T --> D[(SQLite)]
-    D --> API[Read-only Query API]
-    R --> API
-    API --> UI[Public Spectator Website]
-    OPS[Compose / CLI] --> INTERNAL[Protected Internal API]
-    INTERNAL --> R
-    D --> E[Replay / Evaluation]
-    D -. read only .-> W[Statistics and Audit Worker]
-    W --> K[(Separate Knowledge Database)]
-    K --> P[Persisted Hand Knowledge Pin]
-    P --> C
-    K --> API
-```
-
-Runtime 不依赖网页保持打开。模型响应和页面查询均不能阻塞协议事件处理。每个 Bot 在同一持久数据目录中只允许一个活动运行者，启动前取得独占租约，丢失租约即停止提交。
-
-## Runtime 合同
-
-连接、牌局和决策任务分别维护状态。冷启动先调用 `/api/me/active-game`，已坐下则恢复；未坐下再 join_lobby。热重连使用保留的 table ID 和最高已应用 watermark。退避有上限和抖动；鉴权失败等不可恢复错误不无限重试。
-
-普通 table_seq 前跳是合法现象，重复和回退按协议去重；不能因不连续就 resync。table_state 对已有字段具权威性，动作历史单独维护。status 是座位连接状态，in_hand/folded 是牌局状态。
-
-resync 先消费排序去重的 replayed_events，用于历史与标记，再原子安装最终 snapshot；不得把已包含在快照中的筹码变化累加第二次。hand_id 改变时清理旧手临时状态。恢复流不包含所有私有历史，缺口必须展示，不虚构完整记录。
-
-只接受 your_turn 或带有有效 hero.turn_token 的 player resync 作为行动授权。普通 table_state 不能启动新的逻辑动作。回合任务绑定 hand、token 与本地决策 ID；新授权使旧任务失效，迟到结果只记录不提交。
-
-每次行动必须：
-
-1. 冻结当前可见信息、对手统计和合法候选。
-2. 在平台期限内调用策略并重试，为提交保留余量。
-3. 再次验证回合、合法集和整数金额。
-4. 持久化精确 payload 与 client_action_id，再通过 WS 提交。
-5. 独立记录 sent、accepted、rejected 或 unresolved；已发送不等于已执行。
-
-相同动作重试使用相同 ID 和完全相同 payload。新的替代提交必须使用新的 ID，并保留原决策关联。确认未知时先恢复核对，不能随意再下注。action_ack 和 player_action 按标识关联，不假定相邻。
-
-公共场当前行动窗口为 45 秒；重连不重置它。同一进程已观察到的同桌、同手、同 turn token 回合，恢复时复用原行动与模型截止时间；不能以重连时刻重新计时。冷恢复没有原期限证据时记录失败并停牌。纯 Jev 单次默认 10 秒、整体决策 40 秒，且服从原回合更短期限；组合策略使用独立分析与全链路期限，均保留提交余量。
-
-真实模型策略失败或输出不合法时，在原回合期限内执行可重试请求；最终失败不产生本地行动，记录并持久停牌。无授权不能猜动作。只有成功 Jev 结果可以进入唯一行动提交链路。
-
-自动处理桌关闭、busted、rebuy/cooldown、赛季变化和重新入队。auto-rebuy、buy-in、最大手数和运行时长均为明确配置；费用只记录，不设置金额拦截。正常停止在手牌边界离桌；故障退出保留未决记录，重启后恢复核对。连续运行模式与有界测试共用同一实现。
-
-关键持久化失败时停止新付费调用和未记录提交，记录可获得的诊断信息并进入降级停止；不能声称数据库故障时仍保持完整可追溯运行。
-
-## Jev 与策略合同
-
-官方 API 为 `POST https://api.typesafe.ai/v1/systemone`，使用独立 Bearer key。请求包括 state、model、questions；Choice 返回 choice、probabilities、confidence，响应包含实际模型与 token usage。
-
-Jev 不生成自由文本推理。输入是局面、必要历史、对手统计及具体合法候选；解释展示可核对特征、模型分布及程序规则，并标明来源。confidence 和概率不能展示为扑克胜率、EV、盈利概率或经过验证的混合策略频率。
-
-正式可比实验固定 `jev-1.13.0`，保存请求模型、实际模型和问题模板版本。凭据配置支持当前已有的 JEV_API_KEY；OpenPoker 密钥不传入模型。
-
-候选版本 `street-sized-raise-to-v2` 保留合法 fold/check/call/all_in 并去重。翻前未加注使用 2.2、2.5 和 `3 + limpers` 大盲档；面对加注使用当前总下注的 2.5 / 3.5 倍。翻后考虑跟注后的底池，提供约 1/3、1/2、2/3、满池加注档及边界；常规档位全超短筹码上限时增加中间投入档。所有 raise-to 都在官方 `valid_actions[].min/max` 内，call/all_in 不发送 amount。模型选择后不静默改金额；每个候选另给新增风险与跟注价格。免费 check 可用时明确指出 fold 被支配，仍由 Jev 选择。
-
-策略接口接受冻结 context、候选和 AbortSignal，返回 candidate ID 及诊断信息。提供 Jev 与显式的可解释启发式 baseline；正式 Jev 失败不会切换 baseline 或本地 fallback。baseline 强度不称为 GTO；Jev 与 baseline 使用一致的信息边界。
-
-对手统计从实际观察事件计算 VPIP、PFR、面对下注弃牌比例等，保存机会分母、样本数及时间截止点。未知与样本不足不当作零。不能将后来摊牌信息放入过去决策；相同座位换 Bot 时不能混用身份。
-
-## 推理分析与 Jev 最终选择
-
-当前实现为 `BOT_STRATEGY=jev`：冻结局面后计算牌型、听牌、位置、有效投入、可争夺底池与候选风险，再检索已完成对手交手，精简后交给 Jev 选择。原 harness 版本为 `visible-context-v6` / `street-sized-raise-to-v2` / `opponent-encounters-v3` / `poker-harness-choice-v5`；双循环更新继续记录实际版本，并增加固定知识与独立审计，设计见 [fast-slow.md](fast-slow.md) 与 [harness.md](harness.md)。保留全部旧历史和费用账本，以新 Run 区分版本，不在线改写策略。DeepSeek 与标准推理 provider 仅在显式 `jev-reasoning` 实验时启用；纯 Jev 不因环境中留有分析密钥而调用它们。
-
-推理模型并不直接控制 OpenPoker 行动；最终守卫、回合授权、单次提交与持久化规则不变。全链路共享原行动预算。always 模式分析失败时，在剩余时间内交给 Jev 决策；无法及时取得合法模型结果时记录失败并停牌，不提交本地行动。adaptive 模式可保留首次 Jev 合法选择，不增加回合时间。
-
-推理服务采用独立配置：标准 provider 支持 Responses 与 Messages，DeepSeek 使用专用 Messages provider。provider 类型由后端配置明确选择，不根据模型名称或 URL 子串猜测，也不因某次测试成功自动改生产配置。凭据只保存在本地环境文件，公开样例使用占位值。必须验证返回模型与请求一致，不静默接受代理替换模型。Trace 区分 Jev 路由判断、推理分析、最终 Jev 选择与各次调用用量。
-
-分别验证每次分析、模型身份、同手会话信息截止、Jev 最终选择和故障降级。早期纯 Jev、按需组合及 high 思考的历史验证保留原口径，不替代本轮纯 Jev 采集的实际运行验收；短期牌局输赢也不构成充分决策质量证据。未配置真实推理服务时只能验证本地 mock，不伪造真实调用结果。
-
-## 持久化与评估
-
-### 持久历史、长期对手记忆与请求投影
-
-每次决策冻结 `lastTableSeq` 与 `asOf`。采用 Pi 风格的“完整历史留存、请求上下文另行投影”：持久化上下文继续保留本手 session、历史来源与复盘信息，纯 Jev 实际请求只保留当前牌局事实、当前行动线、最近同手选择和与活跃对手有关的长期记忆。无关近期输赢与重复 UUID 不进入即时策略请求；原历史摘要工具仍可用于复盘，不能将过去结果当作行动 EV。
-
-慢循环在独立派生数据库增量处理 `hand_result` 并发布对手知识，原事件数据库只读；实时决策不回填索引或聚合历史。旧版本的 `opponent_encounters` 留存用于兼容，不在新快路径中更新。每个当前对手最多读取 200 次已完成交手，结算时间与接收时间均须严格早于 `asOf`，排除当前手。座位名称只取同手快照，身份冲突不合并；跨 Run 重放按同桌、同手、同名去重。街道采用完整 `hand_result.actions`；只有对应 `player_action` 完整顺序逐项吻合，才附加其价格和投入元数据，缺失不猜填。
-
-记忆提供按街 observed actions、raise/call/check/fold/all-in 数量，明确价格证据的面对下注/弃牌分母，以及有来源手牌、序号和时间的公开摊牌/行动线。最多保留 3 个公开摊牌与 3 个不同的近期 hero 交手例子；即时请求再压缩，只取活跃对手及至多 1 个额外近期交手。过长例子保留首 8、尾 24 动作并注明省略。样本是观察到的行动，不等同所有发牌机会；公开摊牌具有选择偏差，不能推成真实诈唬率。
-
-`poker-cards` 确定性评估当前成牌、踢脚、牌面与听牌，；独立慢循环再对冻结决策以固定种子进行 1,200 次均匀随机合法对手牌/余牌采样。参考值假设所有对手摊牌并平等参与同一底池，包含平分底池份额和标准误差；它忽略下注范围、后续成本、弃牌和边池资格，不能当作当前下注范围胜率或行动 EV。金额工具将已有投入与新增风险分开，排除可证实的不可赢超额下注，并对多人边池标注限制。均匀随机范围参考作为事后审计按 decision ID 与输入哈希追加，不修改保存的当时上下文；实际 Jev 请求不含 `uniformShowdownReference`，避免把随机范围数字当作下注范围依据。Jev 根据牌型、金额、位置和对手证据作最终选择，本地计算不是代打策略。
-
-完整原始事件、行动、结果和模型请求保存在私有 SQLite，摘要只是受限的模型输入，不替代长期历史保存。`PUBLIC_HISTORY` 按所有者要求公开 Bot 自己的当前手牌、本手已保存分析与已结束牌局的脱敏回放；未公开的对手底牌与凭据不公开。管理通过 Compose、CLI 或受保护的内部 API 执行。公开 Demo 继续使用合成数据，原始数据库不提交到仓库。
-
-Run 和 Decision 保存上下文、历史摘要、候选生成、启发式与问题模板版本。更改规则或提示后产生可区分的新版本与 Run，便于在固定历史信息边界下重跑比较。历史收益仅作为过去结果反馈，不是行动质量标签；本模块不自动修改代码、提示或下注规则，也不将短期盈利解释为学习成功。策略改进通过可审计版本、离线差异、可靠性指标及有足够样本的真实结果验证。
-
-至少持久化 Run、Hand、ReceivedEvent、Decision、ModelAttempt、ActionSubmission、OpponentSnapshot、Evaluation 和费用账本。记录原始事件与规范化快照，以及策略、候选、上下文、模型版本。
-
-Run 固定策略和配置；配置变化产生新 Run。真实运行、合成演示、离线重跑明确标识。导出不包含鉴权头或 turn token 等控制凭据，公开演示数据为可检查的合成样本。
-
-Replay 分为实际牌局回放和历史决策重跑。重跑产出新的建议与性能记录，不能将原结算结果算作替代动作收益。实验报告区分工程可靠性、策略输出差异和真实牌局收益。
-
-收益按每手权威结果核对，区分买入、rebuy、返还与主池/边池结算。bb/100 使用每手对应大盲，报告样本数与缺失覆盖率；官方排名通过 OpenPoker 外链查看，本地收益不充当官方 score。不能以短期盈利或单手输赢宣称策略质量。
-
-费用按模型公开价格、输入长度、实际 usage 和未决费用估算记录；失败/取消不默认免费。记录不限制请求，不配置累计或 Run 金额上限；手数和运行时长仍可配置。推理代理成本使用可配置估算费率，不代替供应商账单。默认测试使用本地 fixture，真实调用必须有显式入口。
-
-## 产品体验
-
-| 页面              | 功能                                                           |
-| ----------------- | -------------------------------------------------------------- |
-| Overview          | 所选 Run 的净收益、盈利手牌胜率、赛季积分快照与战绩曲线        |
-| Live              | 公共牌、自己的手牌、筹码动画、决策阶段与本手已保存分析         |
-| Replay / Decision | 街道与行动时间线、当时状态、对手样本、候选分布、执行确认及结算 |
-| Evaluations       | 已保存且允许公开的 Run 比较、重跑报告、版本与样本覆盖率        |
-
-服务启动时通过 CLI 和环境配置区分 demo 与 live。无凭据也能运行完整合成演示，不伪装成实时平台对局。真实 Bot 由后台自动启动或服务器 CLI 启动；网页不提供模式切换或运行控制，长期运行通过服务进程持续，不靠浏览器。
-
-默认服务仅监听 loopback。公开服务器设置 `PUBLIC_HISTORY=true`，网页匿名只读；内部控制和私有查询使用独立 `API_TOKEN`，不在网页输入或保存。也可提供只读的合成演示模式。密钥仅在服务端使用，不进入前端 bundle、URL 或请求日志。
-
-## 完整交付验收
-
-- 一条安装/开发流程可以在 Node.js 24 上启动演示及控制台；构建产物可通过正式服务启动。
-- 凭据配置后 Bot 可自动入队、打完整牌局、结算、继续下一手，并处理正常生命周期及故障恢复。
-- 每次提交能追溯到原始状态、候选、模型结果或明确失败、确认与结算。
-- 回放和评估功能真实可用，数据来源及反事实限制清楚展示。
-- 单文件行数、lint、格式、typecheck、测试、UI 检查和构建通过；真实 API 与真实牌局证据单独列出。
-- README、示例配置、LICENSE、贡献说明、运行/部署和验证记录适合公开仓库，不包含用户凭据和私有账户资料。
-- 本地验收充分后通过已授权的 CI 发布构建产物，完成服务器部署并提供可复现的手动更新说明。
-
-## 官方依据
-
-- [TypeSafe API](https://docs.typesafe.ai/api) 与 [Models](https://docs.typesafe.ai/models)。
-- [OpenPoker Message Types](https://docs.openpoker.ai/api-reference/message-types/)。
-- [State Consistency](https://docs.openpoker.ai/building-bots/state-consistency/) 与 [Reconnection](https://docs.openpoker.ai/building-bots/reconnection-idempotency/)。
-- [REST API](https://docs.openpoker.ai/api-reference/rest-api/) 与 [Scoring](https://docs.openpoker.ai/compete/scoring/)。
-
-以官方当前消息目录、有效合法动作和真实协议验证为准；文档中的示例不替代协议校验。
-
-## 对外只读观战网站
-
-公开网站面向访客展示自动 Agent，不提供管理员登录、Access token 输入、Bot 启停、配置修改、Demo 重置或付费实验触发。模型密钥、模型调用、自动运行与费用控制全部在后端。管理入口保留在服务器 CLI/Compose 与受保护的内部 API；网页请求仅执行匿名读取，不保存或发送访问令牌。
-
-Live 页面展示公共牌、Bot 自己的当前手牌、座位、行动玩家、筹码、底池与行动流，通过同源 SSE 持续接收只读观战快照并自动重连。本手已保存决策、分析和会话历史由专用只读 API 提供；已结束牌局继续提供完整已记录历史与复盘。合法行动授权 token、鉴权凭据和未公开的对手底牌不进入公开数据。后台运行不依赖页面是否打开。
-
-筹码动画以服务器确认的 contribution_delta（或已验证的 stack_before/stack_after 差）和结算 payouts 为依据，表现座位到筹码池的下注、筹码池到赢家的派奖。金额未知时不虚构筹码移动；首次连接和重连快照不重播过去动画，重复事件以稳定 ID 去重，切换牌桌/手牌清理旧动画。支持 reduced-motion，并保持手机端无横向溢出。历史和统计异步刷新，实验页只展示已有结果，不从浏览器触发模型调用。
-
-这次产品调整不移除后端访问控制。公网反向代理拒绝管理写操作；Compose 管理脚本继续从容器内部调用受保护接口，并在停止、重启、更新前等待手牌结束与离桌确认。
-
-概览、运行与手牌列表每 3 秒异步刷新；选中的回放详情与评估结果也每 3 秒更新，并在窗口重新获得焦点时立即查询。后台刷新保留当前 Run、手牌、决策和回放游标；新牌局不会将访客从正在阅读的记录跳走。同一资源的轮询不叠加并发请求，切换资源后忽略旧响应。
-
-## 可选组合分析、Jev 最终决策与牌局会话
-
-显式启用的组合策略在每个具有有效行动授权的决策回合请求推理分析，再由 Jev 在冻结的合法候选中作最终选择。推理模型只提供建议，不能直接提交行动。组合策略默认使用 always 分析模式；旧的 Jev 按需路由保留为明确的后台可选配置，不由网页修改。超时、供应商拒绝、恢复回合剩余时间未知等故障遵守失败停牌与不重复下注合同；公开记录明确标记未成功分析，不能宣称每次都完成推理。
-
-一个 session 对应一手牌，使用 tableId + handId 稳定关联；同手多次决策是不同 turn，使用独立 decisionId 和顺序。重新连接后从持久记录恢复之前已经完成的建议与选择。输入冻结当前公共牌/自己的底牌、合法候选、当前手行动历史、对手统计及机会分母、最近已核实历史结果，以及该 session 中截止当前决策前的分析和行动。限制历史数量与文本长度，记录截断情况；不得带入当前手最终结算、后续牌面或未来决策。
-
-可选推理请求按配置明确发送供应商支持的 thinking/reasoning 参数；纯 Jev 不调用该接口。记录实际模型、请求/完成状态、耗时、费用及供应商实际返回的分析或可用推理摘要；不伪造未返回的思考文本。复盘以可核对的输入依据、分析建议和 Jev 最终选择展示决策过程，标明模型建议与已执行行动的区别。
-
-公开实时页面展示当前决策的执行阶段（分析中、Jev 选择中、已提交等）。按所有者明确要求，实时显示 Bot 当前手牌、本手已保存分析、会话历史和对手统计，结算后继续保留在历史复盘中。所有网页保持匿名只读，分析详情和历史自动刷新。下拉框、筛选、焦点、空状态及移动端样式保持统一且可用，原生选择控件支持键盘和高对比度。
-
-样式验收覆盖 Overview、Live、Replay 与 Evaluations 的 Run、结果筛选和决策选择框。选择框及系统原生弹层统一暗色背景与清晰文字，保留原生键盘操作和可见焦点；按钮、滑块与禁用状态使用一致的尺寸、边框和交互反馈。390px 下控件可换行、长模型名称和会话标识不撑宽卡片，表格与结构化上下文只在各自容器内滚动。用合成数据验证键盘切换、禁用按钮、长选项与移动端四页宽度，不调用模型或修改 Bot；原生下拉弹层的最终外观由浏览器和操作系统绘制，使用 `color-scheme`、明确选项颜色及系统高对比度兼容保证可读性。
-
-代码的可配置思考强度默认 `high`，仅在启用思考时生效；DeepSeek 可选实验显式关闭 thinking 时不发送 effort，当前纯 Jev 不使用思考强度。标准 Responses / Messages 保留作另行配置的适配器，分别支持 `reasoning.effort` / `summary` 与 `thinking.type=adaptive` / `output_config.effort`；不能把它们的参数套用到 DeepSeek。实际返回内容由服务响应证明，不能仅凭参数宣称模型已返回思考。Responses 摘要合同依据：[OpenAI reasoning guide](https://developers.openai.com/api/docs/guides/reasoning)。
-
-两类模型请求默认首次调用后最多重试 3 次，每次独立记录模型、状态、耗时和费用。仅重试临时网络错误、限流、服务端错误、单次超时或无效响应；鉴权、供应商明确欠费、模型不匹配和账本故障不盲目重复。全部尝试共享原回合 deadline，不延长 OpenPoker 行动窗口、不产生重复下注。取消和最终失败也保留已完成分析与已知调用记录。
-
-同手先前分析输入总计最多 12,000 字符，优先保留较近回合；最终交给 Jev 的建议还按完整请求剩余空间裁剪，并标记原始/使用长度及截断。完整供应商输出仍保留用于复盘，模型输入裁剪不能改写历史原文。
-<!-- Runtime cancellation contract -->
-
-模型调用在回合截止或行动权限变化时取消。Runtime 为供应商取消结算保留最多 75ms，且不越过行动提交期限；结算后冻结进度，迟到回调不能覆盖实时状态。取消回合仍保存已返回分析和全部已知调用记录，标记 `cancelled`，不创建或提交行动。关闭数据库前等待这些有界决策任务结束。
-
-## DeepSeek 专用推理 provider
-
-`DeepSeekProvider` 实现与标准推理服务相同的分析接口，交付分析、实际模型、供应商返回的思考内容和逐次 attempt；Hybrid 仍只把分析当作辅助信息，最终合法候选由 Jev 选择。标准 provider 继续服务既有 Responses / Messages，不以 DeepSeek 兼容分支改变原协议。
-
-使用 `REASONING_PROVIDER=deepseek` 明确选择；默认 `standard` 继续使用既有标准适配。专用凭据为 `DEEPSEEK_API_KEY`，不复用标准推理密钥。`DEEPSEEK_API_BASE_URL` 默认 `https://api.deepseek.com/anthropic`，`DEEPSEEK_MODEL` 默认 `deepseek-flash`，`DEEPSEEK_THINKING` 显式支持 `enabled|disabled`，默认 enabled。
-
-专用传输使用 `POST https://api.deepseek.com/anthropic/v1/messages`。请求明确发送 `thinking.type=enabled` 或 `disabled`；启用时通过 `output_config.effort` 指定强度。复用 `REASONING_EFFORT`：`low/medium/high/max` 在此映射为 `low/high/high/max`，其中 `max` 仅 DeepSeek provider 可用，不把 `medium` 当成一个独立的 DeepSeek 强度。关闭思考仍可返回决策分析，但不能称为启用思考验证；只保存与展示服务实际返回的内容。
-
-官方型号 `deepseek-flash` 对应 DeepSeek-V4.1-Flash。DeepSeek Anthropic 兼容入口会将未知型号自动映射到 Flash，也会把部分 Claude 名称映射到 DeepSeek；因此构造请求时拒绝未知名称，响应时继续严格核对实际型号，不能通过一个拼错型号的 HTTP 200 宣称指定模型验证成功。记录请求型号与返回型号，不在运行时静默接受别名替换。
-
-费用估算记录、10 秒单次探针期限、正式首次调用后最多 3 次重试，以及 Hybrid 总 deadline 沿用共同机制。DeepSeek Messages 的归一化输入为原 `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`；分别保存缓存字段，不能漏算或重复相加。读取缓存按独立费率计价，非缓存输入与缓存写入按普通输入费率计价。专属配置 `DEEPSEEK_INPUT_PRICE_PER_MILLION`、`DEEPSEEK_CACHE_READ_INPUT_PRICE_PER_MILLION`、`DEEPSEEK_OUTPUT_PRICE_PER_MILLION` 默认分别为保守峰值 $0.30、$0.006、$1.20。旧数据库的缓存价格及用量字段通过增量迁移保留兼容；超时或 usage 缺失仍保留预留，正式费用以供应商账单为准。
-
-上一版本根据比较使用 `deepseek-flash`、`thinking=disabled`，分析单次 10 秒、Hybrid 总计 40 秒；本轮切换纯 Jev，保留这些配置用于将来显式对照。GPT 与 Claude 不作为自动兜底；DeepSeek 分析失败只进入 Jev 剩余时间决策，无法完成则记录失败停牌。历史集成与本次纯 Jev 上线证据分别记录于验证报告，不把配置选定当作上线成功。比较记录保留原协议、模式、deadline、输出上限、模型身份与费用。
-
-## Live 标签页内的牌桌与决策侧栏
-
-默认入口、导航顺序与品牌链接保持 Overview。进入 Live table 标签页后，首屏优先展示当前牌桌，压缩介绍标题，账户统计与运行元数据放到牌桌之后。
-
-桌面以主牌桌和右侧本手决策面板并排呈现，复用 HandSession 的定时刷新、错误处理与选中回合保持。新记录自动进入列表，已有选中回合不因刷新跳转；换手后重新建立会话，旧请求不能覆盖新手。分析阶段统一显示“Analyzing the hand”，关闭 thinking 时不称为正在思考。
-
-390px 手机布局首先展示牌桌，决策面板随后纵向排列，再显示账户与辅助信息；长 ID、分析和候选内容不能撑宽页面。侧栏不得遮挡牌桌，Live 标签页首屏可直接看到有效牌桌内容。通过真实浏览器检查既有默认导航、Live 自动刷新、选择保持及桌面/手机布局。
-
-## 账户筹码与 rebuy 实时同步
-
-账户可用筹码来自 OpenPoker `season/me`，桌上当前可用筹码来自 WebSocket 座位状态，历史净收益仅来自已核实结算；三个口径分别标注，不用历史收益推算余额。后台单实例定时刷新账户快照，并在 rebuy 确认、补筹冷却、入桌和离桌时立即对账，通过现有 SSE 与 overview 发布。浏览器不直接请求 OpenPoker，也不触发补筹。
-
-补筹后必须重新读取官方余额，不能在前端简单加 1,500。公开展示可用筹码、座位筹码、auto-rebuy 状态、官方规则的补筹额度、已知冷却截止时间和最近更新时间。请求失败时保留最后快照并标记过期，旧请求不能覆盖补筹后的新快照。补筹不会被记为牌局盈利；不改变已有历史收益和模型费用。
-
-补筹安排、确认和恢复对账必须持久记录，并在公开只读界面提供补筹历史。记录时间、Run、事件来源、状态、可核实的额度和余额；未知的补筹前余额保持为空，不从历史盈亏反推。官方消息和 REST 操作确认标注各自来源；普通余额轮询变化不能冒充一次补筹。有明确事件身份的重复消息幂等保存；缺少官方事件身份时保留消息观察，不把记录条数或额度求和当作官方补筹次数与累计到账。重启后历史仍可读。
-
-所有座位的筹码统一采用服务端数据：完整 table_state/resync 快照可替换全桌，稀疏玩家摘要只更新已提供的座位与字段，玩家离座必须有明确离座事件或完整快照依据。下注后的 stack 和结算 final_stacks 覆盖旧余额，旧 table_seq 不能让数字回退；筹码动画不参与余额计算。
-
-庄家（Dealer/Button）位置同样由服务端 `dealer_seat` 决定，不按本地座位顺序推算。Live 与历史回放共用明确的庄家座位标记和文字说明；历史仅使用当前回放游标之前的事件。换手或换桌时清除上一手庄家，等待当前手消息；明确空值清除标记，同手缺省字段保留已知值，旧序列不能把位置回退。未收到服务端庄家位置时显示未知，不借用最终状态补全早期历史。
-
-## Overview 战绩展示
-
-Overview 只展示战绩：净收益、盈利手牌胜率、赛季积分，以及可切换的积分/累计净收益曲线。账户明细、补筹事件、Agent 资料、模型费用与最近手牌列表不放在 Overview；账户及资金事件继续在 Live 展示，逐手复盘在 Replay 展示。保留 Run 选择器：默认跟随当前 Run，用户手动选历史后不被后台更新强切；选回当前 Run 后恢复跟随。历史统计和曲线明确属于所选 Run，Demo 单独标识。
-
-净收益累加所选 Run 全部已完成且收益可核实的手牌，不受历史分页限制，也不含买入、rebuy。胜率为净收益大于零的手牌数 / 已核实手牌数，平局计入分母；无有效样本显示未知，不显示 0%。bb/100 不叫百分比胜率。赛季积分直接读取官方 REST 的 `score`，映射为后端 `seasonScore`，不使用 `available_after + chips_at_table` 或 WebSocket 座位余额估算。当前所选 Run 与 Runtime 一致时，Overview 与 Live 共享最新 funding 观测，即便已停止或正在离桌也不切换为旧 Run 的积分。未知官方值留空，已恢复或过期观测保留并标记延迟；其展示不等待逐手收益统计请求成功。历史 Run 使用该 Run 最后已保存观测；旧版余额相加数据保留为 `legacy_balance_sum` 并明确标注历史估算。积分和净收益分别记录，不能互相推导。
-
-新增只读 `GET /api/runs/:id/performance`，从数据库完整历史计算统计，曲线最多 500 个采样点且保留起终点，累计收益在采样前计算，确保最后值等于统计总额。前端随既有三秒刷新和窗口聚焦刷新更新；切换 Run 不闪现上一 Run 的战绩，失败保留同一 Run 的已有数值并明确提示刷新延迟。验收覆盖超过一页历史、rebuy 对收益的隔离、未知/零/负收益、无样本、Run 切换、自动刷新与移动端。
-
-## Live 筹码口径与刷新
-
-牌桌每个已入座玩家分别标出 `Available`（服务端座位 `stack`，仍可下注的筹码）与 `Bet`（`bet`，当前街已投入底池的筹码），零下注也明确显示。底池独立显示，下注属于底池，不能再加回可用筹码。结算后座位余额采用 `final_stacks`，当前下注归零；已结束牌局的中央数字标为 `Settled pot`，说明这是已结算的底池，不是仍待分配的筹码。历史 Replay 使用相同标签，按游标之前的事件还原当前街下注，不能提前带入最终余额。
-
-Live 下方分别显示离桌账户余额、当前座位可用筹码、当前街下注和官方账户在桌快照。账户 REST 字段与牌桌 WS 字段采用各自服务端来源，不用账户在桌快照覆盖任何玩家的当前可下注筹码。文案说明官方账户快照独立刷新，可能与手中实时余额不同。2026-09-21 的实际核对中，同一桌 WS 座位 stack 为 1,960、bet 为 10，REST 在桌快照为 1,970；浏览器与 WS 相同序列的六个座位全部一致。该样本说明两种口径可以不同，不证明所有时间都无延迟。
-
-前端同时收到 SSE 与三秒 Overview 轮询时，同一 Run、同一桌优先使用较大 `stateSeq` 的快照；其余情况按请求开始和 SSE 到达顺序选择，避免仅因连接标记仍为 live 就永久保留旧牌桌。较旧轮询不能回退新 SSE，筹码动画不参与金额计算。验收覆盖自己和对手的可用/下注分栏、零下注、结算、换街、断流期间轮询补齐及移动端。
-
-## 纯 Jev harness 运行与留存合同
-
-本次以可评估的决策效果为目标：持续纯 Jev、自动参赛与 rebuy、持久 SQLite，并在手牌边界更新。全部 Run、手牌、决策、资金记录、恢复检查点与费用账本保留；旧失败样本不清除。每次留存原始可见状态、完整已观察本手行动、候选、工具计算、对手记忆、session、信息截止和策略版本。成功 Jev 调用保存实际投影请求与 schema 解析后的响应、概率、usage、耗时及 attempts；失败保存状态及已有诊断。
-
-输入历史有界不意味着删除数据库历史。原始 WS 事件、动作 prepared/sent/accepted/rejected 状态、完整 hand_result 和可核实收益继续留存；Replay 恢复快照后的重放事件按服务端序号去重，避免重复累计下注。当前上下文版本为 `visible-context-v6`，新旧采样可按 Run、代码 revision 和版本区分。纯 Jev 实时文案显示 Jev 选择及行动，不伪造额外分析或思考文本。
-
-验收检查新 Run 的 strategy、版本、实际投影请求、仅 Jev 的成功 attempts、动作接受及历史留存。冻结复盘与新版本运行分别统计；旧 fallback、真实失败和缺失历史不混充新版本模型样本。选项改善与调用成功不等于盈利，实际净收益、bb/100、回撤和足量样本另行检验，不能把历史实际收益套给替代动作。详见[评估说明](evaluation.md)。
-
-## 2026-09-21 复盘后的运行合同（取代此前金额预算与自动 fallback 约定）
-
-所有者明确要求以决策效果为目标，不使用本地金额预算控制调用。删除运行、评估、CLI 和 provider 中的费用额度拦截；历史 usage、provider_usage、实际 token 与估算费用继续保留，费用记录不能拒绝模型请求，也不因旧未知费用预留停止请求。供应商实际拒绝、鉴权失败及超时仍作为真实调用故障记录，不伪装为账户余额判断。
-
-真实模型策略只主动提交成功模型决策。纯 Jev 每次请求最多等待 10 秒，首次失败后最多重试 3 次；整次决策共享不超过 40 秒且受 OpenPoker 原始行动期限约束，留出提交时间。永久错误不盲目重试。无法获得合法 Jev 结果时保存失败记录与全部已知 attempts，不生成本地 check/fold 动作；停止新模型任务和自动入桌，等待当前手结算并确认离桌。平台超时导致的自动弃牌单独视为平台行为，不能写作 Jev 决策。失败停牌状态须防止进程重启后静默重新入桌；运维在故障处理后明确恢复。正常管理员排空仍允许 Jev 完成本手。
-
-复盘证明当前牌面、底牌、跟注额和筹码均已送给 Jev，但部分服务端 player_action 的 street 表示执行后的街道。模型行动历史应采用已知行动前状态的街道，原始消息保持原文；快照证明信息不足时才采用事件标记并保留缺失状态。对手习惯统计使用归一化行动历史。历史结果与同手 session 必须标记实际决策来源和失败原因，避免把过去 fallback 当作 Jev 行为。对应输入版本提升，旧原始证据不改写。
-
-本轮保留整轮真实数据作复盘证据，不因修复删除失败样本。验收包含超过旧金额额度仍能调用、真实失败与重试终止、无本地动作提交、失败停牌与重启保护、10 秒单次/40 秒总期限、跨街动作归属、历史来源标记、以及新 Run 的实际 Jev 调用和接受结果。
-
-## 快慢循环的隔离与可观察性
-
-[双循环合同](fast-slow.md)定义新的实时路径：确定性事实、已固定知识、Jev、执行守卫。独立慢工作线程只读原始数据，写派生数据库；不持有 Arena/模型凭据，不提交动作，不调用研究 LLM。批次与游标有界且持久，原历史不因积压删除。
-
-每手知识绑定按 table/hand 持久化，包含版本、内容哈希、发布可见性边界和证据水位；同手恢复不能换为新版本。本手牌面与行动持续更新，历史统计来自已完成手，与本手观察分开。知识晚发布或过期时不能倒灌旧手回放；基础资料回退不等于本地动作兜底，最终仍由 Jev 选择。
-
-公开决策视图分别展示固定知识、异步审计与分段耗时；审计不得写回 Actual Jev input。准备耗时包含知识读取子阶段，不能相加重复统计；发送与确认分别记录，缺失不当作零。独立慢循环故障与模型决策故障分开显示。网页保持匿名只读，Live 牌桌首屏和 Overview 统计范围保持不变。
-
-### 积分来源与跨页一致性
-
-Overview 与 Live 的当前积分均取经过同一 funding 时间戳选择的官方账户快照。Live 仍分别展示离桌余额、座位可下注筹码、当前下注和 REST 在桌快照，额外标明官方积分；不改变这四项现有数值口径。离桌后的筹码转移不是赛季积分清零，也不在前端计算返还。
-
-历史曲线只在来源为 official、赛季标识与当前快照相同且时间不倒退时追加当前官方点，相同时间去重。缺少赛季标识或来源不同，不连接旧估算与新官方值。新 Run 的已恢复官方观测可以继续显示为 stale；前端不得用零值或新 Run 未就绪的统计覆盖它。自动刷新不能改变手动历史选择，旧请求也不能覆盖新 Run 统计。浏览器验证使用合成接口数据，生产中用户当时的选中 Run 不以推测代替核实。
+Existing `knowledge/*` and `research/*` contain historical contracts, read helpers
+and legacy offline implementations. The production controller does not instantiate
+the old knowledge/advice publishing services. Importing pure card definitions,
+legacy types or historical decoders does not give them a live publishing path.
+
+All maintained text files stay below 1,000 lines. TypeScript is strict; CI checks
+lint, formatting, types, unit/integration tests, build, file limits and credential
+hygiene. Tests normally use synthetic models and WebSockets.
+
+## Fast loop
+
+1. Reduce each authoritative server event into current state. Freeze a decision
+   observation using table/hand/actor/turn identity and priced legal candidates.
+   Connection-only changes and waiting-player notifications do not alter decision
+   membership; genuine changes to chips, participation or action authority do.
+2. Persist original hand facts and pin the SDK release at hand start, or restore
+   the original binding. Facts include historical cutoff and digest. Cross-store
+   interruption cannot authorize rebuilding old facts from newer information.
+3. Use `DuelLoop.decide(observation, candidates, {signal, modelDeadline})` with the
+   shared audited real Jev Score adapter. The strategy contains its own questions,
+   weights and selection rule. Mutable legacy advice is not hidden in features.
+4. Obtain and persist a host execution intent, write the application command and
+   check current lease, connection generation, turn identity, legal amount and
+   authority deadline again immediately before sending.
+5. Send using the SDK decision/idempotency identity. Persist raw acknowledgment and
+   outbox before delivering a normalized SDK receipt. Record settlement feedback
+   only with corresponding raw evidence.
+
+`observation.deadline` is the original action authority. The model cutoff is a
+separate absolute time that includes local preparation and submission reserve;
+reconnect or retry never starts a fresh action window. The model wrapper checks
+its deadline after synchronous durable writes as well as through AbortSignal.
+
+Jev is the only live action model. Initial requests may retry at most three times;
+transient errors use bounded exponential backoff and sanitized Retry-After.
+Authentication, identity and storage errors do not blindly retry. No valid model
+result means no locally selected check/fold. Natural task cancellation cannot
+execute a late result; genuine failure produces an explained persistent stop.
+
+## Execution and recovery
+
+SDK intent and host journal are separate persistent authorities. Neither alone
+proves an action was sent or completed. Recovery reconciles prepared, sent,
+accepted, rejected and unknown states. An accepted receipt can remain unresolved
+until environment evidence establishes completion. Receipt event IDs deduplicate
+repeated delivery and conflicting payloads remain errors.
+
+An application outbox can retry delivery to SDK without retrying the real-world
+bet. Unknown execution blocks new submission on that stream. Explicit resume
+first reconciles the failure/intent rather than silently constructing a new
+instance to bypass an unresolved outcome. Model outputs are never moved to a new
+turn because an action name happens to remain legal.
+
+## Facts and strategy are different objects
+
+The facts worker reads completed raw evidence with bounded cursors. It does not
+hold model or Arena keys and does not publish strategies. Current-hand cards and
+bets remain live; historical facts are fixed for the hand. Exact unavailable
+facts remain missing. Uniform-random showdown simulations belong to delayed
+mathematical audit, not to the actual Jev input or inferred betting-range EV.
+
+A strategy release binds its strategy digest to domain, model and runtime
+behavior dependencies. Changes to strategy or behavior require a compatible new
+release. Per-hand bindings separately retain release digest and facts digest.
+Late publication and rollback affect future unpinned hands; an emergency stop is
+required to prevent further actions in an already pinned hand.
+
+## Slow loop and publication
+
+`ResearchWorker` uses `first_settlement`: correcting an earlier hand revises
+snapshot evidence but does not manufacture an independent new sample. Its
+`ResearchOrchestrator` is the sole research state machine and release registrar.
+A single real DeepSeek Messages provider maintains bounded role sessions and
+executes only SDK-declared tools. It cannot access shell, files, arbitrary URLs,
+Arena actions, operator controls or final holdout seeds.
+
+The separate worker receives an empty environment and an explicit whitelist of
+DeepSeek and Jev evaluation settings. Heavy evaluation cannot occupy the live
+JavaScript event loop. Every request has a durable start/result reference,
+cancellation and usage status; late measured usage is appended separately.
+Interrupted paid work is not replayed on recovery. A completed validation can
+finish release registration without repeating model calls.
+
+Development and final protocols have disjoint seeds and holdouts. Formal protocols
+are created privately from explicit predeclared parameters. The independent
+six-max evaluator branches baseline/candidate, calls Jev for each hero decision,
+and aggregates paired seed blocks. Its scripted opponent suites are a versioned
+experimental population, not a claimed model of every Arena player. Final
+validation can pass, fail or be inconclusive; only eligible final validation can
+register a research release. Default activation is `explicit`.
+
+Time, token and model-call limits bound resources. There is no dollar budget gate;
+unknown costs do not become zero. Unknown token use can terminate research because
+the SDK cannot enforce the remaining resource contract. Research failure or
+`waiting_protocol` does not stop live play with an existing valid release.
+
+## Persistence and public queries
+
+- Raw SQLite preserves runs, original observations, decisions, commands, account
+  events and the host recovery/outbox records.
+- Facts SQLite stores derived evidence and asynchronous audits.
+- DuelLoop SQLite stores decisions, release bindings, intents, feedback, research
+  runs, validation and private protocol artifacts.
+- Existing legacy knowledge/research databases remain available for historical
+  read compatibility; they are not new release authorities.
+
+All paths remain under persistent storage and must be distinct, including symlink
+aliases. Consistent SQLite backups include committed WAL content. Cross-database
+backups are individually consistent; no cross-database atomic snapshot is claimed.
+Hand bindings/outbox carry the recovery linkage. Private protocol files need backup
+too. Updating code never implies clearing history.
+
+Public read models whitelist fields. They never serialize raw SDK task data,
+provider credentials or private artifacts. Research history uses bounded SDK SQL
+queries and model attempt arrays are released after persistence. Dashboard results
+remain indexed and cached by relevant data revisions. Historic Choice/advice
+records preserve their old meanings; new Score records explain ordinal grades,
+provider confidence, selection probabilities and incomplete usage separately.
+
+The Live tab keeps the table and current-hand decisions first, with facts and
+research below. Overview remains statistics-only. Available chips, street bets,
+REST account placement and official season score retain separate sources. The
+server is authoritative; animations do not calculate balances.
+
+## Delivery and capability limits
+
+This is a PR-only delivery. Production rollout, hand-boundary replacement and
+post-deployment evidence remain separate operations. GitHub builds uncached images;
+manual Compose updates finish the current hand and verify departure. Public writes
+remain blocked by the application and Nginx.
+
+The real-model evaluator diagnostic was inconclusive. Engineering closure, protocol
+agreement and short model probes do not establish profitability. Longer locked
+experiments and subsequent live observation are required to assess net chips,
+bb/100, sample uncertainty and drawdown.

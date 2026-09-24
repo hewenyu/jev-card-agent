@@ -1,16 +1,17 @@
-import { applyAdvice } from '../core/advice.js';
+/** Offline compatibility adapter for archived Choice policies and test fixtures; never used by live Controller. */
+import { applyAdvice } from '../../core/advice.js';
 import { randomUUID } from 'node:crypto';
-import { buildCandidates, buildContext, validateCandidate } from '../core/index.js';
-import { chooseFallback } from '../policies/baseline.js';
-import type { PokerState, Proposal, OpponentStats, ProviderAttempt } from '../core/types.js';
-import { ProviderError, ProviderLedgerError } from '../policies/metering.js';
-import { buildSession } from '../core/session.js';
-import type { DecisionProgress } from '../core/types.js';
-import type { LiveDecisionProgress } from '../shared/api.js';
-import type { DecisionRecord, RuntimeDependencies, StoredAction } from './types.js';
-import type { DecisionTiming } from './timing.js';
-import { decisionStateKey } from './authority.js';
-export { authorityKey } from './authority.js';
+import { buildCandidates, buildContext, validateCandidate } from '../../core/index.js';
+import { chooseFallback } from '../../policies/baseline.js';
+import type { PokerState, Proposal, OpponentStats, ProviderAttempt } from '../../core/types.js';
+import { ProviderError, ProviderLedgerError } from '../../policies/metering.js';
+import { buildSession } from '../../core/session.js';
+import type { DecisionProgress } from '../../core/types.js';
+import type { LiveDecisionProgress } from '../../shared/api.js';
+import type { DecisionRecord, RuntimeDependencies, StoredAction } from '../../runtime/types.js';
+import type { DecisionTiming } from '../../runtime/timing.js';
+import { decisionStateKey } from '../../runtime/authority.js';
+export { authorityKey } from '../../runtime/authority.js';
 
 export interface DecisionTask {
   key: string;
@@ -27,7 +28,9 @@ export interface DecisionTask {
 }
 export async function decide(
   task: DecisionTask,
-  dependencies: RuntimeDependencies,
+  dependencies: Omit<RuntimeDependencies, 'engine'> & {
+    policy: import('../../core/types.js').Policy;
+  },
   runId: string,
   budgetMs: number,
   onProgress?: (progress: LiveDecisionProgress) => void,

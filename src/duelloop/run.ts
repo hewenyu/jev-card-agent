@@ -156,8 +156,8 @@ export async function runReplayPlan(options: {
       completedAt: new Date().toISOString(),
       framework: {
         package: 'duelloop',
-        version: '0.2.1',
-        commit: 'cba13bb69453f7ea2cd7a79db9d3fbe9859eabc4',
+        version: '0.2.2',
+        commit: '422e24832919a3d72a2936272365e4c827178ec2',
         mode: 'shadow',
         executionOwner: 'host',
         releaseDigest,

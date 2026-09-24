@@ -6,7 +6,7 @@ import {
   summarizeRecentOutcomes,
 } from '../src/core/index.js';
 import type { Candidate, DecisionContext, PokerState } from '../src/core/types.js';
-import { authorityKey, decide } from '../src/runtime/decision.js';
+import { authorityKey, decide } from '../src/evaluation/legacy/decision.js';
 import type { ActionStatus, DecisionRecord } from '../src/runtime/types.js';
 import { Store } from '../src/storage/store.js';
 

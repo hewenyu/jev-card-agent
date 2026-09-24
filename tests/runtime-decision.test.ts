@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createInitialState } from '../src/core/index.js';
 import { ProviderError, ProviderLedgerError } from '../src/policies/metering.js';
 import type { DecisionOptions, ProviderAttempt } from '../src/core/types.js';
-import { authorityKey, decide, type DecisionTask } from '../src/runtime/decision.js';
+import { authorityKey, decide, type DecisionTask } from '../src/evaluation/legacy/decision.js';
 import type { RuntimeStore } from '../src/runtime/types.js';
 
 function task(): DecisionTask {

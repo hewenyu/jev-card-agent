@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, expect, vi } from 'vitest';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { PokerRuntime } from '../../src/runtime/runtime.js';
+import { PokerRuntime } from './policy-runtime.js';
 import { BaselinePolicy } from '../../src/policies/baseline.js';
 import type { Policy } from '../../src/core/types.js';
 import type {

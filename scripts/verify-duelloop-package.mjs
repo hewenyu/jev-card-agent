@@ -5,10 +5,16 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-const commit = 'cba13bb69453f7ea2cd7a79db9d3fbe9859eabc4';
+const version = process.argv[2] ?? '0.2.2';
+const commits = {
+  '0.2.1': 'cba13bb69453f7ea2cd7a79db9d3fbe9859eabc4',
+  '0.2.2': '422e24832919a3d72a2936272365e4c827178ec2',
+};
+const commit = commits[version];
+if (!commit) throw new Error('Unsupported SDK archive version');
 const temporary = mkdtempSync(join(tmpdir(), 'duelloop-source-'));
 const source = join(temporary, 'source');
-const archive = 'duelloop-0.2.1.tgz';
+const archive = `duelloop-${version}.tgz`;
 const checkedIn = fileURLToPath(new URL(`../vendor/${archive}`, import.meta.url));
 const execute = (command, args, cwd) => execFileSync(command, args, { cwd, stdio: 'pipe' });
 try {

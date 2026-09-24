@@ -5,7 +5,7 @@ import type { DecisionContext, PokerState, Proposal } from '../src/core/types.js
 import type { OpponentMemory, MemoryStreetStats } from '../src/core/opponent-memory.js';
 import type { KnowledgeBinding } from '../src/knowledge/types.js';
 import { authorityKey, decisionStateKey } from '../src/runtime/authority.js';
-import { decide, type DecisionTask } from '../src/runtime/decision.js';
+import { decide, type DecisionTask } from '../src/evaluation/legacy/decision.js';
 import type { DecisionTiming } from '../src/runtime/timing.js';
 import type { RuntimeStore } from '../src/runtime/types.js';
 import { arena, createRuntime, joined, MemoryStore, send, turn } from './helpers/runtime-arena.js';

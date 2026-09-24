@@ -1,0 +1,72 @@
+{
+  "applicationVersion": "2.0.0",
+  "date": "2026-09-24",
+  "applicationBaseline": "96db76540f2bb48f6eb35d15a426f78c8bf0dd1d",
+  "sdk": {
+    "version": "0.2.2",
+    "sourceCommit": "422e24832919a3d72a2936272365e4c827178ec2",
+    "archiveBytes": 173239,
+    "sha256": "d1584c90b2fb81d976a41de9456c5aa27df90e8dec9c1ef2e52b5955f1086400",
+    "publicSourceByteReproduction": "passed",
+    "testsPassed": 239,
+    "packageGate": "passed"
+  },
+  "applicationChecks": {
+    "lint": "passed",
+    "format": "passed",
+    "typecheck": "passed",
+    "testFilesPassed": 103,
+    "testsPassed": 858,
+    "browserTestsPassed": 65,
+    "productionBuild": "passed",
+    "maximumFileLines": 996,
+    "configuredSecretsScan": "passed",
+    "migrationTestsPassed": 4
+  },
+  "isolatedModelDiagnostics": {
+    "scope": "Isolated probes captured during implementation; not production trials or a repeat of every probe after every integration change",
+    "jevChoiceScore": {
+      "observations": 4,
+      "matchingActions": 3,
+      "httpRequests": 8,
+      "choiceLatencyMs": [2400, 441, 452, 469],
+      "scoreLatencyMs": [1364, 479, 449, 675],
+      "interpretation": "Protocol comparison only; no equivalence or profitability claim"
+    },
+    "pokerEvaluator": {
+      "stage": "development",
+      "seedBlocks": 2,
+      "simulatedHands": 12,
+      "realJevCalls": 36,
+      "inputTokens": 349626,
+      "outputTokens": 4732,
+      "result": "inconclusive",
+      "costUsd": null
+    },
+    "deepseekMessages": {
+      "model": "deepseek-flash",
+      "thinking": "disabled",
+      "httpRequests": 2,
+      "readOnlyToolCalls": 1,
+      "latencyMs": 1494,
+      "inputTokens": 893,
+      "outputTokens": 34,
+      "costUsd": null
+    }
+  },
+  "productionPackaging": {
+    "cleanProductionInstall": "passed",
+    "sdkImportWithoutDevDependencies": "passed",
+    "composeBuildNoCachePull": "passed",
+    "isolatedComposeStartup": "passed",
+    "healthIdleAndFrontend": "passed",
+    "temporaryResourcesRemoved": true
+  },
+  "operations": {
+    "productionDeployed": false,
+    "arenaSessionStarted": false,
+    "productionHistoryCleared": false,
+    "researchReleaseActivatedInProduction": false,
+    "profitabilityEstablished": false
+  }
+}

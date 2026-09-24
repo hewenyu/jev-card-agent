@@ -48,12 +48,13 @@ case "$action" in
     exit 0
     ;;
   backup)
+    drain
     mkdir -p data/backups
     chmod 700 data/backups
     backup_paths=$(docker compose exec -T app node --input-type=module < "$script_dir/backup-database.mjs")
     while IFS= read -r backup_path; do
       case "$backup_path" in
-        /app/data/backups/jev-*.sqlite|/app/data/backups/knowledge-*.sqlite|/app/data/backups/research-*.sqlite) ;;
+        /app/data/backups/jev-*.sqlite|/app/data/backups/knowledge-*.sqlite|/app/data/backups/research-*.sqlite|/app/data/backups/facts-*.sqlite|/app/data/backups/duelloop-*.sqlite|/app/data/backups/protocol-development-*.json|/app/data/backups/protocol-final-*.json) ;;
         *) printf '%s\n' 'Backup failed: unexpected container path' >&2; exit 1 ;;
       esac
       docker compose cp "app:$backup_path" data/backups/

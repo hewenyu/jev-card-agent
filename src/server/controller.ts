@@ -1,7 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { PokerState, Policy, ProviderMeter } from '../core/types.js';
-import { JevProvider } from '../policies/jev.js';
-import { BaselinePolicy } from '../policies/baseline.js';
+import type { PokerState } from '../core/types.js';
 import { PokerRuntime } from '../runtime/runtime.js';
 import type {
   DashboardOverview,
@@ -12,18 +10,22 @@ import type {
 } from '../shared/api.js';
 import { Store } from '../storage/store.js';
 import { Queries } from '../storage/queries.js';
-import { LedgerMeter } from '../storage/provider-meter.js';
-import { HybridPolicy } from '../policies/hybrid.js';
-import { ReasoningProvider } from '../policies/reasoning.js';
-import { DeepSeekProvider } from '../policies/deepseek.js';
 import { seedDemo } from '../storage/demo.js';
 import { json } from '../storage/database.js';
 import type { AppConfig } from './config.js';
 import type { ServerEvent } from '../openpoker/protocol.js';
 import { SpectatorFeed } from './spectator.js';
-import { SlowLoopService } from '../research/service.js';
-import { AsyncResearchService } from '../research/llm-service.js';
 import { ResearchMonitor } from './research-view.js';
+import { FactsService } from '../facts/service.js';
+import { DuelLoopResearchService } from '../duelloop/research/service.js';
+import { publicResearchView } from '../duelloop/research/public-view.js';
+import { LiveDecisionCoordinator } from '../duelloop/live/coordinator.js';
+import { createLiveModel } from '../duelloop/live/model.js';
+import { LiveUsageLedger } from '../duelloop/live/usage.js';
+import type { AsyncResearchStatus } from '../research/engine.js';
+import type { FrameworkStatusView } from '../shared/framework.js';
+import { createInitialState } from '../core/state.js';
+import { FrameworkControls } from './framework-controls.js';
 
 export interface RunRequest {
   strategy: StrategyName;
@@ -32,69 +34,15 @@ export interface RunRequest {
   maxMinutes: number;
   autoRebuy: boolean;
 }
-export function reasoningFor(config: AppConfig, meter?: ProviderMeter): ReasoningProvider {
-  if (config.reasoningProvider === 'deepseek')
-    return new DeepSeekProvider({
-      apiKey: config.reasoningApiKey,
-      baseUrl: config.deepseekBaseUrl,
-      model: config.deepseekModel,
-      thinking: config.deepseekThinking,
-      timeoutMs: config.reasoningTimeoutMs,
-      effort: config.reasoningEffort,
-      maxOutputTokens: config.reasoningMaxOutputTokens,
-      meter,
-    });
-  return new ReasoningProvider({
-    apiKey: config.reasoningApiKey,
-    baseUrl: config.reasoningBaseUrl,
-    protocol: config.reasoningProtocol,
-    model:
-      config.reasoningProtocol === 'messages'
-        ? config.reasoningMessagesModel
-        : config.reasoningModel,
-    timeoutMs: config.reasoningTimeoutMs,
-    effort: config.reasoningEffort,
-    maxOutputTokens: config.reasoningMaxOutputTokens,
-    meter,
-  });
-}
-export function ledgerFor(config: AppConfig, store: Store, runId: string): LedgerMeter {
-  return new LedgerMeter(store, runId, {
-    reasoningInputPerMillion: config.reasoningInputPricePerMillion,
-    reasoningCacheReadInputPerMillion: config.reasoningCacheReadInputPricePerMillion,
-    reasoningOutputPerMillion: config.reasoningOutputPricePerMillion,
-  });
-}
-export function policyFor(
-  config: AppConfig,
-  strategy: StrategyName,
-  meter?: ProviderMeter,
-): Policy {
-  if (strategy === 'baseline') return new BaselinePolicy();
-  const jev = new JevProvider({
-    apiKey: config.jevApiKey,
-    baseUrl: config.jevBaseUrl,
-    model: config.jevModel,
-    timeoutMs: config.jevTimeoutMs,
-    meter,
-  });
-  if (strategy === 'jev-reasoning') {
-    if (!meter) throw new Error('Hybrid decisions require a provider usage ledger');
-    return new HybridPolicy({
-      jev,
-      reasoning: reasoningFor(config, meter),
-      totalBudgetMs: config.hybridTimeoutMs,
-      reasoningMode: config.reasoningMode,
-    });
-  }
-  return jev;
-}
-
 export class Controller {
   readonly queries: Queries;
   readonly spectator: SpectatorFeed;
-  readonly research: SlowLoopService;
-  readonly asyncResearch: AsyncResearchService;
+  readonly research: FactsService;
+  readonly frameworkResearch: DuelLoopResearchService;
+  coordinator: LiveDecisionCoordinator | null = null;
+  readonly frameworkControls: FrameworkControls;
+  private coordinatorClosing: Promise<void> | null = null;
+  private lastFramework: Omit<FrameworkStatusView, 'research'> | null = null;
   readonly researchMonitor: ResearchMonitor;
   private researchTimer?: ReturnType<typeof setInterval>;
   private pendingResearchRefresh?: ReturnType<typeof setImmediate>;
@@ -118,27 +66,28 @@ export class Controller {
       seedDemo(store);
     }
     this.spectator = new SpectatorFeed(this.view());
-    this.research = new SlowLoopService(store.filename, config.knowledgeDatabasePath, {
+    this.frameworkControls = new FrameworkControls(config, store);
+    this.research = new FactsService(store.filename, config.factsDatabasePath, {
       enabled: config.researchEnabled && store.filename !== ':memory:',
+      legacyAuditPath: config.knowledgeDatabasePath,
     });
     store.knowledgeSource = this.research;
-    this.asyncResearch = new AsyncResearchService(
-      store.filename,
-      store.filename === ':memory:'
-        ? { ...config.asyncLlm, mode: 'off', databasePath: ':memory:' }
-        : config.asyncLlm,
+    this.frameworkResearch = new DuelLoopResearchService(
+      config.duelloopDatabasePath,
+      config.duelloopScopeId,
+      {
+        ...config.duelloopResearch,
+        enabled: config.duelloopResearch.enabled && store.filename !== ':memory:' && !config.demo,
+      },
     );
     this.researchMonitor = new ResearchMonitor(
-      this.asyncResearch.config.databasePath,
+      config.asyncLlm.databasePath,
       store.db,
-      this.asyncResearch.status(),
+      this.legacyResearchStatus(),
     );
-    store.adviceSource = this.asyncResearch;
-    this.research.on('update', () => {
-      this.scheduleResearchRefresh();
-    });
-    this.asyncResearch.on('update', () => this.scheduleResearchRefresh());
-    void Promise.all([this.research.start(), this.asyncResearch.start()])
+    this.research.on('update', () => this.scheduleResearchRefresh());
+    this.frameworkResearch.on('update', () => this.scheduleResearchRefresh());
+    void Promise.all([this.research.start(), this.frameworkResearch.start()])
       .then(() => this.refreshResearch())
       .catch(() => this.researchMonitor.fail());
     this.researchTimer = setInterval(() => this.scheduleResearchRefresh(), 2000);
@@ -155,8 +104,7 @@ export class Controller {
   private refreshResearch(): void {
     if (this.closing) return;
     try {
-      this.store.refreshKnowledge();
-      this.researchMonitor.refresh(this.asyncResearch.status());
+      this.researchMonitor.refresh(this.legacyResearchStatus());
     } catch {
       this.researchMonitor.fail();
     }
@@ -166,11 +114,17 @@ export class Controller {
     this.researchTimer = undefined;
     clearImmediate(this.pendingResearchRefresh);
     this.pendingResearchRefresh = undefined;
-    await Promise.all([this.research.stop(), this.asyncResearch.stop()]);
+    await Promise.all([this.research.stop(), this.frameworkResearch.stop()]);
+    // A stopped WS loop can still be flushing its decision/outbox. Backup callers need
+    // all host writers settled before copying the raw and SDK databases together.
+    if (!this.view().running) {
+      await this.runtime?.settleDecisions();
+      await this.closeCoordinator();
+    }
   }
   async restartResearch(): Promise<void> {
     if (this.closing) throw new Error('Controller is closing');
-    await Promise.all([this.research.start(), this.asyncResearch.start()]);
+    await Promise.all([this.research.start(), this.frameworkResearch.start()]);
     if (this.closing) {
       await this.pauseResearch();
       return;
@@ -190,16 +144,16 @@ export class Controller {
     if (this.config.readOnlyDemo || this.config.demo)
       throw new Error('Live runtime is disabled in demo mode');
     if (!this.config.openPokerApiKey) throw new Error('OPENPOKER_API_KEY is required');
-    if (request.strategy !== 'baseline' && !this.config.jevApiKey)
-      throw new Error('JEV_API_KEY is required');
-    if (request.strategy === 'jev-reasoning' && !this.config.reasoningApiKey)
+    if (request.strategy !== 'jev')
       throw new Error(
-        `${this.config.reasoningProvider === 'deepseek' ? 'DEEPSEEK_API_KEY' : 'REASONING_API_KEY'} is required`,
+        'Live strategy must be jev; baseline and synchronous reasoning are offline-only',
       );
+    if (!this.config.jevApiKey) throw new Error('JEV_API_KEY is required');
     if (this.starting || this.view().running) throw new Error('Runtime is already running');
     this.starting = true;
     try {
       await this.runtime?.settleDecisions();
+      await this.closeCoordinator();
       if (this.closing) throw new Error('Controller is closing');
       if (!this.store.acquireLease()) throw new Error('Another runtime owns this database lease');
       // Acquiring the exclusive lease is the evidence that these prior runs have no owner.
@@ -216,23 +170,49 @@ export class Controller {
       this.strategy = request.strategy;
       this.demoSelected = false;
       const runId = randomUUID();
+      const usage = new LiveUsageLedger(this.store, runId, this.config.jevModel);
+      const model = createLiveModel(
+        {
+          apiKey: this.config.jevApiKey,
+          baseUrl: this.config.jevBaseUrl,
+          model: this.config.jevModel,
+          timeoutMs: this.config.jevTimeoutMs,
+        },
+        { onStart: usage.start, onAttempt: usage.finish, onLateResult: usage.late },
+      );
+      const coordinator = new LiveDecisionCoordinator({
+        raw: this.store,
+        databasePath:
+          this.store.filename === ':memory:' ? ':memory:' : this.config.duelloopDatabasePath,
+        scopeId: this.config.duelloopScopeId,
+        actorId: this.config.duelloopActorId,
+        model,
+        state: () => this.runtime?.state ?? createInitialState(),
+        facts: (at) => this.research.latest(at),
+        decisionPolicy: this.config.duelloopResearch.decisionPolicy,
+      });
+      this.coordinator = coordinator;
       this.runtime = new PokerRuntime({
         apiKey: this.config.openPokerApiKey,
-        policy: policyFor(
-          this.config,
-          request.strategy,
-          request.strategy !== 'baseline' ? ledgerFor(this.config, this.store, runId) : undefined,
-        ),
-        store: this.store,
+        engine: coordinator,
+        store: coordinator.bridge.store,
         wsUrl: this.config.openPokerWsUrl,
         restUrl: this.config.openPokerRestUrl,
       });
       this.observeRuntime(this.runtime);
       const runtime = this.runtime;
       runtime.once('stopped', () => {
-        void runtime.settleDecisions().then(() => {
-          if (this.runtime === runtime) this.releaseLease();
-        });
+        void runtime
+          .settleDecisions()
+          .then(async () => {
+            if (this.runtime === runtime) {
+              await this.closeCoordinator();
+              this.releaseLease();
+            }
+          })
+          .catch(() => {
+            this.controllerError = 'Framework settlement failed; inspect durable execution state';
+          });
       });
       this.leaseTimer = setInterval(() => {
         try {
@@ -245,45 +225,16 @@ export class Controller {
       await this.runtime.start({
         runId,
         strategy: request.strategy,
-        ...(request.strategy === 'jev-reasoning'
-          ? {
-              reasoning: {
-                provider: this.config.reasoningProvider,
-                protocol: this.config.reasoningProtocol,
-                model:
-                  this.config.reasoningProvider === 'deepseek'
-                    ? this.config.deepseekModel
-                    : this.config.reasoningProtocol === 'messages'
-                      ? this.config.reasoningMessagesModel
-                      : this.config.reasoningModel,
-                ...(this.config.reasoningProvider === 'deepseek'
-                  ? { thinking: this.config.deepseekThinking }
-                  : {}),
-                ...(this.config.reasoningProvider !== 'deepseek' ||
-                this.config.deepseekThinking === 'enabled'
-                  ? {
-                      effort:
-                        this.config.reasoningProvider === 'deepseek' &&
-                        this.config.reasoningEffort === 'medium'
-                          ? 'high'
-                          : this.config.reasoningEffort,
-                    }
-                  : {}),
-                timeoutMs: this.config.reasoningTimeoutMs,
-              },
-            }
-          : {}),
         buyIn: request.buyIn,
         maxHands: request.maxHands,
         maxDurationMs: request.maxMinutes * 60_000,
         autoRebuy: request.autoRebuy,
-        decisionTimeoutMs:
-          request.strategy === 'jev-reasoning'
-            ? this.config.hybridTimeoutMs
-            : this.config.jevDecisionTimeoutMs,
+        decisionTimeoutMs: this.config.jevDecisionTimeoutMs,
+        submissionReserveMs: this.config.duelloopResearch.decisionPolicy.executionReserveMs,
       });
       return this.view();
     } catch (error) {
+      await this.closeCoordinator();
       this.releaseLease();
       throw error;
     } finally {
@@ -333,6 +284,7 @@ export class Controller {
       running,
       research: this.research?.status(),
       asyncResearch: this.researchMonitor?.status(),
+      framework: this.frameworkView(),
       ...(status?.funding ? { funding: status.funding } : {}),
       decision: status?.decision ?? null,
       status: this.starting
@@ -411,11 +363,109 @@ export class Controller {
       });
     }
     await this.runtime?.settleDecisions();
+    await this.closeCoordinator();
     await this.pauseResearch();
     this.researchMonitor.close();
+    await this.frameworkControls.close();
     this.releaseLease();
     this.detachSpectator?.();
     this.spectator.close();
+  }
+  private legacyResearchStatus(): AsyncResearchStatus {
+    return {
+      configuredMode: 'off',
+      mode: 'off',
+      running: false,
+      liveConfirmed: false,
+      lastTickAt: null,
+      error: null,
+      pending: 0,
+      runningJobs: 0,
+      completed: 0,
+      failed: 0,
+      superseded: 0,
+      cancelled: 0,
+      attempts: 0,
+      unknownUsage: 0,
+      costUsd: 0,
+      oldestPendingAt: null,
+      latestCompletedAt: null,
+    };
+  }
+  frameworkView(): FrameworkStatusView | undefined {
+    if (!this.frameworkResearch || this.config.demo) return undefined;
+    if (this.closing)
+      return this.lastFramework
+        ? { ...this.lastFramework, research: publicResearchView(this.frameworkResearch.status()) }
+        : undefined;
+    const coordinator = this.coordinator;
+    let base = this.lastFramework;
+    const current = this.frameworkControls.status();
+    if (!coordinator) {
+      base = {
+        ...(base ?? {
+          engine: 'duelloop',
+          handReleaseDigest: null,
+          factsSnapshotDigest: null,
+          unresolvedIntents: 0,
+        }),
+        activeReleaseDigest: current.activeReleaseDigest,
+        unresolvedIntents: this.frameworkControls.store.unresolvedIntents(
+          this.config.duelloopScopeId,
+        ).length,
+      };
+    }
+    if (coordinator) {
+      const hand = this.store.db
+        .prepare(
+          'SELECT release,facts_digest FROM framework_hands WHERE scope=? ORDER BY pinned_at DESC LIMIT 1',
+        )
+        .get(this.config.duelloopScopeId);
+      base = {
+        engine: 'duelloop',
+        activeReleaseDigest: coordinator.sdk.activeRelease(this.config.duelloopScopeId),
+        handReleaseDigest: hand?.release ? String(hand.release) : null,
+        factsSnapshotDigest: hand?.facts_digest ? String(hand.facts_digest) : null,
+        unresolvedIntents: coordinator.sdk.unresolvedIntents(this.config.duelloopScopeId).length,
+      };
+    }
+    return {
+      ...(base ?? {
+        engine: 'duelloop',
+        activeReleaseDigest: null,
+        handReleaseDigest: null,
+        factsSnapshotDigest: null,
+        unresolvedIntents: 0,
+      }),
+      research: {
+        ...publicResearchView(this.frameworkResearch.status()),
+        activationMode: current.activationMode,
+        activationPaused: current.activationPaused,
+        pendingReleases: this.frameworkControls.store
+          .pendingReleases(this.config.duelloopScopeId)
+          .map((item) => ({
+            digest: item.digest,
+            validationDigest: item.binding.validationDigest,
+          })),
+      },
+    };
+  }
+  private async closeCoordinator(): Promise<void> {
+    if (this.coordinatorClosing) return this.coordinatorClosing;
+    const coordinator = this.coordinator;
+    if (!coordinator) return;
+    const view = this.frameworkView();
+    if (view) {
+      const { research: _research, ...base } = view;
+      this.lastFramework = base;
+    }
+    this.coordinator = null;
+    this.coordinatorClosing = coordinator.close();
+    try {
+      await this.coordinatorClosing;
+    } finally {
+      this.coordinatorClosing = null;
+    }
   }
   private observeRuntime(runtime: PokerRuntime): void {
     this.detachSpectator?.();

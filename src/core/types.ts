@@ -79,6 +79,12 @@ export interface OpponentStats {
   lastTableSeq: number;
 }
 export interface DecisionContext {
+  framework?: {
+    engine: 'duelloop';
+    releaseDigest: string;
+    factsSnapshotDigest: string;
+    evidenceCutoff: string;
+  };
   knowledge?: DecisionKnowledge;
   advice?: DecisionAdvice;
   harness?: PokerFacts;
@@ -108,6 +114,12 @@ export interface DecisionContext {
   historyIncomplete: boolean;
 }
 export interface Proposal {
+  framework?: {
+    schema: 'duelloop-score-v1';
+    decision: import('duelloop').DecisionRecord;
+    factsSnapshotDigest: string;
+    selection: 'argmax' | 'softmax_sample';
+  };
   candidateId: string;
   selected: string;
   source: DecisionSource;

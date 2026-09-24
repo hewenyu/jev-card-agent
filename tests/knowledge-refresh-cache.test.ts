@@ -61,7 +61,7 @@ function withHash(bundle: AdviceBundle): AdviceBundle {
   return { ...bundle, bundleHash: hashAdviceBundle(bundle) };
 }
 
-describe('bounded publication refresh on the actual Controller path', () => {
+describe('bounded legacy offline publication refresh', () => {
   it('does not repeatedly serialize unchanged large statistics; changed support, mode and facts archive before future pins', async () => {
     const store = new Store(':memory:');
     const app = await buildApp(loadConfig({}, true), { store });
@@ -73,13 +73,13 @@ describe('bounded publication refresh on the actual Controller path', () => {
     vi.spyOn(app.controller.research, 'revision').mockImplementation(
       () => currentSnapshot.contentHash,
     );
-    vi.spyOn(app.controller.asyncResearch, 'mode').mockImplementation(() => bundle.mode);
-    vi.spyOn(app.controller.asyncResearch, 'bundle').mockImplementation(() => bundle);
-    vi.spyOn(app.controller.asyncResearch, 'bundleRevision').mockImplementation(
-      () => bundle.bundleHash,
-    );
+    store.adviceSource = {
+      mode: () => bundle.mode,
+      bundle: () => bundle,
+      bundleRevision: () => bundle.bundleHash,
+    };
     const refresh = async () => {
-      app.controller.asyncResearch.emit('update');
+      store.refreshKnowledge();
       await new Promise<void>((resolve) => setImmediate(resolve));
     };
     const count = () =>
@@ -172,7 +172,7 @@ describe('bounded publication refresh on the actual Controller path', () => {
               snapshotBytes: sizes,
               opponents: 256,
               firstArchiveMs: firstMs,
-              unchangedControllerRefresh: {
+              unchangedLegacyArchiveRefresh: {
                 samples: durations.length,
                 p50: sorted[29],
                 p95: sorted[56],
@@ -180,7 +180,7 @@ describe('bounded publication refresh on the actual Controller path', () => {
                 rawMs: durations,
               },
               limitations: [
-                'Controlled in-memory SQLite Controller; real immutable archive SQL/validation/hash path executes.',
+                'Controlled in-memory SQLite legacy archive; real immutable archive SQL/validation/hash path executes.',
                 'Source services return fixed synthetic snapshots; real provider/database read time is excluded.',
                 'Initial changed archive cost remains synchronous and measured separately; this is not production P95.',
                 'No real Arena or paid API calls.',

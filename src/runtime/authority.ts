@@ -96,6 +96,20 @@ export const runtimeDefaults = {
   gracefulStopTimeoutMs: 0,
 };
 
+export function validateStartOptions(options: typeof runtimeDefaults): void {
+  if (!Number.isInteger(options.buyIn) || options.buyIn < 1000 || options.buyIn > 5000)
+    throw new Error('Public buyIn must be an integer from 1000 to 5000');
+  for (const key of [
+    'maxHands',
+    'maxDurationMs',
+    'decisionTimeoutMs',
+    'reconnectMinMs',
+    'reconnectMaxMs',
+    'maxReconnectAttempts',
+  ] as const)
+    if (!Number.isFinite(options[key]) || options[key] < 0) throw new Error(`Invalid ${key}`);
+}
+
 export function atHandBoundary(state: PokerState): boolean {
   return (
     state.complete ||
