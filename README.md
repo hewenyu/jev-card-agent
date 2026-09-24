@@ -82,6 +82,23 @@ npm run research -- --op status
 
 Preparation reads verified completed live hands and writes private frozen batches. Configure dedicated `LLM_RESEARCH_*` settings before explicitly enabling research. Real diagnostics and paired Jev comparisons require `--allow-paid`; enabling live consumption also requires `--confirm-live`. The [operations guide](docs/async-llm.md) gives the full commands and migration/rollback procedure.
 
+## DuelLoop on real poker history
+
+The [DuelLoop experiment](docs/duelloop.md) uses the public SDK to score frozen
+OpenPoker decisions in an independent shadow process. It preserves the actual
+archived facts and priced candidates, records SDK strategy/release bindings and
+compares new Jev Score choices with recorded Choice actions. It does not join a
+table or publish strategy to the live bot.
+
+```sh
+npm run duelloop -- --help
+```
+
+The first real-model sample completed 24/24 legal decisions, matched 21 recorded
+choices, and measured 728 ms P50 / 2,215 ms P95. These are integration and latency
+results, not profitability evidence. Commands, data boundaries and framework
+limitations are in the [experiment report](docs/duelloop.md).
+
 ## Account chips and rebuys
 
 The backend reads OpenPoker `season/me` when the runtime starts, every **15 seconds** while running, and after relevant events. The UI distinguishes off-table account chips, the REST account-at-table snapshot, live WebSocket seat stacks and historical net results. Failed refreshes retain the last value with a stale marker; unknown values are not displayed as zero.

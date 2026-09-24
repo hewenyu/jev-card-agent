@@ -1,0 +1,85 @@
+{
+  "completedAt": "2026-09-24T04:17:55.993Z",
+  "framework": {
+    "package": "duelloop",
+    "version": "0.2.0",
+    "commit": "4bd7e9bb0e0322fe1d4297beeff3349918b175c9",
+    "mode": "shadow",
+    "executionOwner": "host",
+    "releaseDigest": "6adbc4ccf3592a45fd363a03b3caa771e3096ac9722c050c0dd32ae35d2e5990",
+    "strategyDigest": "a2a4a164ea71729a1d891148a197769f4360d2c457f48d77532377966a588fae",
+    "snapshotId": "fcfb12a494a66d2a3c50b5faa45b2457a4b951d9b908391a79c0a3a140c0f7ed",
+    "dependencies": {
+      "model": "jev-1.13.0",
+      "modelKind": "real",
+      "modelBehaviorDigest": "fd43caf17ed2847dc31e300b72d16d0b8dcb9e76107dac3b7fd29588c3c22ca6",
+      "runtime": "duelloop-runtime-4:7661247016d3c082c5f0c65a8c2622f19c81c365c8ca994ab989e3be5aa7bd60",
+      "rules": "six-max-nlhe-v2",
+      "featureBuilder": "frozen-request-envelope-v1",
+      "knowledgeUpdater": "archived-only-v1",
+      "continuationPolicy": "archived-poker-guidance-v1",
+      "contextDigest": "6189346e4113151b34e7b804a47a65d8438764fa285f5146c9a22bd2aabfb36c"
+    }
+  },
+  "summary": {
+    "schemaVersion": "duelloop-poker-summary-v1",
+    "planHash": "668e7d8ad949a91efd8b51fb160cc17d5b317db0105fd1b447fb67b26d1c7780",
+    "experiment": "posthoc_shadow_score_vs_recorded_choice",
+    "planned": 24,
+    "succeeded": 24,
+    "failed": 0,
+    "notRun": 0,
+    "originalChoiceMatches": 21,
+    "originalChoiceComparisons": 24,
+    "legalSelections": 24,
+    "tiedDecisions": 0,
+    "modelCalls": 24,
+    "retries": 0,
+    "unknownUsageCalls": 0,
+    "knownUsage": {
+      "inputTokens": 266913,
+      "outputTokens": 3370
+    },
+    "modelKinds": ["real"],
+    "actualModels": ["jev-1.13.0"],
+    "sourceModels": ["jev-1.13.0"],
+    "archivedAdviceSamples": 21,
+    "streets": {
+      "preflop": 6,
+      "flop": 6,
+      "turn": 6,
+      "river": 6
+    },
+    "questions": 173,
+    "latencyMs": {
+      "shadowSuccessfulDecisions": {
+        "n": 24,
+        "p50": 728.1531670000004,
+        "p95": 2215.496708999999,
+        "max": 3126.060834
+      },
+      "modelAttempts": {
+        "n": 24,
+        "p50": 722.1631660000003,
+        "p95": 2209.8462499999987,
+        "max": 3118.9047920000003
+      },
+      "recordedChoice": {
+        "n": 24,
+        "p50": 335,
+        "p95": 538,
+        "max": 558
+      }
+    },
+    "failureCodes": [],
+    "limitations": [
+      "Recorded Choice and fresh Score calls occurred at different times with different request contracts; this is not a randomized A/B test.",
+      "Agreement is descriptive and does not establish decision correctness or profitability.",
+      "Scores and normalized utilities are ordinal model outputs, not chip EV, poker equity or validated mixed-strategy frequencies.",
+      "Original outcomes belong to the historical trajectory only; shadow actions have no observed reward.",
+      "Source requests retain their original opponent evidence and any archived approved advice; no new LLM research or strategy publication occurred.",
+      "Street-stratified sampling of eligible accepted actions excludes failures and incomplete source hands; it is not a population performance estimate.",
+      "Usage is measured when this report is written. Cancelled calls with unknown usage may later append to late-results.jsonl; no usage is guessed or treated as free."
+    ]
+  }
+}
