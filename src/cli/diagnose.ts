@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { OpenPokerClient } from '../openpoker/client.js';
 import { buildCandidates, buildContext, createInitialState } from '../core/index.js';
 import { loadConfig, type AppConfig } from '../server/config.js';
-import { ledgerFor, policyFor, reasoningFor } from '../server/controller.js';
+import { ledgerFor, policyFor, reasoningFor } from '../evaluation/legacy/providers.js';
 import { Store } from '../storage/store.js';
 import { argumentsFor, fail } from './args.js';
 
@@ -78,7 +78,7 @@ async function main(): Promise<void> {
     reasoning: { type: 'boolean', default: false },
     'skip-openpoker': { type: 'boolean', default: false },
   });
-  const config = loadConfig();
+  const config = loadConfig(process.env, false, { offline: true });
   const store = new Store(config.databasePath, config.jevModel);
   try {
     if (!args['skip-openpoker']) await openPoker(config, store);

@@ -1,14 +1,18 @@
-# Docker 服务器部署
+# Docker 服务器部署与 2.0.0 迁移
 
-> 1.3.0 adds the independently configured async LLM advice layer; see [async research](async-llm.md) for off/shadow/live, immutable archives, private publication and three-database backup. Earlier deterministic-only descriptions below document the retained statistics path.
+本文描述部署操作，不代表 2.0.0 已上线。本次重构交付 PR，未替换生产容器、
+未启动第二个真实 Bot、未清理线上历史。[验证报告](duelloop-refactor-verification.md)
+区分实际执行与后续运维检查。
 
-镜像通过 GitHub Actions 的 `DOCKER` 环境自动构建并发布到 `hewenyulucky/jev-card-agent`。环境 Secrets 为 `USER`、`TOKEN`；参见[镜像发布流程](docker-release.md)。镜像支持 `linux/amd64` 和 `linux/arm64`。构建明确禁用 Docker 和 npm Actions 缓存，并拉取最新基础镜像。CI 不连接运行服务器、不自动更新正在运行的容器。
+## 自动构建，手动更新
 
-服务器只需要 Docker Engine 和 Docker Compose，无需安装 Node.js。克隆仓库或下载源码，在部署目录保留 `compose.yaml`、`.env.example` 和 `scripts/`，本地创建 `.env`。目录权限建议 700，`.env` 权限 600。管理脚本内部的容器操作全部使用 `docker compose`；不要将 `.env` 上传至 GitHub 或放入镜像。
+GitHub Actions 的 `DOCKER` 环境使用 `USER`、`TOKEN` Secrets，自动检查并发布
+`hewenyulucky/jev-card-agent` 的 `linux/amd64`、`linux/arm64` 镜像。构建禁用缓存，
+拉取新基础镜像。CI 不通过 SSH 更新运行中的服务器。
 
-## 首次启动
-
-首次准备部署目录：
+服务器使用 Docker Engine 和 Docker Compose。部署目录保留 `compose.yaml`、
+当前 `scripts/` 及私有 `.env`；目录权限建议 700，`.env` 为 600。所有容器管理
+使用 Compose，不使用 `docker run`。模型凭据不进入镜像、仓库或公开浏览器。
 
 ```sh
 git clone https://github.com/hewenyu/jev-card-agent.git
@@ -17,108 +21,158 @@ cp -n .env.example .env
 chmod 600 .env
 ```
 
-也可以下载仓库源码后进入解压目录执行后两条命令。已有 `.env` 保留，不要覆盖。在 `.env` 中填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY` 与内部 `API_TOKEN`，保留费用账本，并设置 Jev 单次请求 10 秒、整次决策 40 秒。费用只记录，不按金额限制调用。当前实现为纯 Jev [harness](harness.md)；以下配置说明不代表新版已部署或已经盈利，实际发布时间与证据见[验证报告](verification.md)。
+已有配置不得覆盖。默认镜像标签 `latest` 可变；固定发布可配置完整镜像 digest
+或不可变 commit 标签。源码和服务器配置必须属于同一待部署版本。
+
+## 先迁移配置，再允许参赛
+
+真实实时入口只接受 `BOT_STRATEGY=jev`。它使用 DuelLoop 的真实 Jev Score 链路，
+不再调用旧同步 Hybrid，也不再消费旧 advice 发布器。
 
 ```dotenv
 BIND_ADDRESS=127.0.0.1
 CONSOLE_PORT=8787
 PUBLIC_HISTORY=true
-AUTO_START_BOT=true
+AUTO_START_BOT=false
 BOT_STRATEGY=jev
+JEV_MODEL=jev-1.13.0
 JEV_TIMEOUT_MS=10000
 JEV_DECISION_TIMEOUT_MS=40000
+DUELLOOP_EXECUTION_RESERVE_MS=1500
+FACTS_ENABLED=true
+DUELLOOP_RESEARCH_ENABLED=false
 ```
 
-`BOT_STRATEGY=jev` 让 Jev 根据当前局面与有界上下文直接选择合法行动，不请求 DeepSeek 或其他分析模型。首次调用后最多重试 3 次，共享 40 秒决策期限及平台行动期限，每次请求最多 10 秒。每个提交动作必须来自有效 Jev 结果；失败时不提交本地动作，记录诊断并持久停牌。移除旧配置中的 `RUN_BUDGET_USD` 和 `TOTAL_BUDGET_USD`，它们不再是运行配置。
+保留 `OPEN_POKER_API_KEY`、`JEV_API_KEY` 和独立内部 `API_TOKEN`。为受控账户选择
+稳定 `DUELLOOP_ACTOR_ID`、`DUELLOOP_SCOPE_ID`；重启不能改成新身份绕过旧 intent。
+默认决策总时限 40 秒包含准备和提交预留，仍受原始 Arena 行动权限限制。
+初次 Jev 请求后最多三次重试；无有效结果时不生成本地动作。金额没有预算门槛。
 
-`AUTO_START_BOT=true` 在服务就绪且不存在持久失败停牌时自动开始 Run，不限制手数或时长，启用 auto-rebuy。新版通过牌型/下注工具、按街候选和长期对手记忆辅助 Jev；均匀随机摊牌参考仅留作审计、不发送给 Jev。完整原始牌局及决策保存在原持久卷；不根据短期输赢自动改写策略。冻结输入对照与真实盈利评估见[评估文档](evaluation.md)。
+删除退役的 `ASYNC_LLM_*`、`LLM_ADVICE_*`、`LLM_RESEARCH_*`、`REASONING_MODE` 和
+`HYBRID_TIMEOUT_MS` 运行配置；真实启动检测这些旧值会明确报错。旧研究数据库路径
+`RESEARCH_DATABASE_PATH` 用于历史只读展示，不用于启动旧发布器。DeepSeek 凭据可
+继续作为新研究的来源；研究控制改用 `DUELLOOP_RESEARCH_*`，不把旧 live/auto
+模式静默转换为自动策略激活。
 
-### 可选分析模型
+默认数据库位于持久卷中：
 
-只有另行决定开展组合策略实验时，才设置 `BOT_STRATEGY=jev-reasoning` 并配置分析 provider。DeepSeek 需独立 `DEEPSEEK_API_KEY`，使用 `REASONING_PROVIDER=deepseek`、官方地址 `https://api.deepseek.com/anthropic` 与 `DEEPSEEK_MODEL=deepseek-flash`。`DEEPSEEK_THINKING=disabled` 关闭 thinking，也不发送 effort；`REASONING_MODE=always` 表示每次先分析、再由 Jev 选择。分析超时和 Hybrid 总期限应显式按实验配置记录，不套用于纯 Jev。标准 Responses / Messages 适配器同样保留为显式实验选项，不作自动兜底。完整合同见[接入说明](transports.md#deepseek-messages-专用合同)。
+| 数据                                                 | 默认路径（Compose 中）                               |
+| ---------------------------------------------------- | ---------------------------------------------------- |
+| 原始牌局、应用执行 journal/outbox、资金与用量        | `/app/data/jev.sqlite`                               |
+| 确定性事实与审计                                     | `/app/data/jev.sqlite.facts.sqlite`                  |
+| DuelLoop 决策、release、intent、feedback、研究与验证 | `/app/data/jev.sqlite.duelloop.sqlite`               |
+| 旧知识/研究归档                                      | 原路径保留，供历史读取                               |
+| 新开发与最终评价协议                                 | `/app/data/protocols/development.json`、`final.json` |
 
-### 监听与启动
+自定义路径必须落在持久存储内，各库不能相同，包括符号链接别名。数据库 schema
+由对应存储模块管理。原始历史不会转换成虚假的 Score 记录，也不会因迁移清空。
+已有未知动作先对账；旧失败停牌不得通过改配置或换库自动绕过。
 
-`BIND_ADDRESS` 决定宿主机监听地址。默认仅本机；也可设为服务器的私有 VPN 地址，在同一网络内访问。公开只读网站通过 HTTPS 反向代理提供访问。镜像中的应用监听 `0.0.0.0:8787`，SQLite 位于专用持久卷。
+`migrate:duelloop` 输出的 `.env.next` 是宿主机路径，不能交给本仓库的
+`compose.yaml` 使用。迁移副本应使用工具同时生成的独立 `compose.json` 与
+`.env.compose`：五个数据库和两个协议都映射到 `/app/data`，唯一数据挂载是
+迁移目录的 `working/`，不会混入原 `jev-card-agent-data` 卷。默认只监听
+`127.0.0.1:18787`，Bot/研究自动启动关闭，并用迁移操作者 UID/GID 访问 0600
+私有文件。先安全停止旧服务、复核镜像 digest 与 manifest，再按
+[迁移流程](duelloop-migration.md) 启动；不要把两个 Compose 文件合并。
+
+## 准备私有评价协议
+
+研究默认关闭，发布默认为 explicit。先确定实验的独立样本数、每 seed 手数、
+改善/退化阈值、置信水平和延迟门槛，再生成协议；不要看过最终结果才调整阈值。
+下面变量由操作者根据审阅过的计划设置，不是已证明有统计功效的默认值。
 
 ```sh
-sh scripts/manage.sh start
-sh scripts/manage.sh status
+sh scripts/manage.sh research --op prepare-protocols --output /app/data/protocols \
+  --seed-blocks "$SEED_BLOCKS" --hands-per-seed "$HANDS_PER_SEED" \
+  --min-samples "$MIN_SAMPLES" --minimum-improvement "$MIN_IMPROVEMENT" \
+  --max-group-regression "$MAX_REGRESSION" --confidence "$CONFIDENCE" \
+  --max-latency-ms "$MAX_LATENCY_MS"
 ```
 
-`AUTO_START_BOT=true` 会在服务启动后自动连接并参赛，关闭后只启动展示服务。首次开启前停止同账号的其他 Bot；数据库租约只协调同一持久数据库。`API_TOKEN` 仅用于服务器内部管理 API，由 Compose 排空脚本从容器环境读取；网页不接收或发送此令牌。`PUBLIC_HISTORY=true` 开放匿名实时观战和已结束历史。
+该操作不调用模型、不参赛，使用新随机种子并生成互不重叠的 development/final
+分区，拒绝覆盖已有文件。保持 final 种子私有；研究工具只能读公开阈值和协议
+摘要，不能读取 final seeds。最终 holdout 使用次数耗尽后，需要新的独立协议。
 
-默认镜像为 `hewenyulucky/jev-card-agent:latest`。`start` 在本地缺少镜像时自动拉取；已有镜像时不会主动更新，正在运行的服务也不通过 `start` 替换。
+配置 `DUELLOOP_RESEARCH_API_KEY` 或已有 `DEEPSEEK_API_KEY`，精确模型
+`deepseek-flash`，端点 `https://api.deepseek.com/anthropic`；默认关闭思考，启用
+时 effort 默认 high。同时保留 Jev key，独立评价会真实调用 Jev。设置
+`DUELLOOP_RESEARCH_ENABLED=true` 后安全重启。协议缺失/无效时研究显示
+`waiting_protocol`，不反复重启 worker，Bot 可继续使用已有 release。
 
-## 一键管理
+## Compose 管理与安全替换
 
-所有命令在部署目录执行：
+| 命令                                | 行为                                 |
+| ----------------------------------- | ------------------------------------ |
+| `sh scripts/manage.sh start`        | 启动缺失服务，不替换正在运行的容器   |
+| `sh scripts/manage.sh stop`         | 完成本手、确认官方离桌，再停止       |
+| `sh scripts/manage.sh restart`      | 相同排空流程，用已有镜像重建         |
+| `sh scripts/manage.sh update`       | 相同排空流程，拉取配置镜像并重建     |
+| `sh scripts/manage.sh resume`       | 排除故障后通过私有入口明确恢复 Bot   |
+| `sh scripts/manage.sh status`       | 查看 Compose 状态                    |
+| `sh scripts/manage.sh logs`         | 查看并持续跟踪日志                   |
+| `sh scripts/manage.sh backup`       | 一致 SQLite 备份，复制到私有宿主目录 |
+| `sh scripts/manage.sh research ...` | 在现有服务中执行私有研究控制 CLI     |
 
-| 命令                           | 行为                                                   |
-| ------------------------------ | ------------------------------------------------------ |
-| `sh scripts/manage.sh start`   | 启动服务，首次自动拉取缺失镜像                         |
-| `sh scripts/manage.sh stop`    | 等待当前手牌结束并确认离桌，然后停止服务               |
-| `sh scripts/manage.sh restart` | 同样先排空，再用本地镜像重新启动服务                   |
-| `sh scripts/manage.sh update`  | 同样先排空，显式拉取配置标签的最新镜像并重建服务       |
-| `sh scripts/manage.sh resume`  | 排除模型故障后显式恢复，按当前配置开始新 Run           |
-| `sh scripts/manage.sh status`  | 查看 Compose 服务状态                                  |
-| `sh scripts/manage.sh logs`    | 查看最近 100 行日志并持续跟踪，Ctrl+C 退出查看         |
-| `sh scripts/manage.sh backup`  | 在线创建一致 SQLite 备份并复制到宿主机 `data/backups/` |
-
-`stop`、`restart`、`update` 都先通过受保护 API 请求停止，持续等待当前牌局结束，再用 OpenPoker REST 确认已离桌。正常排空不设置强制结束当前手牌的时间限制；状态无法核实时退出，不继续停止或替换容器。容器的 150 秒停止宽限期用于已排空服务的退出，不是当前手牌的最长时限。
-
-## 手动更新 latest
-
-先确认 GitHub 的镜像发布工作流成功，再在服务器部署目录执行：
-
-```sh
-sh scripts/manage.sh update
-sh scripts/manage.sh logs
-```
-
-更新由操作者手动执行。不要用直接 `docker compose up` 替换仍在打牌的实例。仓库没有 Watchtower、定时拉取或 CI SSH 部署。自动启动配置决定新容器是否恢复参赛。旧入口 `sh scripts/update-container.sh` 保留兼容，转交 `manage.sh update` 执行同一流程。
-
-`latest` 是可变标记。需要固定版本或回退时，在 `.env` 设置 `JEV_IMAGE=hewenyulucky/jev-card-agent:sha-完整提交号`，再手动执行 `sh scripts/manage.sh update`。也可按镜像发布记录配置 digest。`JEV_IMAGE` 不会覆盖持久数据。
-
-## 模型失败后的恢复
-
-模型失败停牌持久化在同一数据库中；`AUTO_START_BOT=true`、容器重启或手动镜像更新都不会绕过它。HTTP 网站继续只读展示历史和故障状态。排除供应商真实欠费、鉴权或服务故障后，在部署目录执行 `sh scripts/manage.sh resume`，由容器内带内部令牌调用 `POST /api/runtime/resume`，按当前配置启动新 Run。公网代理不开放此写接口。停止失败的模型调用后，平台可能自行处理未提交的超时回合，应保留该事实而非记为 Jev 决策。
-
-## 数据与运行
-
-`jev-card-agent-data` 卷保存 SQLite 主文件及 WAL/SHM，更新容器时保留。不要执行 `docker compose down -v`，除非明确要删除全部运行数据。备份与恢复方法见[运行手册](running.md#sqlite-持久化备份与恢复)。费用账本随数据库保留，仅记录费用，不阻止调用。真实模型失败或无有效 Jev 选择会停牌；未知费用记录不会被当作欠费，也不会生成本地 fallback 动作。
-
-日常停止、启动和重启使用上述管理入口。健康检查只表示 HTTP 可响应，Bot 实际连接与错误查看控制台或日志。公开日志前移除私有运行标识和牌局信息。`backup` 使用运行中容器内的 Node.js SQLite online backup 分别为原始库及已有知识库写入 `/app/data/backups/`，再通过 `docker compose cp` 复制到宿主机；备份默认保存于被 Git 忽略的 `data/backups/`，包含敏感记录，不公开上传。两份备份各自一致，不宣称具有同一跨库原子时刻；原始库保留已固定的完整知识绑定。
-
-### 长期记忆与历史统计迁移
-
-旧版 `visible-context-v6` 的 `opponent_encounters` 派生表保留兼容。新版慢循环在独立知识数据库中按事件游标处理历史并发布，实时路径不再惰性回填；原 Run、手牌、原始事件、请求、资金与费用表不清理。无需为了创建长期记忆重置数据库。双时间截止限制历史查询，旧数据也只能在当时已经收到且已结束后进入记忆。
-
-以下是从更早版本迁移错街 checkpoint 统计的历史操作；已完成该修正的部署不必重复。先更新宿主机 `scripts/`，备份并安全离桌，再离线重建：
+更新前确认 GitHub 检查和镜像发布成功，同步当前管理脚本，核对磁盘空间、备份
+和镜像身份，再人工执行。不要直接 `docker compose up` 替换仍在打牌的服务。
+排空等待当前手结束，然后由 OpenPoker REST 确认离桌；无法确认时停止更新。
+150 秒容器退出宽限期不是强制终止一手牌的时限。
 
 ```sh
 sh scripts/manage.sh backup
-sh scripts/manage.sh stop
-docker compose pull app
-docker compose run --rm --no-deps -T --entrypoint node app --input-type=module < scripts/rebuild-opponents.mjs
-sh scripts/manage.sh start
+sh scripts/manage.sh update
+sh scripts/manage.sh status
+sh scripts/manage.sh logs
 ```
 
-脚本按原始 live events 重放，只替换 checkpoint 中的对手累计统计及迁移标记，保留牌桌状态、历史请求、决策、结算与费用账本。有有效运行租约或未结束手牌时拒绝执行；相同事件水位可重复执行。新安装没有旧 checkpoint，无需运行此迁移。以后常规更新使用 `manage.sh update`。
+首次迁移保留 `AUTO_START_BOT=false`，完成恢复和运行核对后再明确恢复。持续运行
+可设置 `AUTO_START_BOT=true`，无手数/时长上限并启用 auto-rebuy；已有持久失败
+不会被 auto-start 或容器重启绕过。不要同时启动本地和服务器同账户 Bot。
 
-账户筹码由服务器读取官方 `season/me` 并统一刷新，浏览器只读后端快照。运维核对时区分 Account available（离桌余额）、Account at table（REST 在桌快照）、Seat stack（WebSocket 当前座位筹码）、Season score（官方 `score`）与 Net result（已核实手牌净收益）；REST 与牌桌事件的更新时间不同，不能要求两种在桌数值始终相等。当前 Run 的 Overview 与 Live 采用同一官方积分快照；历史 Run 标记为历史观测，旧版余额求和只标记估算。请求失败保留最后值并标记过期，不清零余额，不用历史收益推算余额。每次部署验证 `startup`、`before_join`、`table_joined` 的账户快照，正常停牌还应保存 `after_leave` 最终对账，再核对官方积分与公开展示。先检查所选 Run、快照更新时间和连接状态，不能仅因数值不同就重启 Bot 或重复补筹。
+## 备份与回滚
 
-自动补筹每次为 1,500 免费虚拟筹码，条件是离桌、无在桌筹码且离桌余额小于 1,000；首次立即可用，此后 Free 冷却 5 分钟、Pro 冷却 2 分钟。补筹确认后重新核对官方余额，再按实际可用额入队；确认事件不等于入桌成功。页面只在收到明确截止信息时显示补筹倒计时，未知时不假设可以立即补筹。补筹增加余额但不增加历史 Net result；服务重启不重置官方冷却或本地模型费用账本。完整口径见[运行手册](running.md#账户筹码牌桌筹码与自动补筹)。
+更新保留 `jev-card-agent-data` 卷。不要执行 `docker compose down -v`。SQLite
+online backup 包含已提交 WAL；不要只复制活跃主文件。发布备份应先安全离桌并
+暂停派生写入，然后核对备份清单包含原始、facts、DuelLoop 和存在的旧归档。
+各数据库备份分别一致，不宣称跨数据库同一原子时刻。私有评价协议文件也需保留。
 
-补筹和冷却事件随 SQLite 持久卷与备份保留，更新或重启后可恢复已记录资金历史与最后已知状态。核对补筹时查看事件、官方确认余额和随后的账户快照；缺失的补筹前余额保持未知，不能由当前余额倒推。不要清空资金记录来解决页面刷新问题，补筹流水也不会计入已结算手牌的净收益。
+备份位于被 Git 忽略的私有目录，文件权限 600，不能上传至公开网站。先在隔离
+副本验证 `PRAGMA quick_check`、手级绑定与执行 outbox 恢复，再允许生产替换。
+不得仅凭 HTTP 200 或一个镜像构建成功宣称恢复验证完成。
 
-### 经明确要求开始全新运行
+策略回滚通过 SDK 操作，仅改变未来未绑定的手：
 
-本次复盘后的部署必须保留现有全部历史与费用账本，以新 Run 和版本标识区分修正前后的数据，不执行清库。以下清理流程仅在将来再次明确要求清理时适用，不能把以前某次授权当作每次更新都清库。
+```sh
+sh scripts/manage.sh research --op status
+sh scripts/manage.sh research --op pause
+sh scripts/manage.sh research --op cancel --run RUN_ID
+sh scripts/manage.sh research --op approve --release RELEASE_DIGEST --actor OPERATOR --reason REVIEW_REASON
+sh scripts/manage.sh research --op rollback --release PRIOR_RELEASE_DIGEST --actor OPERATOR --reason REVIEW_REASON
+```
 
-获得此类明确授权后，应先完成新镜像验证与发布，等待旧 Bot 当前手牌结束、由官方 REST 确认离桌，再停止 Compose 服务。创建权限为 `600` 的一致数据库备份后，离线清理旧 Run、牌局、决策、行动、原始事件、评估和资金展示记录，同时清除牌桌恢复检查点、旧 session 来源、活动 Run 标记及已停止进程的租约。不能仅清空页面列表而保留会重新恢复旧桌的检查点。
+暂停研究不等于取消当前任务；暂停激活不等于停止 Bot。`pause-activation` 与
+`resume-activation` 也需 `--actor` 和 `--reason`。公开代理不允许这些写请求。
 
-模型 `usage` 与 `provider_usage` 账本必须保留，清理前后累计费用及未知请求预留保持一致；这些记录仅用于费用追溯，不用于限制新调用。备份留在服务器私有目录，不通过公开网站访问。清理操作只在服务停止后的运维环境执行，不提供公开写接口；只启动已验证的新镜像，确认新 Run、新牌桌状态及新产生的历史，官方账户余额和补筹冷却由服务端重新同步。此操作不删除 OpenPoker 官方持有的账户或比赛记录。
+程序回滚使用通过验证的旧镜像及其兼容数据库副本，仍需完成当前手和官方离桌。
+不能让旧程序直接写入它不支持的新 schema，也不能删掉未知 intent 来解除阻断。
+保留回滚前后的所有证据和失败原因。
+
+## 部署后核对
+
+依次确认镜像 revision、HTTP 健康、只读权限、当前 hand/release/facts 绑定、
+真实 Jev 接受动作及无重复/过期提交。研究状态、facts 进度和 Bot 连接分别检查；
+研究等待协议不应被误判成实时停牌。批准新版本后核对下一手才使用新 release，
+当前手不混版本，历史实际输入不被后续审计覆盖。
+
+账户信息以官方 `season/me` 为准，入桌前先核对，入桌/离桌/rebuy 后再次刷新。
+区分离桌账户余额、REST 在桌快照、WS 座位可用筹码、当街下注与赛季积分。当前
+Run 的 Overview 与 Live 共用官方积分快照；旧估算历史标明来源。失败刷新保留
+旧值并标 stale，不用零或历史净收益反推余额。
+
+免费 rebuy 1,500 虚拟筹码不计入牌局盈利；首次立即，此后 Free 五分钟、Pro
+两分钟冷却，条件为离桌、无在桌筹码且离桌余额低于 1,000。确认后重新读取官方
+余额再入队，记录资金事件，不在前端简单加筹码。
 
 ## 域名与 Nginx
 
@@ -129,7 +183,7 @@ BIND_ADDRESS=127.0.0.1
 PUBLIC_HISTORY=true
 ```
 
-公开网站匿名展示公共牌、Bot 自己的当前手牌、座位、筹码、底池和行动流，使用 SSE 自动更新并重连。按所有者要求，当前手的决策阶段及已保存分析通过只读接口同步展示；已结束牌局保留完整已记录的脱敏历史与决策复盘。未公开的对手底牌、合法行动授权、鉴权凭据及原始 SQLite 不公开下载。本轮目标由 Jev 直接从合法候选中选择；密钥、模型配置与自主运行都由后端管理，页面只执行读取。
+公开网站匿名展示公共牌、Bot 自己的当前手牌、座位、筹码、底池和行动流，使用 SSE 自动更新并重连。按所有者要求，当前手的决策阶段及已保存分析通过只读接口同步展示；已结束牌局保留完整已记录的脱敏历史与决策复盘。未公开的对手底牌、合法行动授权、鉴权凭据及原始 SQLite 不公开下载。本版本由 Jev Score 与固定 release 的选择规则确定合法候选；密钥、模型配置与自主运行都由后端管理，页面只执行读取。
 
 HTTPS 代理的 `location /` 使用 `limit_except GET { deny all; }`，允许 GET 及隐含允许的 HEAD，拒绝公网管理写请求，即使携带有效内部令牌也不会放行。`proxy_buffering off` 使 SSE 及时到达浏览器；`GET /api/live` 发送 `snapshot` 事件，后端每 15 秒发送注释心跳，代理读超时维持 60 秒。Compose 管理脚本从容器内访问受保护 API，不经过公网代理，因此仍可安全排空和更新。
 
@@ -160,11 +214,3 @@ curl --head https://openpoker.zve.ccwu.cc/health
 ```
 
 TLS 与应用健康分别验收：证书和跳转正常时，后端尚未启动仍可能返回 502；容器启动后 `/health` 应返回 200，匿名实时流、已结束历史可读，以及公网写请求被拒绝还需单独检查。内部管理能力通过服务器本机入口检查。原始证书私钥、SSH 配置和服务器地址不进入公开仓库。
-
-## 双循环更新核对
-
-仍通过无缓存 GitHub 镜像构建、人工 `manage.sh update` 和 Docker Compose 更新；等待当前手结束并由官方确认离桌，不能同时启动同账号本地 Bot。原始库与新增派生知识库均放在持久数据卷，更新前备份；不清理旧历史、费用或每手知识绑定。
-
-新容器启动后分别核对 HTTP 健康、Bot 已接受的 Jev 动作和慢循环状态。HTTP 健康不等于研究进程正常。公开 Live 下方可观察积压与最近完成时间，决策详情可查看固定知识和异步审计；检查 worker 落后时是否继续用已有版本、下一手才使用新发布版本。没有历史字段的旧决策应显示未记录，不能静默回填成旧模型依据。
-
-回滚使用经过验证的镜像并走相同安全离桌流程，保留所有数据和发布记录。知识回滚只影响未来手选择，不能改变已固定手或历史实际请求。具体部署证据和测量结果写入验证记录，不能以构建成功替代线上核对。

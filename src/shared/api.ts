@@ -57,6 +57,7 @@ export interface CandidateView {
 }
 
 export interface DecisionView {
+  framework?: import('./framework.js').FrameworkDecisionView;
   knowledge?: DecisionKnowledge;
   audit?: AuditView;
   timing?: DecisionTiming;
@@ -195,6 +196,7 @@ export interface FundingEventView {
   rebuyAvailableAt: string | null;
 }
 export interface RuntimeView {
+  framework?: import('./framework.js').FrameworkStatusView;
   research?: SlowLoopStatus;
   asyncResearch?: import('./research.js').ResearchSummary;
   funding?: FundingView;

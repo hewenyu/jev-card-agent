@@ -6,9 +6,12 @@ import { buildApp } from '../src/server/app.js';
 import { loadConfig } from '../src/server/config.js';
 import { Store } from '../src/storage/store.js';
 import type { Overview, RunSummary } from '../src/shared/api.js';
+import { scoreHttpFixture } from './helpers/score-http.js';
 
 it('starts the autonomous runtime through the control API and exposes its confirmed result through SQLite queries', async () => {
+  const score = scoreHttpFixture();
   const server = createServer((request, response) => {
+    if (score.handle(request, response)) return;
     response.setHeader('content-type', 'application/json');
     if (request.url === '/api/season/me') {
       response.end(
@@ -79,6 +82,9 @@ it('starts the autonomous runtime through the control API and exposes its confir
       openPokerApiKey: 'mock-key',
       openPokerWsUrl: `ws://127.0.0.1:${port}`,
       openPokerRestUrl: `http://127.0.0.1:${port}`,
+      jevApiKey: 'local-score-key',
+      jevBaseUrl: `http://127.0.0.1:${port}`,
+      jevModel: 'jev-local-score',
     },
     { store },
   );
@@ -86,7 +92,7 @@ it('starts the autonomous runtime through the control API and exposes its confir
     const start = await app.inject({
       method: 'POST',
       url: '/api/runtime/start',
-      payload: { strategy: 'baseline', maxHands: 1 },
+      payload: { strategy: 'jev', maxHands: 1 },
     });
     expect(start.statusCode).toBe(200);
     await vi.waitFor(async () => {
@@ -99,6 +105,10 @@ it('starts the autonomous runtime through the control API and exposes its confir
     expect(runs.find((run) => run.id === 'abandoned-run')?.status).toBe('interrupted');
     expect(runs[0]?.decisions).toBe(1);
     expect(runs[0]?.status).toBe('stopped');
+    expect(score.calls).toHaveLength(1);
+    expect(
+      Object.values(score.calls[0]!.questions).every((question) => question.type === 'score'),
+    ).toBe(true);
     const detail = await app.inject('/api/hands/hand1');
     expect(detail.body).not.toContain('private-test-token');
     expect(store.db.prepare('SELECT COUNT(*) AS n FROM leases').get()?.n).toBe(0);

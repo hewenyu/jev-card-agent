@@ -10,6 +10,7 @@ import type {
 import { json, redact } from './database.js';
 import type { Store } from './store.js';
 import { cachedRead, initializeReadCache } from './read-cache.js';
+import { frameworkDecisionView } from './framework-view.js';
 
 export interface PageOptions {
   limit?: number;
@@ -173,22 +174,24 @@ export class Queries {
     const status = source?.status();
     return this.store.db
       .prepare(
-        "SELECT id,json_type(context,'$.knowledge') AS knowledge FROM decisions WHERE hand_id=? ORDER BY created_at,id",
+        `SELECT id,(json_type(context,'$.knowledge')='object'
+          OR json_type(context,'$.framework')='object'
+          OR json_type(proposal,'$.framework')='object') AS audit_eligible
+         FROM decisions WHERE hand_id=? ORDER BY created_at,id`,
       )
       .all(id)
       .map((row) => ({
         decisionId: String(row.id),
-        audit:
-          row.knowledge == null
-            ? null
-            : (source?.getAudit(String(row.id)) ?? {
-                decisionId: String(row.id),
-                inputHash: null,
-                computedAt: null,
-                status: !status?.enabled ? 'disabled' : status.error ? 'failed' : 'pending',
-                uniformShowdownReference: null,
-                provenance: 'asynchronous_audit_not_model_input',
-              }),
+        audit: !row.audit_eligible
+          ? null
+          : (source?.getAudit(String(row.id)) ?? {
+              decisionId: String(row.id),
+              inputHash: null,
+              computedAt: null,
+              status: !status?.enabled ? 'disabled' : status.error ? 'failed' : 'pending',
+              uniformShowdownReference: null,
+              provenance: 'asynchronous_audit_not_model_input',
+            }),
       }));
   }
   evaluations(): EvaluationView[] {
@@ -201,8 +204,12 @@ export class Queries {
     const view = decisionView(row);
     view.timing = this.store.decisionTiming(view.id);
     const context = json<Partial<DecisionContext>>(row.context, {});
-    if (context.knowledge) {
-      view.knowledge = redact(context.knowledge) as DecisionView['knowledge'];
+    if (context.knowledge) view.knowledge = redact(context.knowledge) as DecisionView['knowledge'];
+    if (
+      context.knowledge ||
+      context.framework ||
+      json<Partial<Proposal>>(row.proposal, {}).framework
+    ) {
       const source = this.store.knowledgeSource;
       const status = source?.status();
       view.audit = source?.getAudit(view.id) ?? {
@@ -297,7 +304,14 @@ function decisionView(row: Row): DecisionView {
       ? (redact(value) as Record<string, unknown>)
       : undefined;
   const modelInput = publicObject(request?.state);
-  const modelQuestions = publicObject(request?.questions);
+  const modelQuestions = publicObject(
+    Array.isArray(request?.questions)
+      ? Object.fromEntries(
+          request.questions.map((question: { id: string }) => [question.id, question]),
+        )
+      : request?.questions,
+  );
+  const framework = frameworkDecisionView(proposal);
   return {
     id: String(row.id),
     runId: String(row.run_id),
@@ -307,6 +321,7 @@ function decisionView(row: Row): DecisionView {
     context: redact(json(row.context, {})) as Record<string, unknown>,
     ...(modelInput ? { modelInput } : {}),
     ...(modelQuestions ? { modelQuestions } : {}),
+    ...(framework ? { framework } : {}),
     ...(typeof proposal.requestHash === 'string' ? { requestHash: proposal.requestHash } : {}),
     candidates: json<Candidate[]>(row.candidates, []).map((c) => ({
       id: c.id,

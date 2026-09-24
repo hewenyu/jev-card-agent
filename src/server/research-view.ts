@@ -97,9 +97,15 @@ export class ResearchMonitor {
       evaluatedDecisions: this.evaluated,
       unmatchedDecisions: this.unmatched,
     });
+    const hasLedger =
+      this.reader?.db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name IN ('research_attempts','research_jobs')",
+        )
+        .get()?.n === 2;
     summary.activity = researchActivity(
       this.raw,
-      this.reader?.db ?? null,
+      hasLedger ? this.reader!.db : null,
       { evaluated: this.evaluated, adopted: this.adopted, unmatched: this.unmatched },
       this.byRun,
       !this.raw.prepare('SELECT 1 FROM decisions WHERE rowid>? LIMIT 1').get(this.cursor),
@@ -166,13 +172,20 @@ export class ResearchMonitor {
       summary.published = states.filter((r) => r.status === 'published').length;
       summary.expired = states.filter((r) => r.status === 'expired').length;
       summary.withdrawn = states.filter((r) => r.status === 'withdrawn').length;
-      const pricing = store.db
-        .prepare(
-          'SELECT SUM(cost_usd) AS known,COUNT(*) AS n,COUNT(cost_usd) AS priced FROM research_attempts',
-        )
-        .get();
-      summary.knownCostUsd =
-        pricing?.known == null ? (Number(pricing?.n ?? 0) > 0 ? null : 0) : Number(pricing.known);
+      const pricing = hasLedger
+        ? store.db
+            .prepare(
+              'SELECT SUM(cost_usd) AS known,COUNT(*) AS n,COUNT(cost_usd) AS priced FROM research_attempts',
+            )
+            .get()
+        : null;
+      summary.knownCostUsd = !hasLedger
+        ? null
+        : pricing?.known == null
+          ? Number(pricing?.n ?? 0) > 0
+            ? null
+            : 0
+          : Number(pricing.known);
       summary.unpricedCalls = Number(pricing?.n ?? 0) - Number(pricing?.priced ?? 0);
       proposals = store.listProposals(20).map((p) => ({
         id: p.proposalId,

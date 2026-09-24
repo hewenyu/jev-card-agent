@@ -11,8 +11,8 @@ async function main(): Promise<void> {
     'buy-in': { type: 'string', default: '2000' },
     'no-auto-rebuy': { type: 'boolean', default: false },
   });
-  if (args.strategy !== 'jev' && args.strategy !== 'baseline' && args.strategy !== 'jev-reasoning')
-    throw new Error('--strategy must be jev, baseline or jev-reasoning');
+  if (args.strategy !== 'jev')
+    throw new Error('--strategy must be jev; other strategies are offline-only');
   const config = loadConfig();
   const store = new Store(config.databasePath, config.jevModel);
   const controller = new Controller(config, store);

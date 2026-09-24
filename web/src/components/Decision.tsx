@@ -4,6 +4,7 @@ import { dollars, number, time } from '../api';
 import { Status } from './UI';
 import { DecisionAnalysis } from './DecisionAnalysis';
 import { FastSlowEvidence } from './FastSlowEvidence';
+import { FrameworkDecision } from './FrameworkDecision';
 
 export function Decision({ decision }: { decision: DecisionView }) {
   const selected = decision.candidates.find((item) => item.id === decision.selectedCandidateId);
@@ -37,6 +38,7 @@ export function Decision({ decision }: { decision: DecisionView }) {
         </div>
       )}
       <DecisionAnalysis decision={decision} />
+      <FrameworkDecision framework={decision.framework} />
       <FastSlowEvidence decision={decision} />
       <div className="candidate-list">
         {decision.candidates.map((candidate) => {
@@ -63,8 +65,9 @@ export function Decision({ decision }: { decision: DecisionView }) {
         })}
       </div>
       <p className="annotation">
-        Choice probabilities describe the model’s selection, not the probability of winning the
-        hand.
+        {decision.framework
+          ? 'Selection probabilities come from the versioned selection rule. They are distinct from provider score confidence and poker win probabilities.'
+          : 'Choice probabilities describe the model’s selection, not the probability of winning the hand.'}
       </p>
       <div className="decision-stats">
         <div>

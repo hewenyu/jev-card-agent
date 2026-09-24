@@ -3,7 +3,13 @@ import { number } from '../api';
 import { Panel, Status } from './UI';
 import './fast-slow.css';
 
-export function ResearchStatus({ research }: { research: RuntimeView['research'] }) {
+export function ResearchStatus({
+  research,
+  factsOnly = false,
+}: {
+  research: RuntimeView['research'];
+  factsOnly?: boolean;
+}) {
   if (!research) return null;
   const label = !research.enabled
     ? 'Disabled'
@@ -14,7 +20,7 @@ export function ResearchStatus({ research }: { research: RuntimeView['research']
         : 'Idle';
   return (
     <Panel
-      title="Asynchronous knowledge"
+      title={factsOnly ? 'Historical facts' : 'Asynchronous knowledge'}
       eyebrow="DETERMINISTIC STATISTICS · NO RESEARCH LLM"
       action={<Status>{label}</Status>}
     >
@@ -35,7 +41,7 @@ export function ResearchStatus({ research }: { research: RuntimeView['research']
             </dd>
           </div>
           <div>
-            <dt>Latest published version</dt>
+            <dt>{factsOnly ? 'Latest facts snapshot' : 'Latest published version'}</dt>
             <dd>{research.latestVersion || 'No publication yet'}</dd>
           </div>
           <div>

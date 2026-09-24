@@ -10,7 +10,7 @@ import { EvidenceBuilder } from '../src/research/evidence.js';
 import { LlmResearchProvider } from '../src/research/llm-provider.js';
 import { loadAsyncResearchConfig } from '../src/research/config.js';
 import { JevProvider } from '../src/policies/jev.js';
-import { authorityKey, decide } from '../src/runtime/decision.js';
+import { authorityKey, decide } from '../src/evaluation/legacy/decision.js';
 import { createInitialState } from '../src/core/state.js';
 import type { PokerState, RawMessage } from '../src/core/types.js';
 import type { ResearchBatchV2, ResearchProposalV2 } from '../src/research/contracts.js';

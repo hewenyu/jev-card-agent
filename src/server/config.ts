@@ -1,4 +1,9 @@
-import { resolve } from 'node:path';
+import { resolve, dirname, basename, join } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import {
+  parseDuelLoopResearchConfig,
+  type DuelLoopResearchConfig,
+} from '../duelloop/research/config.js';
 import type { StrategyName } from '../shared/api.js';
 import { loadAsyncResearchConfig, type AsyncResearchConfig } from '../research/config.js';
 
@@ -7,6 +12,11 @@ export interface AppConfig {
   port: number;
   databasePath: string;
   knowledgeDatabasePath: string;
+  factsDatabasePath: string;
+  duelloopDatabasePath: string;
+  duelloopScopeId: string;
+  duelloopActorId: string;
+  duelloopResearch: DuelLoopResearchConfig;
   researchEnabled: boolean;
   asyncLlm: AsyncResearchConfig;
   apiToken: string;
@@ -49,10 +59,34 @@ function numeric(value: string | undefined, fallback: number, name: string, min 
   if (!Number.isFinite(parsed) || parsed < min) throw new Error(`Invalid ${name}`);
   return parsed;
 }
-export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): AppConfig {
+function physicalPath(path: string): string {
+  const absolute = resolve(path);
+  if (existsSync(absolute)) return realpathSync(absolute);
+  const parent = dirname(absolute);
+  return parent === absolute ? absolute : join(physicalPath(parent), basename(absolute));
+}
+export function loadConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  demo = false,
+  options: { offline?: boolean } = {},
+): AppConfig {
   const readOnlyDemo = env.READ_ONLY_DEMO === 'true';
   const synthetic = demo || readOnlyDemo;
   const botStrategy = env.BOT_STRATEGY || 'jev';
+  if (!synthetic && !options.offline) {
+    const retired = Object.keys(env).filter(
+      (key) =>
+        env[key] !== undefined &&
+        (/^(ASYNC_LLM_|LLM_ADVICE_|LLM_RESEARCH_)/.test(key) ||
+          ['REASONING_MODE', 'HYBRID_TIMEOUT_MS'].includes(key)),
+    );
+    if (retired.length)
+      throw new Error(
+        `Retired live configuration: ${retired.join(', ')}. Remove these settings and configure DUELLOOP_RESEARCH_*; see docs/framework-application-integration.md`,
+      );
+    if (botStrategy !== 'jev')
+      throw new Error('BOT_STRATEGY must be jev; baseline and jev-reasoning are offline-only');
+  }
   const reasoningMode = env.REASONING_MODE || 'always';
   const reasoningEffort = env.REASONING_EFFORT || 'high';
   const reasoningProvider = env.REASONING_PROVIDER || 'standard';
@@ -81,6 +115,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
     throw new Error('AUTO_START_BOT must be true or false');
   if (env.PUBLIC_HISTORY && !['true', 'false'].includes(env.PUBLIC_HISTORY))
     throw new Error('PUBLIC_HISTORY must be true or false');
+  if (env.FACTS_ENABLED && !['true', 'false'].includes(env.FACTS_ENABLED))
+    throw new Error('FACTS_ENABLED must be true or false');
   if (env.RESEARCH_ENABLED && !['true', 'false'].includes(env.RESEARCH_ENABLED))
     throw new Error('RESEARCH_ENABLED must be true or false');
   const databasePath = synthetic
@@ -91,13 +127,43 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
   );
   if (knowledgeDatabasePath === databasePath)
     throw new Error('Knowledge database must be separate from the raw database');
+  const factsDatabasePath = resolve(env.FACTS_DATABASE_PATH || `${databasePath}.facts.sqlite`);
+  const duelloopDatabasePath = resolve(
+    env.DUELLOOP_DATABASE_PATH || `${databasePath}.duelloop.sqlite`,
+  );
+  const duelloopActorId = env.DUELLOOP_ACTOR_ID || 'openpoker-self';
+  const duelloopScopeId = env.DUELLOOP_SCOPE_ID || `production:${duelloopActorId}:six-max-nlhe-v3`;
+  if (
+    !duelloopActorId.trim() ||
+    !duelloopScopeId.trim() ||
+    duelloopActorId.length > 200 ||
+    duelloopScopeId.length > 500
+  )
+    throw new Error('Invalid stable DuelLoop actor/scope identity');
+  const duelloopResearch = parseDuelLoopResearchConfig(
+    synthetic ? { ...env, DUELLOOP_RESEARCH_ENABLED: 'false' } : env,
+  );
+  if (synthetic) {
+    duelloopResearch.provider.apiKey = '';
+    duelloopResearch.jev.apiKey = '';
+  }
+  if (
+    duelloopResearch.decisionPolicy.executionReserveMs >=
+    duelloopResearch.decisionPolicy.maxDecisionMs
+  )
+    throw new Error('DUELLOOP_EXECUTION_RESERVE_MS must be less than the Jev decision deadline');
   const config: AppConfig = {
     host: env.HOST || '127.0.0.1',
     port: numeric(env.PORT, 8787, 'PORT'),
     databasePath,
     knowledgeDatabasePath,
-    researchEnabled: !synthetic && env.RESEARCH_ENABLED !== 'false',
-    asyncLlm: loadAsyncResearchConfig(env, databasePath, synthetic),
+    factsDatabasePath,
+    duelloopDatabasePath,
+    duelloopActorId,
+    duelloopScopeId,
+    duelloopResearch,
+    researchEnabled: !synthetic && (env.FACTS_ENABLED ?? env.RESEARCH_ENABLED) !== 'false',
+    asyncLlm: loadAsyncResearchConfig({ ...env, ASYNC_LLM_MODE: 'off' }, databasePath, synthetic),
     apiToken: env.API_TOKEN || '',
     demo: synthetic,
     readOnlyDemo,
@@ -171,5 +237,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, demo = false): 
     throw new Error('API_TOKEN must contain at least 24 characters');
   if (config.publicHistory && !config.apiToken && !config.readOnlyDemo)
     throw new Error('PUBLIC_HISTORY requires API_TOKEN for private queries and controls');
+  const paths = [
+    config.databasePath,
+    config.knowledgeDatabasePath,
+    config.asyncLlm.databasePath,
+    config.factsDatabasePath,
+    config.duelloopDatabasePath,
+  ].map(physicalPath);
+  if (new Set(paths).size !== paths.length)
+    throw new Error(
+      'Raw, legacy, facts and DuelLoop databases must be separate, including symlink aliases',
+    );
   return config;
 }

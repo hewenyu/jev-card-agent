@@ -20,7 +20,7 @@ import {
 import { RULESET_VERSION, KNOWLEDGE_CONTEXT_VERSION } from '../src/knowledge/validator.js';
 import { JevProvider } from '../src/policies/jev.js';
 import type { ResearchBatchV2, ResearchProposalV2 } from '../src/research/contracts.js';
-import { authorityKey, decide } from '../src/runtime/decision.js';
+import { authorityKey, decide } from '../src/evaluation/legacy/decision.js';
 import { pinKnowledge } from '../src/storage/knowledge.js';
 import { Store } from '../src/storage/store.js';
 

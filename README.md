@@ -4,209 +4,155 @@
 
 **An autonomous poker agent and decision-model evaluation platform powered by Jev, competing against real bots on OpenPoker.ai.**
 
-[Watch the live arena and decision replay →](https://openpoker.zve.ccwu.cc)
+[Public demo, live table and replay →](https://openpoker.zve.ccwu.cc) · [DuelLoop framework](https://github.com/hewenyu/DuelLoop)
 
-Built with **Node.js 24, TypeScript, Fastify, React/Vite and SQLite**. OpenPoker provides six-max No-Limit Texas Hold’em, matchmaking, legal-action constraints and settlement. This project runs the self-hosted WebSocket V2 agent, records its decisions and evaluates its behavior.
+Node.js 24, TypeScript, Fastify, React/Vite and SQLite. OpenPoker supplies real six-max No-Limit Texas Hold’em, matchmaking, legal actions, settlement and season scores. This application connects through WebSocket V2; it does not replace the Arena server.
 
-## What you can inspect
+**The 2.0.0 refactor makes DuelLoop the live decision and strategy-research lifecycle. This change is a PR delivery, not a production deployment.** The public site may run an earlier release. [Verification and limitations](docs/duelloop-refactor-verification.md) distinguish local tests, real model probes and unperformed production checks.
 
-| View               | What it shows                                                                                                              |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| Overview           | Net profit, profitable-hand win rate, season score and score / profit curves                                               |
-| Live table         | Community cards, the Bot’s own hole cards, all reported seat stacks, dealer button, chip animations and decision progress  |
-| Replay & decisions | Events at each replay step, frozen inputs, legal candidates, model outputs, selected actions and execution acknowledgments |
-| Evaluations        | Saved comparisons between Jev, the combined policy and baselines, with individual disagreements                            |
-| Account funding    | Official account snapshots, freshness, auto-rebuy status, known cooldowns and persistent funding-event history             |
+## What visitors see
 
-The public website is **anonymous and read-only**. It exposes the Bot’s own current hand and saved decisions for that hand, plus recorded completed hands. It has no Bot controls, strategy editing, key entry or paid-evaluation triggers. Visitors cannot change decision logic. Unrevealed opponent cards, action tokens and credentials remain private.
+| View                   | Content                                                                                                                                                                  |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Overview               | Verified net chips, profitable-hand rate, official season score and profit/score curves                                                                                  |
+| Live table             | The table first, Bot cards, dealer, every reported seat’s available chips and current bet, chip animations, current-hand decisions and the official OpenPoker table link |
+| Replay & decisions     | Recorded events, actual model inputs, legal candidates, Score answers, release/facts bindings and execution results                                                      |
+| Strategy research      | Background lifecycle, request counts, validation references and pending releases; current hand and active releases shown separately                                      |
+| Historical evaluations | Read-only legacy comparisons; action agreement is not alternative-action profit                                                                                          |
 
-Live SSE updates and reconnects automatically. Every occupied seat labels **Available** (chips still available to bet) and **Bet** (the current street’s contribution, already included in the pot). Settled hands clear current bets and label the historical pot **Settled pot**. Every player’s displayed stack and the dealer button follow server state; sparse player summaries preserve seats they do not mention. Animations illustrate events without calculating authoritative balances. Older runs and hands load in pages of 100.
+The public site is **anonymous and read-only**. Keys, action-authority tokens, unrevealed opponent cards and private research artifacts are not public. Bot controls and strategy approval remain authenticated backend operations. Refresh uses SSE and bounded HTTP queries; the browser does not operate the Bot.
 
-Version 1.4.3 also handles a waiting player appearing in the turn summary before
-the join notice. Current-hand seat evidence keeps that player out of Jev's active
-opponent context and prevents a false state-change pause. Actual changes to the
-hand or legal action still invalidate an old result. See the [incident and fix](docs/runtime-roster-order-fix.md).
+Available chips, street bets, account balance and official season score are separate quantities. Overview and Live share the latest official score observation. Rebuys do not count as poker profit. Win rate means verified hands with positive net profit divided by all verified hands, including break-even hands; it is not model accuracy.
 
-Overview shows settled profit and win rate for the selected run. Win rate is the share of verified hands with positive net profit; break-even hands remain in the denominator. For the current run, its season score uses the same official `seasonScore` account observation shown in Live, including after departure or stopping; it does not add the available balance and table stack. Missing official scores stay unknown, while restored or delayed observations retain their value with a stale label. Net profit excludes funding.
-
-The run selector follows the current run by default. Selecting history pins that choice; selecting the current run again restores following. Historical scores show their last recorded source and time; older balance sums are explicitly labelled estimates, not official scores. Score curves do not join different seasons or legacy estimates onto current observations. Account details and funding events remain below the Live table; Overview stays statistics-only.
-
-The top-right GitHub link opens this repository. In Live table, “Watch on OpenPoker” directly opens the current table’s official arena page in a new tab. The link remains available while the Bot reconnects or finishes its current hand before stopping and updates when the table changes. When stopped, unseated, or viewing a demo, the same entry is disabled and says “Waiting for a live table”; it never opens an old or synthetic table. The existing Run selector chooses recorded runs; it is unrelated to the official table link.
-
-## How decisions work
+## One live decision path, two independent loops
 
 ```mermaid
 flowchart LR
-  O[OpenPoker WebSocket V2] --> R[Node.js runtime]
-  R --> C[Visible state, opponents and hand session]
-  C --> J[Jev direct legal choice]
-  J --> V[Validate and submit]
-  V --> O
-  R --> T[Decision traces · SQLite]
-  T --> E[Replay, evaluation and analytics]
-  T --> S[Separate statistics and audit worker]
-  S --> K[Published knowledge]
-  T --> L[Independent LLM research worker]
-  L --> P[Validate, approve and publish advice]
-  P --> K
-  K --> C
+  O[OpenPoker WebSocket V2] --> H[Host runtime and visible poker facts]
+  H --> D[DuelLoop decision · Jev Score]
+  D --> X[Host authority checks and execution receipt]
+  X --> O
+  H --> R[Raw events and decision history]
+  R --> F[Independent facts and audit worker]
+  F --> H
+  R --> S[DuelLoop ResearchWorker and Orchestrator]
+  S --> L[DeepSeek Messages researcher]
+  L --> E[Independent six-max evaluator · Jev]
+  E --> P[Validated pending release]
+  P --> A[Explicit operator activation]
+  A --> D
 ```
 
-The current implementation uses **pure Jev (`BOT_STRATEGY=jev`)** with a [poker harness](docs/harness.md): deterministic card and betting facts, position, street-sized legal candidates, current-hand context and completed opponent encounters. Jev makes the final choice. The runtime does not automatically rewrite strategy. Deployment and executed validation are recorded separately in the [verification report](docs/verification.md).
+- **Jev decides every live action.** The SDK obtains real Score answers for priced legal candidates, combines them using the versioned strategy and selects an action. The reviewed baseline uses argmax. Score levels are ordinal assessments, not chip EV or poker equity; argmax’s one-hot selection probability is not model confidence.
+- **Each hand pins a release and historical facts snapshot.** Current cards, bets and actions continue updating. Reconnects and restarts reuse the same binding; a new release or rollback affects future unpinned hands. Missing original facts cannot be replaced with today’s evidence.
+- **The host alone sends actions.** SDK intent, application journal, turn identity, lease, legal amount and original deadline must all agree. Acknowledgment and completed execution are distinct, duplicate receipts are deduplicated and unknown execution blocks the stream.
+- **No local decision fallback.** Jev uses an initial request plus at most three retries: 10 seconds per request and a 40-second decision window by default, bounded by original Arena authority and a submission reserve. Invalid/stale results are not reused. Genuine decision failures preserve a stop requiring explicit recovery.
+- **Research never delays the current action.** Deterministic facts/audits run separately. The isolated LLM worker uses SDK-frozen evidence, controlled tools, cancellation, recovery and independent development/final evaluation. It receives model credentials for research/evaluation, but no Arena execution key.
+- **Research registration is not activation.** Only an eligible final validation can register a research release. Default activation is explicit; the public site cannot approve or roll back. Interrupted paid work is not silently replayed, corrections to an old settlement do not count as new hands, and inconclusive evaluation leaves the current strategy in place.
 
-Version **1.3.0** adds optional [asynchronous LLM research](docs/async-llm.md). `BOT_STRATEGY=jev` keeps Jev as the action selector; `ASYNC_LLM_MODE=off` remains the default. Shadow research cannot alter Jev requests. Explicitly activated live research adds only approved, applicable suggestions to the next hand’s fixed knowledge. This mode is labelled Jev + asynchronous LLM assistance. The older synchronous `jev-reasoning` experiment remains separate.
+There is **no monetary budget gate**. Usage and incomplete dollar amounts remain auditable. Time, token, request and evaluation-call bounds prevent runaway research; unknown token usage can stop that research task because its resource use cannot be established. This does not infer a provider account balance or invent a zero charge.
 
-Version **1.4.0** makes asynchronous research responsive: first opponent review after 10 eligible hands, then every 10 new hands, global reviews every 25, and a 15-second scan interval. Significant completed hands can trigger earlier reviews. Opponent evidence persists across tables; separately approved `opponent-guidance-v1` retains validated model guidance in future Jev requests. Live research shows trigger progress, current-run versus all-history calls/retries and actual advice adoption. The demonstration uses `deepseek-flash`, thinking disabled; Jev chooses every action. See the [iteration contract](docs/research-iteration-1.4.md), [verification](docs/research-1.4-verification.md) and [operations guide](docs/async-llm.md).
+Baseline/Choice/Hybrid implementations remain isolated for offline comparisons and historical records. `BOT_STRATEGY=baseline` and `jev-reasoning` are rejected for real play. The old advice queue and publisher are not started by production controllers.
 
-Version **1.4.1** prepares read results once per data revision: indexed support heads replace repeated history scans, dashboard statistics arrive in one request, and completed replays refresh only outstanding audits. Repeated worker notifications are coalesced; new evidence, settlement, funding, withdrawal and expiry invalidate the affected results. All historical records and per-hand knowledge boundaries remain intact. See the [read-performance design](docs/observatory-performance.md) and [reproducible query comparison](docs/read-performance-benchmark.md).
-
-Version **1.4.2** prevents an opponent disconnecting or reconnecting from invalidating an otherwise unchanged Jev action. Participation, cards, prices, chips and turn authority remain checked. The public website displays sanitized failure reasons while private diagnostics retain the full record. See the [connection-status fix and verification](docs/runtime-disconnect-fix.md).
-
-Each hand has a persistent session. Following Pi’s separation of stored history and model context, the full event/decision history remains in SQLite while each request uses a compact projection. Unrelated recent profit streaks, repeated identifiers and duplicated context are omitted. Opponent memory uses at most 200 completed encounters per current opponent; completion and receipt must both precede the decision. Public showdown examples and street counts retain source evidence and sample limits. Missing price metadata is not guessed.
-
-For successful Jev requests, records retain the original request and the schema-parsed `model`, `usage` and `answers`; they do not archive the verbatim HTTP response. Failed calls retain attempts, status and available diagnostic details, which may be incomplete.
-
-Every submitted live action must come from Jev. Jev gets an initial attempt and **at most three retries**, with **10 seconds per request and 40 seconds for the whole decision**, always bounded by the platform action deadline. Costs are recorded for review and never impose a monetary limit. If no valid Jev result is available, the runtime records the failed decision, submits no locally chosen action and stops playing. This stop persists across restarts; an operator must explicitly resume through the private management interface. The platform may apply its own timeout action, which is not a Jev choice. Authentication, provider balance, model identity and ledger failures are not blindly retried.
-
-Players who join during an already active hand wait for the next deal unless the server explicitly says otherwise. Their later membership confirmation does not invalidate an otherwise unchanged Jev decision. Repeated seat notifications preserve known hand participation and bets; each new hand resets participation. Actual changes to the turn, legal prices or participating players still invalidate old decisions. Provider retries do not bypass these checks.
-
-Decision views preserve the supplied facts, actual provider output and final Jev choice. Card tools supply made hands, board texture and draws. A seeded 1,200-sample uniform-random showdown reference is stored as a separate asynchronous audit, with its assumptions and sampling error, but is **omitted from the actual Jev request**. It is not equity against the opponent’s betting range or action EV. Jev’s own probabilities are also not poker equity. Missing provider thinking is marked unavailable, never invented.
-
-## Fast decisions and asynchronous knowledge
-
-The normal live path makes one Jev request. A separate worker thread maintains deterministic statistics and random-range audits without waiting for an extra LLM. Each hand pins a published knowledge version, evidence cutoff and content hash across reconnects and restarts; current cards and actions keep updating. A paused or backlogged worker leaves decisions using existing eligible knowledge or an explicit baseline. An independent research worker can analyze completed evidence using the dedicated DeepSeek Messages adapter or configured Responses/Messages transport. It cannot submit actions or resume a stopped bot. Research receives its own credentials and sanitized evidence; the statistics worker receives neither model nor Arena credentials.
-
-Live and Replay show the hand’s pinned knowledge, actual request, stage timings and asynchronous audit status. Later audits are separate additions, never presented as information supplied to Jev at decision time. Older records explicitly mark unavailable fields. Live keeps the table first and worker status below it; Overview remains statistics-only. Research status, review/publication history and actual advice adoption appear below Live and in Evaluations. Each decision shows advice provenance and exclusions. Private CLI operations handle approval, publication, withdrawal and explicit live activation; no controls are added to the public website. See the [async research operations guide](docs/async-llm.md) and [1.3.0 verification](docs/async-llm-verification.md); engineering tests and profitability are separate results.
-
-## Prepare research without model calls
-
-```sh
-npm run research -- --op prepare --output data/research/prepared
-npm run research -- --op status
-```
-
-Preparation reads verified completed live hands and writes private frozen batches. Configure dedicated `LLM_RESEARCH_*` settings before explicitly enabling research. Real diagnostics and paired Jev comparisons require `--allow-paid`; enabling live consumption also requires `--confirm-live`. The [operations guide](docs/async-llm.md) gives the full commands and migration/rollback procedure.
-
-## DuelLoop on real poker history
-
-The [DuelLoop experiment](docs/duelloop.md) uses the public SDK to score frozen
-OpenPoker decisions in an independent shadow process. It preserves the actual
-archived facts and priced candidates, records SDK strategy/release bindings and
-compares new Jev Score choices with recorded Choice actions. It does not join a
-table or publish strategy to the live bot.
-
-```sh
-npm run duelloop -- --help
-```
-
-The first real-model sample (SDK 0.2.0) completed 24/24 choices inside the archived candidate lists, matched 21 recorded
-choices, and measured 728 ms P50 / 2,215 ms P95. These are integration and latency
-results, not profitability evidence. Commands, data boundaries and framework
-limitations are in the [experiment report](docs/duelloop.md).
-
-The [audit update](docs/duelloop-audit-fixes.md) pins SDK **0.2.1**, adds cancellable
-retry backoff with `Retry-After`, flushes request ledgers and preserves unknown
-dollar costs. Replay assumes trusted production archives; nested historical
-evidence is not independently authenticated. The original real-model measurements
-remain labelled with their original SDK and wrapper versions.
-
-## Account chips and rebuys
-
-The backend reads OpenPoker `season/me` when the runtime starts, every **15 seconds** while running, and after relevant events. The UI distinguishes off-table account chips, the REST account-at-table snapshot, live WebSocket seat stacks and historical net results. Failed refreshes retain the last value with a stale marker; unknown values are not displayed as zero.
-
-A public-season rebuy credits **1,500 virtual chips** off table. Eligibility requires being off table, no chips at a table and fewer than 1,000 available chips; the first rebuy is immediate, with later cooldowns of 5 minutes on Free or 2 minutes on Pro. After confirmation, the runtime reloads the official balance before joining again. It does not add chips locally or count rebuys as poker profit.
-
-Rebuy confirmations, scheduled cooldowns and balance reconciliations are stored in SQLite and shown in the public funding history. Restarting restores recorded history. Missing prior balances remain unknown, and observation counts are not presented as an exact count of platform transactions. See the [funding contract](docs/running.md#账户筹码牌桌筹码与自动补筹).
-
-## Try the local demo
-
-Requires **Node.js 24.x** and npm.
+## Local demo
 
 ```sh
 npm ci
 npm run demo
 ```
 
-Open **http://127.0.0.1:8787**. This builds the application and uses synthetic data in `data/demo.sqlite`, without API keys, real matchmaking or paid model calls. Demo, recorded history and live Arena data are labeled separately.
+Requires Node.js 24.x. Open **http://127.0.0.1:8787**. The demo uses labelled synthetic history, no keys, no Arena connection and no paid calls.
 
-## Run a real agent
+## Configure real play
 
 ```sh
 cp -n .env.example .env
 chmod 600 .env
 ```
 
-Fill in `OPEN_POKER_API_KEY` and `JEV_API_KEY` in your private `.env`, plus an independent `API_TOKEN` for internal administration; the browser never receives these credentials. Pure Jev needs no analysis-model key. `DEEPSEEK_API_KEY` is only needed when explicitly enabling the DeepSeek combined policy. See the [configuration guide](docs/running.md) for protocols, timeouts and cost records.
-
-```sh
-# Check platform authentication without joining a table.
-npm run diagnose
-
-# Join real matches with bounded hand count and runtime.
-npm run bot -- --strategy jev --max-hands 10 --max-minutes 30
-```
-
-To serve the website and agent together, configure:
+Set `OPEN_POKER_API_KEY`, `JEV_API_KEY` and a separate internal `API_TOKEN` in the ignored `.env`. Choose stable `DUELLOOP_ACTOR_ID` and `DUELLOOP_SCOPE_ID` for the controlled account; do not change them on every process run.
 
 ```dotenv
 PUBLIC_HISTORY=true
-AUTO_START_BOT=true
 BOT_STRATEGY=jev
+AUTO_START_BOT=false
+JEV_MODEL=jev-1.13.0
 JEV_TIMEOUT_MS=10000
 JEV_DECISION_TIMEOUT_MS=40000
+DUELLOOP_EXECUTION_RESERVE_MS=1500
+FACTS_ENABLED=true
+DUELLOOP_RESEARCH_ENABLED=false
 ```
 
-Set these values explicitly after copying `.env.example`. Preserve the cost ledger when switching strategies. Auto-start has no hand or duration cap and enables auto-rebuy; a persisted model-failure stop blocks automatic play until an operator resumes it. There is no application monetary budget gate. Recorded raw game events and decision history are retained, while model session inputs stay bounded. Harness changes carry explicit versions and are compared on frozen inputs without assigning historical returns to alternative actions. Reconnecting to a previously observed turn reuses its original deadline; it does not grant another action window.
+```sh
+npm run diagnose
+# Starts real Arena play; do not run alongside another instance of the same Bot.
+npm run bot -- --strategy jev --max-hands 10 --max-minutes 30
+```
 
-Then run `npm run build` and `npm run start`. Without auto-start, the server only serves the console. The standalone `bot` command is a separate entry point; use one runtime per Bot and database. Real model calls cost money, and hand/time limits do not guarantee that many hands will finish.
+For the combined website and Bot, build and start the server. Explicitly set `AUTO_START_BOT=true` when ready for continuous play; this has no hand/time cap and uses auto-rebuy. A persistent failure stop still requires private operator recovery. Preserve existing history and usage ledgers during migration.
 
-## Deploy and operate
+## Enable asynchronous research
 
-Docker Compose runs the application with a persistent SQLite volume. From the deployment directory:
+Use `DUELLOOP_RESEARCH_API_KEY` or the existing `DEEPSEEK_API_KEY`, exact model `deepseek-flash`, and its Messages endpoint. Default research thinking is disabled; when enabled, default effort is high. Jev remains the live action selector and also evaluates candidate strategies independently.
+
+Before enabling research, lock development and final evaluation parameters. `prepare-protocols` generates fresh, disjoint private seeds, writes files with exclusive creation and makes **no model calls**. Set the variables below from your reviewed experiment plan; sample size and thresholds must be chosen before inspecting final results.
 
 ```sh
-sh scripts/manage.sh start
+npm run research -- --op prepare-protocols --output data/protocols \
+  --seed-blocks "$SEED_BLOCKS" --hands-per-seed "$HANDS_PER_SEED" \
+  --min-samples "$MIN_SAMPLES" --minimum-improvement "$MIN_IMPROVEMENT" \
+  --max-group-regression "$MAX_REGRESSION" --confidence "$CONFIDENCE" \
+  --max-latency-ms "$MAX_LATENCY_MS"
+```
+
+Set `DUELLOOP_RESEARCH_ENABLED=true` and the private protocol paths, then restart safely. Missing/invalid protocols put only research into `waiting_protocol`; live decisions continue. A consumed final holdout requires a fresh locked protocol. The research model cannot read final seeds through its tools.
+
+```sh
+npm run research -- --op status
+npm run research -- --op pause
+npm run research -- --op resume
+npm run research -- --op cancel --run RUN_ID
+npm run research -- --op approve --release RELEASE_DIGEST --actor OPERATOR --reason REVIEW_REASON
+npm run research -- --op rollback --release PRIOR_RELEASE_DIGEST --actor OPERATOR --reason REVIEW_REASON
+```
+
+These commands contact the existing private server; they do not spawn a competing publisher. Research pause, cancellation, activation pause and Bot stop are separate operations. [Research integration](docs/duelloop-research-refactor.md) and [application controls](docs/framework-application-integration.md) describe the contracts.
+
+## Deployment and retained data
+
+GitHub Actions automatically checks and builds uncached `linux/amd64` and `linux/arm64` images, pulling a fresh base image. **Server updates remain manual and use Docker Compose.**
+
+```sh
 sh scripts/manage.sh status
-sh scripts/manage.sh logs
 sh scripts/manage.sh backup
-sh scripts/manage.sh resume
-sh scripts/manage.sh stop
-sh scripts/manage.sh restart
 sh scripts/manage.sh update
+sh scripts/manage.sh logs
 ```
 
-`stop`, `restart` and `update` wait for the current hand to finish and confirm departure before replacing the process. `restart` uses the existing image; `update` pulls the configured image. Existing containers are left running by `start`.
+`stop`, `restart` and `update` finish the current hand and confirm official departure before replacing the process. Preserve the raw, facts and DuelLoop databases, retained legacy archives and private evaluation protocols. Do not start a second Bot or delete history to migrate. [Deployment](docs/deployment.md) covers configuration changes, backup and rollback. This PR has not performed that production rollout.
 
-GitHub Actions checks the project and automatically publishes **uncached `linux/amd64` and `linux/arm64` images**, pulling a fresh base image. **Server updates remain manual.** Normal updates preserve history and the model-cost ledger. See [deployment](docs/deployment.md) and [image releases](docs/docker-release.md).
+OpenPoker core gameplay uses virtual chips. A rebuy credits 1,500 chips when off table with no table chips and fewer than 1,000 available; the first is immediate, later Free cooldown is five minutes and Pro cooldown is two. The backend confirms the official balance before joining again and records funding separately from profit.
 
-This update preserves all existing runs, hands, decisions, raw events and cost records. The corrected runtime starts a new run carrying its code and context versions, so earlier fallback-contaminated samples remain reviewable without being mistaken for new Jev-only observations. Do not clear history during this update. A model-failure stop survives container restart and image updates; `sh scripts/manage.sh resume` invokes the protected `POST /api/runtime/resume` endpoint and starts with the configured strategy. The public website cannot resume play.
+## Evidence and development
 
-## Development and verification
+Historical integration probes on 2026-09-24: four paired Choice/Score cases agreed on three actions; DeepSeek completed a read-only tool round in 1,494 ms; the independent evaluator executed 36 real Jev calls across two paired seed blocks. **The evaluator result was inconclusive and predates the corrected session contract. These samples do not validate that contract, profitability or protocol equivalence.** See [full verification](docs/duelloop-refactor-verification.md).
+
+The [v2 audit corrections](docs/duelloop-v2-audit-fixes.md) cover same-turn cancellation recovery, shared live/evaluator session input, and an explicit Compose handoff for all migrated stores. Deployment remains a separate operator action.
+Production dependencies use the official [DuelLoop v0.2.2 release package](https://github.com/hewenyu/DuelLoop/releases/tag/v0.2.2), pinned by URL and lockfile integrity; see [package provenance](vendor/README.md).
 
 ```sh
-npm run dev
 npm run check
-npx playwright install chromium
 npm run test:e2e
+node scripts/verify-duelloop-package.mjs
 ```
 
-Development uses Vite at `http://127.0.0.1:5173` and the API at `http://127.0.0.1:8787`. The main process serves the UI, API and runtime; a separate worker thread handles derived knowledge and audits. Checks cover formatting, lint, types, unit/integration tests, build output, file-size limits and credential hygiene. Browser tests use synthetic data and do not spend model credits. Maintained text files stay below 1,000 lines.
+Checks include formatting, lint, types, unit/integration tests, build, repository constraints and public read-only browser behavior. Maintained text files stay below 1,000 lines. The pinned production SDK builds from the public source described in [vendor provenance](vendor/README.md); no sibling repository is needed.
 
-The frozen 2026-09-21 pure-Jev run had **295 verified settlements, −10,551 chips and 519 accepted Jev actions, with no local fallback**. Its losses drove the harness redesign; they do not establish a profitable replacement. Profitability remains a live evaluation objective, measured by net chips and bb/100 alongside sample size and drawdown. Historical provider probes and current verification remain in the [verification report](docs/verification.md).
-
-## Documentation
-
-- [Fast decisions and asynchronous knowledge](docs/fast-slow.md)
-- [Pure Jev harness and evidence contract](docs/harness.md)
-- [Architecture and scope](docs/architecture.md)
-- [Evaluation methodology and cost accounting](docs/evaluation.md)
-- [OpenPoker and model contracts](docs/transports.md)
-- [Running, configuration and backups](docs/running.md)
-- [Server deployment and manual updates](docs/deployment.md)
-- [Docker image publishing](docs/docker-release.md)
-- [Actual verification and limitations](docs/verification.md)
-- [Contributing](CONTRIBUTING.md)
-
-Detailed project documents are currently in Chinese. `.env`, credentials, raw databases and private deployment records stay outside public source and images.
-
-Protocol sources: [OpenPoker Docs](https://docs.openpoker.ai/) · [TypeSafe API](https://docs.typesafe.ai/api).
+- [Architecture](docs/architecture.md)
+- [DuelLoop live and replay contracts](docs/duelloop.md)
+- [Independent poker evaluator](docs/poker-evaluation.md)
+- [Facts service](docs/facts-service.md)
+- [Migration, deployment and rollback](docs/deployment.md)
+- [Docker publishing](docs/docker-release.md)
+- [Historical verification](docs/verification.md)

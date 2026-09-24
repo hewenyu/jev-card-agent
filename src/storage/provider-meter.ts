@@ -44,7 +44,7 @@ export class LedgerMeter implements ProviderMeter {
       if (!columns.has(name))
         store.db.exec(`ALTER TABLE provider_usage ADD COLUMN ${name} ${type}`);
   }
-  before(call: ProviderCall): string | null {
+  before(call: ProviderCall, onReserved?: (id: string) => void): string | null {
     if (call.inputCharacters > 48_000) return null;
     const inputPrice = call.provider === 'jev' ? 0.042 : this.options.reasoningInputPerMillion;
     const cacheReadPrice =
@@ -76,6 +76,7 @@ export class LedgerMeter implements ProviderMeter {
         'reserved',
         cacheReadPrice,
       );
+      onReserved?.(id);
       db.exec('COMMIT');
       return id;
     } catch (error) {
@@ -83,13 +84,14 @@ export class LedgerMeter implements ProviderMeter {
       throw error;
     }
   }
-  after(attempt: ProviderAttempt, id: string): void {
+  after(attempt: ProviderAttempt, id: string, onRecorded?: () => void): void {
     const db = this.store.db;
     db.exec('BEGIN IMMEDIATE');
     try {
       const row = db.prepare('SELECT * FROM provider_usage WHERE reservation_id=?').get(id);
       if (!row) throw new Error('Unknown provider reservation');
       if (row.status !== 'reserved') {
+        onRecorded?.();
         db.exec('COMMIT');
         return;
       }
@@ -119,6 +121,7 @@ export class LedgerMeter implements ProviderMeter {
         attempt.usage?.cache_creation_input_tokens ?? null,
         id,
       );
+      onRecorded?.();
       db.exec('COMMIT');
     } catch (error) {
       db.exec('ROLLBACK');

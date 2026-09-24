@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
-import { PokerRuntime } from '../src/runtime/runtime.js';
+import { PokerRuntime } from './helpers/policy-runtime.js';
 import { BaselinePolicy } from '../src/policies/baseline.js';
 import { parseEvent, verifyStateHash, type ServerEvent } from '../src/openpoker/protocol.js';
 import { Store } from '../src/storage/store.js';

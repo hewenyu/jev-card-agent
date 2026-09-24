@@ -1,4 +1,5 @@
-import type { Candidate, DecisionContext, PokerState, Policy, Proposal } from '../core/types.js';
+import type { Candidate, DecisionContext, PokerState, Proposal } from '../core/types.js';
+import type { RuntimeDecisionEngine } from './engine.js';
 import type { OpponentCheckpoint } from '../core/opponents.js';
 import type { ActionPayload, ServerEvent } from '../openpoker/protocol.js';
 import type { HistoricalOutcome } from '../core/index.js';
@@ -126,7 +127,7 @@ export interface DecisionBlock {
 }
 export interface RuntimeDependencies {
   apiKey: string;
-  policy: Policy;
+  engine: RuntimeDecisionEngine;
   store: RuntimeStore;
   wsUrl?: string;
   restUrl?: string;

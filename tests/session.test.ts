@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildContext, createInitialState } from '../src/core/index.js';
 import { buildSession, sessionId, MAX_SESSION_ANALYSIS } from '../src/core/session.js';
 import { Store } from '../src/storage/store.js';
-import { decide, authorityKey } from '../src/runtime/decision.js';
+import { decide, authorityKey } from '../src/evaluation/legacy/decision.js';
 import { ProviderError } from '../src/policies/metering.js';
 import type { DecisionRecord } from '../src/runtime/types.js';
 import type { ProviderAttempt } from '../src/core/types.js';

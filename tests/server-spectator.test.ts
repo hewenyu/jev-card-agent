@@ -11,6 +11,7 @@ import { openSpectatorStream } from '../src/server/spectator-stream.js';
 import { Store } from '../src/storage/store.js';
 import type { EvaluationView, RuntimeView, SpectatorSnapshot } from '../src/shared/api.js';
 import type { ServerEvent } from '../src/openpoker/protocol.js';
+import { scoreHttpFixture } from './helpers/score-http.js';
 
 function view(seq = 10, handId = 'hand-1', runId = 'run-1'): RuntimeView {
   return {
@@ -275,7 +276,9 @@ describe('spectator SSE lifecycle', () => {
   });
 
   it('observes local WebSocket events after the runtime reducer and ignores stale action messages', async () => {
+    const score = scoreHttpFixture();
     const server = createServer((request, response) => {
+      if (score.handle(request, response)) return;
       response.setHeader('Content-Type', 'application/json');
       response.end(
         JSON.stringify(
@@ -325,12 +328,15 @@ describe('spectator SSE lifecycle', () => {
         openPokerApiKey: 'mock-openpoker-key',
         openPokerRestUrl: `http://127.0.0.1:${port}`,
         openPokerWsUrl: `ws://127.0.0.1:${port}`,
+        jevApiKey: 'local-score-key',
+        jevBaseUrl: `http://127.0.0.1:${port}`,
+        jevModel: 'jev-local-score',
       },
       { store },
     );
     try {
       await app.controller.start({
-        strategy: 'baseline',
+        strategy: 'jev',
         buyIn: 2000,
         maxHands: 0,
         maxMinutes: 0,

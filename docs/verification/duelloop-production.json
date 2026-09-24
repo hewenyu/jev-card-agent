@@ -1,0 +1,100 @@
+{
+  "applicationVersion": "2.0.0",
+  "date": "2026-09-24",
+  "applicationBaseline": "96db76540f2bb48f6eb35d15a426f78c8bf0dd1d",
+  "preAuditEvidenceCommit": "20222b827c2e69599db9bb3f8d41d4b44d8e5988",
+  "sdk": {
+    "version": "0.2.2",
+    "sourceCommit": "7b518d21406b52c8dbc83a34031ee6f626237b4b",
+    "sourceTag": "v0.2.2",
+    "verifiedHeadCommit": "422e24832919a3d72a2936272365e4c827178ec2",
+    "releaseAsset": "https://github.com/hewenyu/DuelLoop/releases/download/v0.2.2/duelloop-0.2.2.tgz",
+    "releaseAssetByteComparison": "passed",
+    "masterCiRun": 36012181066,
+    "tagCiRun": 36012240122,
+    "archiveBytes": 173239,
+    "sha256": "d1584c90b2fb81d976a41de9456c5aa27df90e8dec9c1ef2e52b5955f1086400",
+    "publicSourceByteReproduction": "passed",
+    "testsPassed": 239,
+    "packageGate": "passed"
+  },
+  "applicationChecks": {
+    "lint": "passed",
+    "format": "passed",
+    "typecheck": "passed",
+    "testFilesPassed": 103,
+    "testsPassed": 858,
+    "browserTestsPassed": 65,
+    "productionBuild": "passed",
+    "maximumFileLines": 996,
+    "configuredSecretsScan": "passed",
+    "migrationTestsPassed": 4
+  },
+  "isolatedModelDiagnostics": {
+    "scope": "Isolated probes captured during implementation; not production trials or a repeat of every probe after every integration change",
+    "jevChoiceScore": {
+      "observations": 4,
+      "matchingActions": 3,
+      "httpRequests": 8,
+      "choiceLatencyMs": [2400, 441, 452, 469],
+      "scoreLatencyMs": [1364, 479, 449, 675],
+      "interpretation": "Protocol comparison only; no equivalence or profitability claim"
+    },
+    "pokerEvaluator": {
+      "contractStatus": "Historical session-less contract; does not validate the corrected evaluator",
+      "stage": "development",
+      "seedBlocks": 2,
+      "simulatedHands": 12,
+      "realJevCalls": 36,
+      "inputTokens": 349626,
+      "outputTokens": 4732,
+      "result": "inconclusive",
+      "costUsd": null
+    },
+    "deepseekMessages": {
+      "model": "deepseek-flash",
+      "thinking": "disabled",
+      "httpRequests": 2,
+      "readOnlyToolCalls": 1,
+      "latencyMs": 1494,
+      "inputTokens": 893,
+      "outputTokens": 34,
+      "costUsd": null
+    }
+  },
+  "productionPackaging": {
+    "cleanProductionInstall": "passed",
+    "sdkImportWithoutDevDependencies": "passed",
+    "composeBuildNoCachePull": "passed",
+    "isolatedComposeStartup": "passed",
+    "healthIdleAndFrontend": "passed",
+    "temporaryResourcesRemoved": true
+  },
+  "operations": {
+    "productionDeployed": false,
+    "arenaSessionStarted": false,
+    "productionHistoryCleared": false,
+    "researchReleaseActivatedInProduction": false,
+    "profitabilityEstablished": false
+  },
+  "auditCorrections": {
+    "report": "../duelloop-v2-audit-fixes.md",
+    "findings": ["R1", "R2", "O1"],
+    "applicationCheck": "passed",
+    "testFilesPassed": 107,
+    "testsPassed": 873,
+    "browserTestsPassed": 65,
+    "migrationTestsPassed": 5,
+    "productionImageRestore": "passed",
+    "productionImageId": "sha256:e557b653cbe0fd9d55526b51cede38a923f5846d8a45c86243233d9f49287bea",
+    "installedOfficialReleasePackage": "passed",
+    "productionImagePlatform": "linux/arm64",
+    "previousReleaseImageCompatibility": "not tested",
+    "featureContract": "visible-poker-facts-v4",
+    "featureBuilderVersion": "visible-facts-priced-actions-session-v4",
+    "continuationVersion": "same-release-current-visible-state-session-v2",
+    "evaluator": "poker-six-max-session-v2",
+    "paidModelCalls": 0,
+    "arenaSessionStarted": false
+  }
+}

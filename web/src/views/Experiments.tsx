@@ -48,7 +48,9 @@ export function Experiments({ openDecision }: { openDecision: (decisionId: strin
           <p className="eyebrow">COMPARE CHOICES, NOT COUNTERFACTUAL PROFITS</p>
           <h1>The choices, compared.</h1>
           <p className="subtle">
-            Explore recorded evaluations of different policies on the same historical decisions.
+            Explore legacy offline comparisons on the same historical decisions. These records do
+            not activate live policies. Current DuelLoop strategy validation is shown on the live
+            table page.
           </p>
         </div>
       </div>

@@ -52,37 +52,39 @@ export function DecisionAnalysis({ decision }: { decision: DecisionView }) {
           <strong>{decision.id}</strong>
         </div>
       </div>
-      <section className="analysis-recommendation" aria-label="Provider recommendation">
-        <div className="analysis-section-heading">
-          <p className="eyebrow">REASONING MODEL</p>
-          <h4>Provider recommendation</h4>
-          {model && <p className="annotation">Returned by {model}</p>}
-        </div>
-        {analysis ? (
-          <p className="analysis-prose">{analysis}</p>
-        ) : (
-          <p className="analysis-empty">This record does not include a provider analysis.</p>
-        )}
-        <div className="analysis-thinking">
-          <h5>
-            {routing.thinkingSource === 'thinking'
-              ? 'Provider thinking'
-              : 'Provider thinking summary'}
-          </h5>
-          {thinking ? (
-            <p className="analysis-prose analysis-thinking-text">{thinking}</p>
+      {!decision.framework && (
+        <section className="analysis-recommendation" aria-label="Provider recommendation">
+          <div className="analysis-section-heading">
+            <p className="eyebrow">REASONING MODEL</p>
+            <h4>Provider recommendation</h4>
+            {model && <p className="annotation">Returned by {model}</p>}
+          </div>
+          {analysis ? (
+            <p className="analysis-prose">{analysis}</p>
           ) : (
-            <p className="analysis-empty">
-              {analysisConfiguration?.thinking === 'disabled'
-                ? 'Thinking was disabled for this request.'
-                : 'No thinking text or summary was returned in this record.'}
-            </p>
+            <p className="analysis-empty">This record does not include a provider analysis.</p>
           )}
-          {thinking && (
-            <p className="annotation">Text returned by the provider; displayed as recorded.</p>
-          )}
-        </div>
-      </section>
+          <div className="analysis-thinking">
+            <h5>
+              {routing.thinkingSource === 'thinking'
+                ? 'Provider thinking'
+                : 'Provider thinking summary'}
+            </h5>
+            {thinking ? (
+              <p className="analysis-prose analysis-thinking-text">{thinking}</p>
+            ) : (
+              <p className="analysis-empty">
+                {analysisConfiguration?.thinking === 'disabled'
+                  ? 'Thinking was disabled for this request.'
+                  : 'No thinking text or summary was returned in this record.'}
+              </p>
+            )}
+            {thinking && (
+              <p className="annotation">Text returned by the provider; displayed as recorded.</p>
+            )}
+          </div>
+        </section>
+      )}
       <section className="analysis-choice" aria-label="Recorded choice comparison">
         {initialId && (
           <div>

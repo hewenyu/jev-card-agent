@@ -10,7 +10,7 @@ import type { KnowledgeSnapshot } from '../src/knowledge/types.js';
 import { SlowLoopService } from '../src/research/service.js';
 import { Store } from '../src/storage/store.js';
 import type { KnowledgeSource } from '../src/storage/knowledge.js';
-import { authorityKey, decide } from '../src/runtime/decision.js';
+import { authorityKey, decide } from '../src/evaluation/legacy/decision.js';
 
 const cleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => {

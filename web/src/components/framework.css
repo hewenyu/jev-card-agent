@@ -1,0 +1,64 @@
+.framework-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 16px;
+  margin: 0 0 18px;
+}
+.framework-facts div {
+  min-width: 0;
+}
+.framework-facts dt {
+  color: var(--muted, #87969c);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.framework-facts dd {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.framework-table-scroll {
+  overflow-x: auto;
+  margin: 16px 0;
+}
+.framework-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.framework-table caption {
+  text-align: left;
+  padding: 0 0 10px;
+  font-weight: 600;
+}
+.framework-table th,
+.framework-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--line, #26373b);
+}
+.framework-table th {
+  color: var(--muted, #87969c);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.framework-pending h3,
+.framework-decision h4 {
+  font-size: 14px;
+  margin: 20px 0 14px;
+}
+.framework-pending ul {
+  list-style: none;
+  padding: 0;
+}
+.framework-pending li {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  font-size: 12px;
+}
+.framework-decision {
+  padding-top: 12px;
+  border-top: 1px solid var(--line, #26373b);
+}

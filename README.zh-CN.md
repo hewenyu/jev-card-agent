@@ -2,206 +2,157 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-**基于 Jev 的自主扑克决策 Agent 与模型评估平台，通过 OpenPoker.ai 与真实 Bot 持续对战。**
+**基于 Jev 的自主扑克决策 Agent，通过 OpenPoker.ai 真实 Bot Arena 长期对战，持续记录、分析和评估模型决策质量。**
 
-[实时观战与决策回放 →](https://openpoker.zve.ccwu.cc)
+[公开演示、实时牌桌与复盘 →](https://openpoker.zve.ccwu.cc) · [DuelLoop 开源框架](https://github.com/hewenyu/DuelLoop)
 
-1.4.3 修复新玩家先出现在行动摘要、入座通知稍后到达时的误停牌：依据本手已确认的
-座位记录，将等待下一手的玩家排除在 Jev 活跃对手上下文之外；真实局面或合法动作
-变化仍会使旧结果失效。详见[故障与修复记录](docs/runtime-roster-order-fix.md)。
+采用 Node.js 24、TypeScript、Fastify、React/Vite 与 SQLite。OpenPoker 提供真实 6-max No-Limit Texas Hold’em、匹配、合法动作、结算和赛季积分；本项目通过 WebSocket V2 接入，不重建 Arena 服务器。
 
-技术栈为 **Node.js 24、TypeScript、Fastify、React/Vite 和 SQLite**。OpenPoker 提供六人桌无限注德州扑克、匹配、合法动作约束与结算；本项目负责自托管 WebSocket V2 Agent 的运行、决策记录和行为评估。
+**2.0.0 重构将实时决策与策略研究生命周期统一交给 DuelLoop。本次交付为 PR，不代表生产已经更新。** 公开站点可能运行此前版本；[验证与限制](docs/duelloop-refactor-verification.md)分别记录本地测试、真实模型调用和未执行的线上验收。
 
-## 可以查看什么
+## 公开页面
 
-| 视图               | 展示内容                                                                 |
-| ------------------ | ------------------------------------------------------------------------ |
-| Overview           | 净收益、盈利手牌胜率、赛季积分及积分 / 收益曲线                          |
-| Live table         | 公共牌、Bot 自己的底牌、所有已报告座位筹码、庄家按钮、筹码动画和决策阶段 |
-| Replay & decisions | 当前回放位置的事件、冻结输入、合法候选、模型输出、最终行动及执行确认     |
-| Evaluations        | 已保存的 Jev、组合策略与 baseline 对比，及具体决策差异                   |
-| Account funding    | 官方账户快照、更新时间、自动补筹状态、已知冷却和持久资金事件历史         |
+| 页面               | 内容                                                                                     |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| Overview           | 已核实净收益、盈利手牌率、官方赛季积分及收益/积分曲线                                    |
+| Live table         | 牌桌优先，Bot 手牌、庄家、各玩家可用筹码与当街下注、筹码动画、本手决策，以及官方牌桌跳转 |
+| Replay & decisions | 原始事件、实际模型输入、合法候选、Score 回答、release/facts 绑定和执行结果               |
+| 策略研究           | 后台生命周期、请求计数、验证引用和待激活版本；当前活动版本与本手固定版本分别显示         |
+| 历史评估           | 旧版离线对照只读展示；动作一致率不代表替代动作盈利                                       |
 
-公开网站**匿名只读**，展示 Bot 自己的当前手牌、本手已保存决策，以及已结束牌局。网站不提供 Bot 控制、策略编辑、密钥输入或付费实验入口，访客不能改变决策逻辑。未公开的对手底牌、行动授权与鉴权凭据保持私密。
+网站**匿名、公开、只读**。凭据、动作授权 token、未公开对手底牌和私有研究产物不公开。Bot 控制和策略审批是经过鉴权的后端操作；页面通过 SSE 和有界 HTTP 查询刷新，不负责维持 Bot 运行。
 
-实时 SSE 自动更新并重连。每个已入座玩家分别标出 **Available（可下注筹码）** 和 **Bet（当前街已下注，已计入底池）**。结算后本轮下注归零，历史底池标为 **Settled pot（已结算底池）**。所有玩家的座位筹码与庄家按钮以服务端状态为准；稀疏玩家摘要保留没有提及的座位。动画只呈现事件，不用于计算权威余额。较早的 Run 和手牌按每页 100 条加载。
+座位可用筹码、当街下注、账户余额和官方积分分别标注。Overview 与 Live 共用最新官方积分快照，补筹不计入扑克净收益。胜率口径为盈利手数除以全部已核实手数，平局计入分母；它不是模型判断正确率。
 
-Overview 展示所选 Run 的核实净收益与胜率。胜率为净收益大于零的已核实手牌占比，平局计入分母；当前 Run 的赛季积分与 Live 使用同一官方 `seasonScore` 账户观测，离桌或停止后也不改用余额相加推算。官方值缺失显示未知，恢复或刷新延迟时保留已确认值并标记过期；净收益不包含补筹。
-
-页面默认跟随当前 Run；手动选历史后保持选择，选回当前 Run 则恢复跟随。历史积分标明最后记录来源与时间，旧版余额之和明确显示为估算，不冒充官方积分。曲线不会把不同赛季或旧估算接到当前观测。账户明细和补筹事件仍位于 Live 牌桌下方，Overview 只展示统计。
-
-右上角 GitHub 链接直达本仓库。进入 Live table 后，“Watch on OpenPoker” 直接在新标签页打开当前牌桌的官方直播；重连或等待当前手结束再停牌时仍可使用，换桌自动更新。停止、离桌或 Demo 时保留禁用入口并显示 “Waiting for a live table”，不跳转旧桌或模拟牌桌。原有 Run 下拉框用于选择历史运行记录，与官方牌桌跳转无关。
-
-## 决策如何运行
+## 唯一实时链路与独立双循环
 
 ```mermaid
 flowchart LR
-  O[OpenPoker WebSocket V2] --> R[Node.js Runtime]
-  R --> C[可见局面、对手信息与同手会话]
-  C --> J[Jev 直接选择合法行动]
-  J --> V[校验并提交]
-  V --> O
-  R --> T[决策记录 · SQLite]
-  T --> E[回放、评估与分析]
-  T --> S[独立统计与审计线程]
-  S --> K[已发布知识]
-  T --> L[独立 LLM 研究线程]
-  L --> P[校验、审批和发布建议]
-  P --> K
-  K --> C
+  O[OpenPoker WebSocket V2] --> H[宿主运行时与扑克可见事实]
+  H --> D[DuelLoop 决策 · Jev Score]
+  D --> X[宿主权限检查与执行回执]
+  X --> O
+  H --> R[原始事件与决策历史]
+  R --> F[独立事实统计与审计 worker]
+  F --> H
+  R --> S[DuelLoop ResearchWorker 与 Orchestrator]
+  S --> L[DeepSeek Messages 研究]
+  L --> E[独立六人评价器 · Jev]
+  E --> P[验证合格的 pending release]
+  P --> A[操作者明确激活]
+  A --> D
 ```
 
-当前实现采用 **纯 Jev（`BOT_STRATEGY=jev`）**与[扑克 harness](docs/harness.md)：提供确定性牌型与下注计算、位置、按街设计的合法候选、本手上下文及对手已完成交手证据，由 Jev 作最终选择。运行时不自动改写策略。实际部署与已执行验收另见[验证报告](docs/verification.md)。
+- **每个实时动作由 Jev 决定。** SDK 对带具体金额语义的合法候选请求真实 Score，按版本化策略组合后选动作；人工审阅的初始策略使用 argmax。Score 是序数判断，不是筹码 EV 或扑克胜率；argmax 的 100% 选择概率也不是模型 100% 自信。
+- **每手固定 release 和历史事实快照。** 当前牌面、下注和动作持续更新；重连、重启复用原绑定。新发布或回滚影响之后未固定版本的手，不能用今天的历史统计补写过去依据。
+- **只有宿主能发送动作。** SDK intent、应用日志、行动身份、租约、合法金额与原始截止时间都必须匹配。收到 ack 与确认执行完成分别处理；重复回执去重，执行状态未知时阻断该 stream。
+- **没有本地动作兜底。** Jev 初次请求后最多重试三次，默认单次 10 秒、整次决策 40 秒，并受原始 Arena 期限及提交预留约束。无效、过期结果不复用；真实决策故障保存停牌状态，需要明确恢复。
+- **研究不串行等待当前动作。** 确定性事实与审计独立运行；LLM worker 使用 SDK 冻结证据、受控工具、取消/恢复及独立开发与最终评价。它持有研究和评价模型凭据，没有 Arena 执行密钥。
+- **登记候选不等于激活。** 只有合格最终验证才能产生研究 release，默认操作者明确激活。中断的付费工作不自动重放；旧结算修订不算新增手数；评价 inconclusive 时保留原策略。
 
-**1.3.0** 新增可选的[异步 LLM 研究](docs/async-llm.md)。`BOT_STRATEGY=jev` 保持由 Jev 选择动作，`ASYNC_LLM_MODE=off` 仍是默认配置。shadow 研究不改变实际 Jev 请求；明确启用 live 后，只有已批准、适用的短建议才能进入下一手固定知识，评测标为“Jev + 异步 LLM 辅助”。旧版同步 `jev-reasoning` 实验独立保留。
+**不设置金额预算门槛。** token 和不完整费用继续留存；时间、token、请求及评价调用限制用于防止研究任务失控。无法确认 token 用量时，研究任务可能停止，因为运行资源无法可靠计量；这不代表推断供应商余额不足，也不把未知费用写成零。
 
-**1.4.0** 改善异步研究的触发与有效输入：同一对手首次 10 个可信已完成样本、之后新增 10 手更新，全局新增 25 手复盘，扫描间隔设为 15 秒；重要已完成牌局可以提前触发。对手证据跨桌保留，单独批准的 `opponent-guidance-v1` 会将校验通过的模型策略原文提供给之后的 Jev 决策。前端展示触发进度、本次运行与全历史的调用/重试和实际采用率。演示使用 `deepseek-flash`、关闭思考，动作仍全部由 Jev 选择。详见[迭代合同](docs/research-iteration-1.4.md)、[验证记录](docs/research-1.4-verification.md)及[操作指南](docs/async-llm.md)。
-
-**1.4.1** 按数据版本复用读取结果：策略支持事实维护当前索引，首页统计一次请求取齐，已结算复盘只刷新尚未完成的审计。合并重复 worker 通知；新证据、结算、资金、撤回与过期会使对应结果失效。完整历史及每手固定的知识边界继续保留。参见[读取性能设计](docs/observatory-performance.md)与[可复现查询对照](docs/read-performance-benchmark.md)。
-
-**1.4.2** 修复对手断线或重连导致局面未变的 Jev 动作失效的问题；参与资格、牌面、价格、筹码和行动授权仍严格校验。公开网站显示脱敏后的故障原因，完整诊断保留在私有记录。参见[连接状态修复与验证](docs/runtime-disconnect-fix.md)。
-
-每手建立持久 session。参考 Pi 将历史存储与模型上下文分开的设计，SQLite 保留全部事件和决策，请求使用精简投影，移除无关近期输赢、重复标识和重复上下文。长期对手记忆每人最多取 200 次已完成交手，结算与接收时间都必须早于当前决策；公开摊牌与按街统计保留来源及样本限制，缺少下注价格时不猜填。
-
-成功的 Jev 请求保存原请求及 schema 解析后的 `model`、`usage`、`answers`，并非逐字保存 HTTP 响应。失败调用保留 attempts、状态和可取得的部分诊断，不能假定拥有完整失败响应。
-
-正式运行提交的每个行动必须来自 Jev。Jev 首次调用后**最多重试三次**，**单次 10 秒、整次决策 40 秒**，同时遵守平台当前行动期限。费用只记录，不设置金额门槛。无法得到有效 Jev 结果时，记录失败、不提交本地选择的动作并停牌；该状态跨重启保留，须通过私有管理入口显式恢复。平台可能自行执行超时动作，该动作不能算作 Jev 决策。鉴权、供应商余额、模型身份和账本错误不盲目重试。
-
-已开局后新入座的玩家等待下一手，服务端明确提供参与状态时以服务端为准；之后补齐其未参与状态，不会使局面未变的 Jev 决策失效。重复入座通知保留已知参与状态和下注，新手开始时重新确定参与者。行动回合、合法价格或真实参战玩家变化时，仍拒绝旧决策，模型重试不会绕过这些检查。
-
-决策视图保留实际提供的依据、供应商输出与 Jev 最终选择。牌局工具提供成牌、牌面结构和听牌。固定种子的 1,200 次均匀随机范围摊牌参考作为独立的事后审计追加保存，注明假设与采样误差，**实际 Jev 请求不包含该参考值**；它不等于对手下注范围胜率或行动 EV。Jev 候选概率同样不是扑克胜率。供应商未返回思考文本时显示缺失，不补写。
-
-## 快慢双循环
-
-实时路径正常只请求一次 Jev；确定性统计和随机范围审计由独立慢工作线程处理，不串行等待额外 LLM。每手固定已发布的知识版本、证据截止和哈希，并跨重连/重启保留；当前牌面与行动继续更新。慢循环暂停或积压时使用已有可用知识或明确的基础版本。独立研究线程可以通过专用 DeepSeek Messages 或配置的 Responses/Messages 传输分析已完成证据，不能提交动作或恢复停牌。它只接收研究专用凭据与脱敏证据；统计线程不接收模型或牌桌凭据。
-
-Live 与 Replay 显示本手固定知识、实际请求、分段耗时和异步审计状态。事后生成的审计单独追加，不能冒充当时提供给 Jev 的信息。历史记录缺少新字段时明确显示未记录。Live 牌桌仍在首屏，慢循环状态位于下方；Overview 只展示统计。设计与验收边界见[双循环合同](docs/fast-slow.md)，性能与盈利须分别实测。
-
-## 使用 DuelLoop 评估真实扑克历史
-
-[DuelLoop 实验](docs/duelloop.md)通过公开 SDK 在独立影子进程中重评真实 OpenPoker
-历史决策。它保留当时实际发送的事实、对手证据和候选下注金额，记录框架的策略版本、
-每手绑定和逐候选评分，并与归档的 Jev Choice 动作对比。
-
-```sh
-npm run duelloop -- --help
-```
-
-首次真实模型测试（SDK 0.2.0）完成 **24/24 次归档候选内选择**，其中 **21 次与原动作一致**，耗时
-P50 **728 ms**、P95 **2,215 ms**。三个差异包含河牌持葫芦时由过牌改为价值下注。
-这些数据验证接入和延迟，不代表盈利提升；样本中 21 次原输入已包含异步研究建议。
-完整命令、实测数据和框架适配发现见[实验报告](docs/duelloop.md)。
-
-该命令不入桌、不向线上发布策略；目前验证的是框架的 Score 决策、持久记录和历史反馈，
-尚未接入 DuelLoop 的慢循环研究团队或独立收益评估器。原始计划、请求和完整报告保存在
-被忽略的 `data/`，公开文档只提供核对过的汇总数据。
-
-[审计修复](docs/duelloop-audit-fixes.md)将 SDK 升到 **0.2.1**，增加遵守 `Retry-After`
-且可取消的重试退避，刷新请求日志到操作系统，并独立记录未知美元费用。历史输入要求来自
-可信生产记录器；导入器不会独立认证嵌套知识的证据截止时间。原始实测仍标明旧版本，
-不能作为新 SDK 和退避机制的性能数据。
-
-## 账户筹码与自动补筹
-
-后台在 Runtime 启动时、运行中每 **15 秒**及相关事件后读取 OpenPoker `season/me`。界面区分离桌可用筹码、REST 账户在桌快照、WebSocket 实时座位筹码与历史净收益。刷新失败保留最后值并标记过期，未知值不显示为零。
-
-公开赛季每次 rebuy 向离桌余额增加 **1,500 虚拟筹码**。条件为已离桌、没有在桌筹码且可用筹码少于 1,000；首次立即可用，此后 Free 冷却 5 分钟、Pro 冷却 2 分钟。确认后 Runtime 重新读取官方余额再入队，不在本地加筹码，也不将补筹算作扑克盈利。
-
-补筹确认、冷却安排与余额核对保存到 SQLite，并公开展示资金事件历史。重启后恢复已记录历史；缺失的补筹前余额保持未知，观察记录条数不等同于平台精确交易次数。详见[账户与补筹口径](docs/running.md#账户筹码牌桌筹码与自动补筹)。
-
-## 异步 LLM 研究操作
-
-`npm run research -- --op prepare --output data/research/prepared` 免费生成冻结证据；`--op status` 查看提案与发布记录。专用 `LLM_RESEARCH_*` 配置与牌桌凭据分离，真实诊断和成对评测必须显式加 `--allow-paid`，首次 live 采用还需 `--confirm-live`。Live 下方和 Evaluations 展示研究状态、发布历史及实际采用率，决策复盘展示建议与出处；公开页面保持只读。完整命令、迁移、备份、恢复和回滚见[异步研究操作指南](docs/async-llm.md)，结果与未验证项见[1.3.0 验证报告](docs/async-llm-verification.md)。
+Baseline、Choice、Hybrid 保留用于离线对照和历史解码；真实运行拒绝 `BOT_STRATEGY=baseline` 或 `jev-reasoning`。生产 Controller 不启动旧 advice 队列和发布器。
 
 ## 本地演示
-
-需要 **Node.js 24.x** 和 npm。
 
 ```sh
 npm ci
 npm run demo
 ```
 
-打开 **http://127.0.0.1:8787**。命令构建应用，并使用 `data/demo.sqlite` 的合成数据；无需 API Key，不加入真实比赛，也不调用付费模型。界面分别标识 Demo、历史记录与 Live Arena。
+需要 Node.js 24.x，访问 **http://127.0.0.1:8787**。Demo 明确标记合成历史，不需要 key、不连接 Arena，也不调用付费模型。
 
-## 运行真实 Agent
+## 配置真实 Bot
 
 ```sh
 cp -n .env.example .env
 chmod 600 .env
 ```
 
-在私有 `.env` 填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY`，另设独立 `API_TOKEN` 用于内部管理；浏览器不会接收这些凭证。纯 Jev 无需分析模型密钥，`DEEPSEEK_API_KEY` 仅在显式启用 DeepSeek 组合策略时需要。协议、超时和费用记录见[运行手册](docs/running.md)。
-
-```sh
-# 检查平台鉴权，不加入牌桌。
-npm run diagnose
-
-# 加入真实对局，并限制手数和运行时长。
-npm run bot -- --strategy jev --max-hands 10 --max-minutes 30
-```
-
-同时运行网站与 Agent 时，配置：
+在被 Git 忽略的 `.env` 填写 `OPEN_POKER_API_KEY`、`JEV_API_KEY` 和独立内部 `API_TOKEN`。为受控账户设置稳定的 `DUELLOOP_ACTOR_ID` 与 `DUELLOOP_SCOPE_ID`，不能每次进程启动都更换。
 
 ```dotenv
 PUBLIC_HISTORY=true
-AUTO_START_BOT=true
 BOT_STRATEGY=jev
+AUTO_START_BOT=false
+JEV_MODEL=jev-1.13.0
 JEV_TIMEOUT_MS=10000
 JEV_DECISION_TIMEOUT_MS=40000
+DUELLOOP_EXECUTION_RESERVE_MS=1500
+FACTS_ENABLED=true
+DUELLOOP_RESEARCH_ENABLED=false
 ```
 
-复制 `.env.example` 后显式设置以上值。切换策略保留费用账本。自动启动不限制手数和时长，启用 auto-rebuy；如已因模型失败停牌，则保持停牌直至私有管理入口显式恢复，不因重启自动绕过。程序不按金额阻止模型调用。已记录的原始牌局事件与决策历史持久保存，模型输入使用有界 session；harness 变更带明确版本，在冻结输入上比较，不给替代动作套用历史收益。同一已观察回合重连时复用原截止时间，不重新获得行动窗口。
+```sh
+npm run diagnose
+# 将开始真实对局；不要与同账户的另一个 Bot 同时运行。
+npm run bot -- --strategy jev --max-hands 10 --max-minutes 30
+```
 
-随后执行 `npm run build` 和 `npm run start`。未开启自动启动时只提供控制台页面。独立 `bot` 命令是另一运行入口，同一个 Bot 和数据库只运行一个 Runtime。真实模型调用产生费用，手数和时长上限不保证完成对应数量的牌局。
+一起提供网站与 Bot 时构建并启动服务器。准备持续运行后再明确配置 `AUTO_START_BOT=true`：不限制手数或时长，开启 auto-rebuy；已有持久失败停牌仍需私有管理入口恢复。迁移保留历史及调用账本。
 
-## 部署与运维
+## 开启异步研究
 
-Docker Compose 运行应用，SQLite 保存在持久卷。进入部署目录后执行：
+使用 `DUELLOOP_RESEARCH_API_KEY` 或已有 `DEEPSEEK_API_KEY`，精确模型名 `deepseek-flash`，采用其 Messages 端点。默认研究关闭 thinking；启用时 effort 默认 high。Jev 始终选择实时动作，也负责候选策略独立评价中的模型判断。
+
+启用之前先锁定开发与最终评价参数。`prepare-protocols` 生成新的互不重叠私有种子，以禁止覆盖方式写文件，**不会调用模型**。下面变量应来自审阅过的实验计划；样本数与阈值必须在看到最终结果之前确定。
 
 ```sh
-sh scripts/manage.sh start
+npm run research -- --op prepare-protocols --output data/protocols \
+  --seed-blocks "$SEED_BLOCKS" --hands-per-seed "$HANDS_PER_SEED" \
+  --min-samples "$MIN_SAMPLES" --minimum-improvement "$MIN_IMPROVEMENT" \
+  --max-group-regression "$MAX_REGRESSION" --confidence "$CONFIDENCE" \
+  --max-latency-ms "$MAX_LATENCY_MS"
+```
+
+配置 `DUELLOOP_RESEARCH_ENABLED=true` 和私有协议路径，再安全重启。协议缺失或无效时仅研究进入 `waiting_protocol`，实时决策继续。最终 holdout 用完后需要新的锁定协议；研究模型无法通过工具读取最终种子。
+
+```sh
+npm run research -- --op status
+npm run research -- --op pause
+npm run research -- --op resume
+npm run research -- --op cancel --run RUN_ID
+npm run research -- --op approve --release RELEASE_DIGEST --actor OPERATOR --reason REVIEW_REASON
+npm run research -- --op rollback --release PRIOR_RELEASE_DIGEST --actor OPERATOR --reason REVIEW_REASON
+```
+
+这些命令访问已有私有服务，不另启竞争发布者。暂停研究、取消任务、暂停激活和停止 Bot 是不同操作。[研究集成](docs/duelloop-research-refactor.md)与[应用控制](docs/framework-application-integration.md)说明详细合同。
+
+## 部署与数据留存
+
+GitHub Actions 自动检查并无缓存构建 `linux/amd64`、`linux/arm64` 镜像，拉取新基础镜像；**服务器更新始终由操作者手动通过 Docker Compose 执行**。
+
+```sh
 sh scripts/manage.sh status
-sh scripts/manage.sh logs
 sh scripts/manage.sh backup
-sh scripts/manage.sh resume
-sh scripts/manage.sh stop
-sh scripts/manage.sh restart
 sh scripts/manage.sh update
+sh scripts/manage.sh logs
 ```
 
-`stop`、`restart` 和 `update` 等待当前手牌结束并确认离桌后才替换进程。`restart` 使用已有镜像，`update` 拉取配置的镜像；`start` 不替换已经运行的容器。
+`stop`、`restart`、`update` 先完成当前手，再由官方确认离桌，随后替换进程。保留原始库、facts 库、DuelLoop 库、旧版历史归档和私有评价协议；不要开第二个 Bot 或清空历史来迁移。[部署说明](docs/deployment.md)包含配置迁移、备份和回滚。本 PR 未执行这次线上发布。
 
-GitHub Actions 自动检查，并**无缓存发布 `linux/amd64` 与 `linux/arm64` 镜像**，构建时重新拉取基础镜像。**服务器保持手动更新。** 常规更新保留历史和模型费用账本。详见[部署手册](docs/deployment.md)与[镜像发布流程](docs/docker-release.md)。
+OpenPoker 核心玩法使用虚拟筹码。离桌、无在桌筹码且可用筹码低于 1,000 时可以 rebuy 1,500；首次立即，Free 后续冷却五分钟，Pro 两分钟。后端重新确认官方余额后再入队，并将补筹记录与净收益分开。
 
-本次更新保留所有已有 Run、手牌、决策、行动、原始事件及费用记录，不清理历史。修正后的 Runtime 使用新 Run，并保存代码与上下文版本；旧版本中包含 fallback 的样本继续保留供复盘，不混充新的纯 Jev 数据。模型失败停牌跨容器重启和镜像更新保留。`sh scripts/manage.sh resume` 通过受保护的 `POST /api/runtime/resume` 显式恢复，并按当前配置启动；公开网页没有恢复参赛权限。
+## 验证与开发
 
-## 开发与验证
+2026-09-24 历史集成验证：四个 Choice/Score 成对案例中三个选择相同；DeepSeek 只读工具回合耗时 1,494 ms；独立评价器在两个成对 seed block 中完成 36 次真实 Jev 调用。**评价结论为 inconclusive，且早于 session 合同修正。这些样本不能验证新合同，也不证明盈利或两种协议等价。** 详见[验证报告](docs/duelloop-refactor-verification.md)。
+
+[v2 审计修复记录](docs/duelloop-v2-audit-fixes.md)说明同回合取消恢复、线上与评价器共享 session，以及全部迁移数据库的 Compose 挂载交接。部署仍由操作者单独执行。
+生产依赖使用正式的 [DuelLoop v0.2.2 发布包](https://github.com/hewenyu/DuelLoop/releases/tag/v0.2.2)，通过固定 URL 与 lockfile 校验值锁定；详见[包来源记录](vendor/README.md)。
 
 ```sh
-npm run dev
 npm run check
-npx playwright install chromium
 npm run test:e2e
+node scripts/verify-duelloop-package.mjs
 ```
 
-开发环境 Vite 地址为 `http://127.0.0.1:5173`，API 为 `http://127.0.0.1:8787`。生产环境主进程提供界面、API 与 Runtime，独立慢工作线程处理派生知识和审计。检查覆盖格式、lint、类型、单元/集成测试、构建、文件行数与凭据卫生。浏览器测试使用合成数据，不消费模型额度。每个维护文本文件少于 1,000 行。
+检查包含格式、lint、类型、单元/集成测试、构建、仓库约束与公开只读页面行为。纳入维护的文本文件小于 1,000 行。生产 SDK 来自[固定公开源码与包 provenance](vendor/README.md)，干净安装不依赖相邻开发仓库。
 
-2026-09-21 冻结的纯 Jev Run 有 **295 手核实结算、净亏 10,551 筹码、519 个已接受 Jev 动作，零本地 fallback**。这些亏损推动了 harness 重设计，但不能据此证明替代版本盈利。盈利能力仍须由真实净筹码与 bb/100、样本量及回撤持续检验。历史 provider 探针和当前验收见[验证报告](docs/verification.md)。
-
-## 文档
-
-- [快慢双循环设计](docs/fast-slow.md)
-- [纯 Jev harness 与证据合同](docs/harness.md)
-- [架构与范围](docs/architecture.md)
-- [评估方法与费用记录](docs/evaluation.md)
-- [OpenPoker 与模型接入合同](docs/transports.md)
-- [运行、配置与备份](docs/running.md)
-- [服务器部署与手动更新](docs/deployment.md)
-- [Docker 镜像发布](docs/docker-release.md)
-- [实际验证与限制](docs/verification.md)
-- [参与开发](CONTRIBUTING.md)
-
-详细项目文档目前使用中文。`.env`、凭据、原始数据库与私有部署记录不进入公开源码或镜像。
-
-协议来源：[OpenPoker Docs](https://docs.openpoker.ai/) · [TypeSafe API](https://docs.typesafe.ai/api)。
+- [架构](docs/architecture.md)
+- [DuelLoop 实时与回放合同](docs/duelloop.md)
+- [独立扑克评价器](docs/poker-evaluation.md)
+- [事实服务](docs/facts-service.md)
+- [迁移、部署与回滚](docs/deployment.md)
+- [Docker 自动构建](docs/docker-release.md)
+- [历史验证记录](docs/verification.md)
