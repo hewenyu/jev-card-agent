@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, copyFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,8 +29,7 @@ const compose = (...args) =>
   execute('docker', ['compose', '-p', project, '-f', join(directory, 'compose.json'), ...args]);
 let composeCreated = false;
 try {
-  mkdirSync(join(directory, 'vendor'));
-  for (const file of ['package.json', 'package-lock.json', 'vendor/duelloop-0.2.2.tgz'])
+  for (const file of ['package.json', 'package-lock.json'])
     copyFileSync(join(root, file), join(directory, file));
   await execute('npm', ['ci', '--omit=dev', '--ignore-scripts']);
   await execute('node', [

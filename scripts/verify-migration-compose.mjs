@@ -39,6 +39,11 @@ const paths = Object.fromEntries(
 );
 const hash = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
 const coordinatorHash = hash(resolve('dist/duelloop/live/coordinator.js'));
+const sdkDependency = JSON.parse(readFileSync(resolve('package.json'), 'utf8')).dependencies
+  .duelloop;
+const sdkLock = JSON.parse(readFileSync(resolve('package-lock.json'), 'utf8')).packages[
+  'node_modules/duelloop'
+];
 let holders = [];
 let started = false;
 function execute(args, input) {
@@ -114,6 +119,12 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { validatePokerProtocols } from './dist/evaluation/poker/protocol.js';
 assert.equal(createHash('sha256').update(readFileSync('./dist/duelloop/live/coordinator.js')).digest('hex'), ${JSON.stringify(coordinatorHash)});
+assert.equal(JSON.parse(readFileSync('./package.json')).dependencies.duelloop, ${JSON.stringify(sdkDependency)});
+const installedLock = JSON.parse(readFileSync('./node_modules/.package-lock.json')).packages['node_modules/duelloop'];
+assert.equal(installedLock.resolved, ${JSON.stringify(sdkLock.resolved)});
+assert.equal(installedLock.integrity, ${JSON.stringify(sdkLock.integrity)});
+assert.equal(JSON.parse(readFileSync('./node_modules/duelloop/package.json')).version, ${JSON.stringify(sdkLock.version)});
+assert.equal(existsSync('/app/vendor'), false);
 const names = ${JSON.stringify(categories)};
 const keys = ['DATABASE_PATH','KNOWLEDGE_DATABASE_PATH','RESEARCH_DATABASE_PATH','FACTS_DATABASE_PATH','DUELLOOP_DATABASE_PATH'];
 for (let i=0; i<names.length; i++) {
@@ -288,6 +299,9 @@ try {
   }
   const report = {
     productionImage: image,
+    sdkDependency,
+    sdkInstalledIntegrity: sdkLock.integrity,
+    sdkInstalledFromLockedSourceWithoutVendor: 'passed',
     coordinatorSha256: coordinatorHash,
     imageMatchesLocalBuild: 'passed',
     generatedComposeHandoff: 'passed',

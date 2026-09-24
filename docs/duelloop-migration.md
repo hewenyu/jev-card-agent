@@ -96,7 +96,11 @@ markers survived recreation. Original main/WAL files and backup hashes remained
 unchanged. The image coordinator matched local `dist` at SHA-256
 `c2559d18c899c25e99d3eca4c9b5a2d49377398ba31567c634ef4499f321cb47`.
 The final local `linux/arm64` image ID was
-`sha256:c55e50d7308a945c5ce3ee42d38681bf335b54bb62229936adad29a57a6ed787`.
+`sha256:e557b653cbe0fd9d55526b51cede38a923f5846d8a45c86243233d9f49287bea`.
+This final build installed DuelLoop from the official `v0.2.2` GitHub Release URL
+with its locked integrity; both Docker stages used clean `npm ci` without a vendor
+package copy. Container checks confirmed the installed package source/integrity,
+SDK version and absence of `/app/vendor`.
 No previous-release image was tested; this validates copy restoration and current
 release readers. No production data, credentials, Arena connections or model
 requests were used. Temporary containers, networks and data were removed.

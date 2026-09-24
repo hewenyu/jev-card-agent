@@ -1,8 +1,9 @@
 # v2 audit corrections
 
 Baseline: application `20222b827c2e69599db9bb3f8d41d4b44d8e5988`, SDK
-`422e24832919a3d72a2936272365e4c827178ec2`. This work updates application PR #7;
-it does not merge or deploy either repository. Findings were reproduced locally
+`422e24832919a3d72a2936272365e4c827178ec2`. This work updates application PR #7
+without merging or deploying the application. The SDK was subsequently merged
+and tagged under the separate release authorization below. Findings were reproduced locally
 with synthetic models and local WebSocket services before implementation.
 
 ## R1: recover an interrupted, unsubmitted decision
@@ -85,12 +86,38 @@ Compose restore checks; record actual results below before updating PR #7.
 
 - A final `docker compose build --no-cache --pull` and complete production-image
   migration/restore drill passed. Image ID:
-  `sha256:c55e50d7308a945c5ce3ee42d38681bf335b54bb62229936adad29a57a6ed787`
+  `sha256:e557b653cbe0fd9d55526b51cede38a923f5846d8a45c86243233d9f49287bea`
   (`linux/arm64`). The compiled coordinator matched the local build. HTTP history,
   protocols, blockers, all five stores after recreation, and restored backup
   copies were verified; source/backup bytes stayed unchanged. Temporary test
   containers, networks and data were removed.
+  The container's installed package metadata identifies the official `v0.2.2`
+  release URL and expected integrity, with no `/app/vendor` fallback.
 
 No real Arena session, paid model call or production change was made for these
 corrections. Restoration used the current image; compatibility with the operator's
 chosen previous-release image remains a deployment check.
+
+## SDK release handoff
+
+The user additionally authorized merging the SDK PR and tagging its official
+distribution. [SDK PR #1](https://github.com/hewenyu/DuelLoop/pull/1) is merged;
+annotated tag `v0.2.2` points to `7b518d21406b52c8dbc83a34031ee6f626237b4b`,
+whose tree exactly matches the reviewed `422e248` source. Its
+[GitHub Release](https://github.com/hewenyu/DuelLoop/releases/tag/v0.2.2) publishes
+the `.tgz` and SHA-256 checksum. Fresh tag build, public asset download and retained
+reference archive match byte-for-byte. Master CI `36012181066` and tag CI
+`36012240122` passed. There are no remaining open SDK PRs.
+
+The application uses the fixed release-asset URL with lockfile integrity; Docker
+and the clean production installation check no longer copy a vendor fallback.
+The archive in `vendor/` remains a reproduction reference. This is a GitHub
+Release distribution; no npm registry package was published. Application rollout
+remains separate from the SDK release.
+
+`node scripts/verify-duelloop-package.mjs` passed against the public tag and asset.
+`node scripts/verify-production-install.mjs --install-only` passed from a fresh
+directory containing only the two package manifests: 310 production packages,
+zero reported vulnerabilities, and successful SDK import. Only the SDK source
+URLs changed in the lockfile; all package integrity and transitive dependencies
+remained identical.

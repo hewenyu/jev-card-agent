@@ -139,6 +139,7 @@ OpenPoker core gameplay uses virtual chips. A rebuy credits 1,500 chips when off
 Historical integration probes on 2026-09-24: four paired Choice/Score cases agreed on three actions; DeepSeek completed a read-only tool round in 1,494 ms; the independent evaluator executed 36 real Jev calls across two paired seed blocks. **The evaluator result was inconclusive and predates the corrected session contract. These samples do not validate that contract, profitability or protocol equivalence.** See [full verification](docs/duelloop-refactor-verification.md).
 
 The [v2 audit corrections](docs/duelloop-v2-audit-fixes.md) cover same-turn cancellation recovery, shared live/evaluator session input, and an explicit Compose handoff for all migrated stores. Deployment remains a separate operator action.
+Production dependencies use the official [DuelLoop v0.2.2 release package](https://github.com/hewenyu/DuelLoop/releases/tag/v0.2.2), pinned by URL and lockfile integrity; see [package provenance](vendor/README.md).
 
 ```sh
 npm run check

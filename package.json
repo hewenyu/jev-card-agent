@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@fastify/static": "^10.1.4",
-    "duelloop": "file:vendor/duelloop-0.2.2.tgz",
+    "duelloop": "https://github.com/hewenyu/DuelLoop/releases/download/v0.2.2/duelloop-0.2.2.tgz",
     "fastify": "^5.6.2",
     "pino": "^9.13.1",
     "react": "^19.1.1",
