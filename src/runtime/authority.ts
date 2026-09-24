@@ -61,7 +61,9 @@ export function decisionStateKey(state: PokerState, includeHistory = true): stri
             name,
             stack,
             bet,
-            status,
+            // Connectivity can change mid-request without changing this player's hand eligibility.
+            // Keep the raw status in PokerState/context; normalize only these known connection states.
+            status: status === 'disconnected' ? 'active' : status,
             inHand,
             folded,
           })),

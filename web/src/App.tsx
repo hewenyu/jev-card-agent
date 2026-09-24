@@ -200,6 +200,7 @@ export function App() {
         <main>
           <ErrorNotice error={error ?? dashboard.error} />
           <ErrorNotice error={runPages.error} />
+          <ErrorNotice error={displayData?.runtime.error ?? null} />
           {loading ? (
             <div className="loading-state" role="status">
               Loading the observatory…
