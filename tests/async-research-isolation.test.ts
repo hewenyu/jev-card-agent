@@ -150,6 +150,13 @@ it.each(['off', 'normal', 'hang', 'rate_limit', 'queue_full', 'worker_crash'] as
     );
     const queue = new ResearchQueue(config.databasePath);
     queue.enqueue(batch('first'), 'fixture-research', 1);
+    if (scenario === 'queue_full') {
+      // Prepare both jobs before the worker owns writes. Its first claim leaves one
+      // running job and one pending job, filling the configured pending capacity.
+      // Concurrent fixture enqueues would race its heartbeat on loaded CI runners.
+      expect(queue.enqueue(batch('second'), 'fixture-research', 2)).not.toBeNull();
+      expect(queue.enqueue(batch('third'), 'fixture-research', 2)).toBeNull();
+    }
     const service = new AsyncResearchService(raw.filename, config);
     let runtime: ReturnType<typeof createRuntime>['runtime'] | undefined;
     try {
@@ -157,8 +164,6 @@ it.each(['off', 'normal', 'hang', 'rate_limit', 'queue_full', 'worker_crash'] as
       if (scenario !== 'off')
         await vi.waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 5000 });
       if (scenario === 'queue_full') {
-        queue.enqueue(batch('second'), 'fixture-research', 1);
-        queue.enqueue(batch('third'), 'fixture-research', 1);
         expect(queue.status().pending).toBe(1);
         expect(queue.status().runningJobs).toBe(1);
       }

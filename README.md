@@ -22,6 +22,11 @@ The public website is **anonymous and read-only**. It exposes the Bot’s own cu
 
 Live SSE updates and reconnects automatically. Every occupied seat labels **Available** (chips still available to bet) and **Bet** (the current street’s contribution, already included in the pot). Settled hands clear current bets and label the historical pot **Settled pot**. Every player’s displayed stack and the dealer button follow server state; sparse player summaries preserve seats they do not mention. Animations illustrate events without calculating authoritative balances. Older runs and hands load in pages of 100.
 
+Version 1.4.3 also handles a waiting player appearing in the turn summary before
+the join notice. Current-hand seat evidence keeps that player out of Jev's active
+opponent context and prevents a false state-change pause. Actual changes to the
+hand or legal action still invalidate an old result. See the [incident and fix](docs/runtime-roster-order-fix.md).
+
 Overview shows settled profit and win rate for the selected run. Win rate is the share of verified hands with positive net profit; break-even hands remain in the denominator. For the current run, its season score uses the same official `seasonScore` account observation shown in Live, including after departure or stopping; it does not add the available balance and table stack. Missing official scores stay unknown, while restored or delayed observations retain their value with a stale label. Net profit excludes funding.
 
 The run selector follows the current run by default. Selecting history pins that choice; selecting the current run again restores following. Historical scores show their last recorded source and time; older balance sums are explicitly labelled estimates, not official scores. Score curves do not join different seasons or legacy estimates onto current observations. Account details and funding events remain below the Live table; Overview stays statistics-only.
@@ -81,6 +86,29 @@ npm run research -- --op status
 ```
 
 Preparation reads verified completed live hands and writes private frozen batches. Configure dedicated `LLM_RESEARCH_*` settings before explicitly enabling research. Real diagnostics and paired Jev comparisons require `--allow-paid`; enabling live consumption also requires `--confirm-live`. The [operations guide](docs/async-llm.md) gives the full commands and migration/rollback procedure.
+
+## DuelLoop on real poker history
+
+The [DuelLoop experiment](docs/duelloop.md) uses the public SDK to score frozen
+OpenPoker decisions in an independent shadow process. It preserves the actual
+archived facts and priced candidates, records SDK strategy/release bindings and
+compares new Jev Score choices with recorded Choice actions. It does not join a
+table or publish strategy to the live bot.
+
+```sh
+npm run duelloop -- --help
+```
+
+The first real-model sample (SDK 0.2.0) completed 24/24 choices inside the archived candidate lists, matched 21 recorded
+choices, and measured 728 ms P50 / 2,215 ms P95. These are integration and latency
+results, not profitability evidence. Commands, data boundaries and framework
+limitations are in the [experiment report](docs/duelloop.md).
+
+The [audit update](docs/duelloop-audit-fixes.md) pins SDK **0.2.1**, adds cancellable
+retry backoff with `Retry-After`, flushes request ledgers and preserves unknown
+dollar costs. Replay assumes trusted production archives; nested historical
+evidence is not independently authenticated. The original real-model measurements
+remain labelled with their original SDK and wrapper versions.
 
 ## Account chips and rebuys
 

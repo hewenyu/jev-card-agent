@@ -60,6 +60,8 @@ export interface PokerState {
   complete: boolean;
   historyIncomplete: boolean;
   waitingReason: string | null;
+  /** Internal evidence from an authoritative seat snapshot of this dealt hand. */
+  currentHandRosterKnown?: boolean;
 }
 export interface Candidate {
   id: string;

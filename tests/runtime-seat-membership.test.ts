@@ -52,7 +52,7 @@ function snapshot(ws: WebSocket, hand: number, sequence: number, extra = {}) {
   });
 }
 
-function requestAction(ws: WebSocket, hand: number, sequence = hand * 100 + 4) {
+function requestAction(ws: WebSocket, hand: number, sequence = hand * 100 + 4, extra = {}) {
   send(ws, {
     type: 'your_turn',
     table_id: 't1',
@@ -61,6 +61,7 @@ function requestAction(ws: WebSocket, hand: number, sequence = hand * 100 + 4) {
     turn_token: `token-${sequence}`,
     pot: 40,
     valid_actions: validActions,
+    ...extra,
   });
 }
 
@@ -83,7 +84,7 @@ function endHand(ws: WebSocket, hand: number) {
   });
 }
 
-async function controlledArena(beforeRequest?: (ws: WebSocket) => void) {
+async function controlledArena(beforeRequest?: (ws: WebSocket) => void, turnSummary = false) {
   let socket: WebSocket | undefined;
   const finish: ((proposal: Proposal) => void)[] = [];
   const policy = {
@@ -100,7 +101,7 @@ async function controlledArena(beforeRequest?: (ws: WebSocket) => void) {
       joined(ws);
       startHand(ws, 1);
       beforeRequest?.(ws);
-      requestAction(ws, 1);
+      requestAction(ws, 1, 104, turnSummary ? { players: [...players, newcomer] } : {});
     }
     if (message.type === 'action') {
       send(ws, {
@@ -117,16 +118,17 @@ async function controlledArena(beforeRequest?: (ws: WebSocket) => void) {
 }
 
 describe('live seat membership while Jev is deciding', () => {
-  it.each(['before', 'after'] as const)(
+  it.each(['before', 'after', 'summary'] as const)(
     'accepts the original Jev result when a waiting player joins %s the request, then includes them next hand',
     async (arrival) => {
       const { runtime, store, policy, finish, urls, socket } = await controlledArena(
         arrival === 'before' ? (ws) => seatNewcomer(ws, 103) : undefined,
+        arrival === 'summary',
       );
       const firstContext = policy.decide.mock.calls[0]![0];
       expect(firstContext.harness?.betting.activeOpponents).toBe(1);
       expect(firstContext.effectiveStack).toBe(1800);
-      if (arrival === 'before') {
+      if (arrival !== 'after') {
         expect(firstContext.seats.find((seat) => seat.seat === 2)?.inHand).toBe(false);
       } else {
         expect(firstContext.seats.some((seat) => seat.seat === 2)).toBe(false);
@@ -140,6 +142,11 @@ describe('live seat membership while Jev is deciding', () => {
         seats: [...players, { ...newcomer, in_hand: false }],
       });
       await vi.waitFor(() => expect(runtime.state.lastTableSeq).toBe(106));
+      if (arrival === 'summary') {
+        // Actual server order: your_turn → table_state → player_joined.
+        seatNewcomer(socket, 107);
+        await vi.waitFor(() => expect(runtime.state.lastTableSeq).toBe(107));
+      }
       expect(store.actions.size).toBe(0);
       finish[0]!(choice);
       await vi.waitFor(() => expect([...store.actions.values()][0]?.status).toBe('accepted'));
@@ -169,18 +176,20 @@ describe('live seat membership while Jev is deciding', () => {
     },
   );
 
-  it.each(['pot', 'active opponent stack'] as const)(
+  it.each(['pot', 'active opponent stack', 'participation', 'call price'] as const)(
     'still rejects the old Jev result when the %s really changes with the same turn token',
     async (changed) => {
-      const { runtime, store, finish, urls, socket } = await controlledArena((ws) =>
-        seatNewcomer(ws, 103),
-      );
+      const { runtime, store, finish, urls, socket } = await controlledArena(undefined, true);
       snapshot(socket, 1, 105, {
         pot: changed === 'pot' ? 80 : 40,
+        hero: {
+          seat: 0,
+          valid_actions: changed === 'call price' ? [{ action: 'call', amount: 20 }] : validActions,
+        },
         seats: [
           players[0],
           { ...players[1], stack: changed === 'active opponent stack' ? 1700 : 1800 },
-          { ...newcomer, in_hand: false },
+          { ...newcomer, in_hand: changed === 'participation' },
         ],
       });
       await vi.waitFor(() => expect(runtime.state.lastTableSeq).toBe(105));
@@ -188,7 +197,8 @@ describe('live seat membership while Jev is deciding', () => {
       await vi.waitFor(() => expect(store.blocks).toHaveLength(1));
       expect(store.decisions[0]).toMatchObject({
         status: 'failed',
-        fallbackReason: 'decision_state_changed',
+        fallbackReason:
+          changed === 'call price' ? 'candidate_no_longer_legal' : 'decision_state_changed',
       });
       expect(store.actions.size).toBe(0);
       expect(urls.messages.some((message) => message.type === 'action')).toBe(false);
