@@ -6,6 +6,10 @@
 
 [实时观战与决策回放 →](https://openpoker.zve.ccwu.cc)
 
+1.4.3 修复新玩家先出现在行动摘要、入座通知稍后到达时的误停牌：依据本手已确认的
+座位记录，将等待下一手的玩家排除在 Jev 活跃对手上下文之外；真实局面或合法动作
+变化仍会使旧结果失效。详见[故障与修复记录](docs/runtime-roster-order-fix.md)。
+
 技术栈为 **Node.js 24、TypeScript、Fastify、React/Vite 和 SQLite**。OpenPoker 提供六人桌无限注德州扑克、匹配、合法动作约束与结算；本项目负责自托管 WebSocket V2 Agent 的运行、决策记录和行为评估。
 
 ## 可以查看什么

@@ -68,6 +68,7 @@ export function createInitialState(): PokerState {
     complete: false,
     historyIncomplete: false,
     waitingReason: null,
+    currentHandRosterKnown: false,
   };
 }
 function newHand(state: PokerState, handId: string, knownStart: boolean): PokerState {
@@ -85,11 +86,33 @@ function newHand(state: PokerState, handId: string, knownStart: boolean): PokerS
     complete: false,
     historyIncomplete: !knownStart,
     waitingReason: null,
+    currentHandRosterKnown: false,
     handStartStacks: knownStart
       ? Object.fromEntries(state.seats.filter((s) => s.name !== null).map((s) => [s.seat, s.stack]))
       : {},
     seats: state.seats.map((s) => ({ ...s, bet: 0, folded: undefined, inHand: undefined })),
   };
+}
+function handInProgress(state: PokerState): boolean {
+  return (
+    state.handId !== null &&
+    state.street !== 'idle' &&
+    !state.complete &&
+    ![
+      'between_hands_delay',
+      'awaiting_hand_start',
+      'insufficient_players',
+      'table_closing',
+    ].includes(state.waitingReason ?? '')
+  );
+}
+function inferWaitingArrival(value: unknown, state: PokerState): unknown {
+  const player = record(value);
+  const occupant = state.seats.find((seat) => seat.seat === chips(player.seat));
+  const name = string(player.name);
+  return name !== undefined && name !== occupant?.name && typeof player.in_hand !== 'boolean'
+    ? { ...player, in_hand: false }
+    : value;
 }
 function parseSeats(value: unknown, previous: Seat[], authoritative: boolean): Seat[] | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -140,7 +163,8 @@ function snapshot(state: PokerState, message: RawMessage, authority: boolean): P
       : null;
   const retainsAuthority =
     !authority && state.turnToken !== null && actorSeat === heroSeat && validActions.length > 0;
-  return {
+  const seats = parseSeats(message.seats, state.seats, true);
+  const next = {
     ...state,
     heroSeat,
     actorSeat: token ? heroSeat : actorSeat,
@@ -151,10 +175,16 @@ function snapshot(state: PokerState, message: RawMessage, authority: boolean): P
     pot: chips(message.pot) ?? state.pot,
     board: cards(message.board) ?? state.board,
     holeCards: cards(hero.hole_cards) ?? state.holeCards,
-    seats: parseSeats(message.seats, state.seats, true) ?? state.seats,
+    seats: seats ?? state.seats,
     validActions,
     turnToken: token ?? (retainsAuthority ? state.turnToken : null),
     waitingReason: string(message.waiting_reason) ?? null,
+  };
+  return {
+    ...next,
+    currentHandRosterKnown:
+      handInProgress(next) &&
+      (seats !== undefined ? seats.length > 0 : state.currentHandRosterKnown === true),
   };
 }
 function applyAction(state: PokerState, message: RawMessage): PokerState {
@@ -251,6 +281,7 @@ export function reduceMessage(previous: PokerState, message: RawMessage): PokerS
         dealerSeat: dealerSeat(message, state.dealerSeat),
         complete: false,
         waitingReason: null,
+        currentHandRosterKnown: false,
         smallBlind: chips(blinds.small_blind) ?? state.smallBlind,
         bigBlind: chips(blinds.big_blind) ?? state.bigBlind,
       };
@@ -272,6 +303,17 @@ export function reduceMessage(previous: PokerState, message: RawMessage): PokerS
         currentStreet === state.street
           ? state.seats
           : state.seats.map((seat) => ({ ...seat, bet: 0 }));
+      // OpenPoker can list a waiting newcomer here before player_joined arrives.
+      // Only a roster observed earlier in this same dealt hand proves an arrival;
+      // cold recovery and the first turn of a new hand must retain uncertainty.
+      const players =
+        !differentTable &&
+        state.handId === previous.handId &&
+        state.currentHandRosterKnown === true &&
+        handInProgress(state) &&
+        Array.isArray(message.players)
+          ? message.players.map((player) => inferWaitingArrival(player, state))
+          : message.players;
       return {
         ...state,
         actorSeat: state.heroSeat,
@@ -281,7 +323,7 @@ export function reduceMessage(previous: PokerState, message: RawMessage): PokerS
         pot: chips(message.pot) ?? state.pot,
         board,
         street: currentStreet,
-        seats: parseSeats(message.players, seats, false) ?? seats,
+        seats: parseSeats(players, seats, false) ?? seats,
       };
     }
     case 'table_state':
@@ -309,6 +351,7 @@ export function reduceMessage(previous: PokerState, message: RawMessage): PokerS
       return {
         ...state,
         complete: true,
+        currentHandRosterKnown: false,
         pot: chips(message.total_pot) ?? chips(message.pot) ?? state.pot,
         turnToken: null,
         validActions: [],
@@ -326,23 +369,13 @@ export function reduceMessage(previous: PokerState, message: RawMessage): PokerS
       const occupant = state.seats.find((s) => s.seat === seat);
       const name = string(message.name) ?? (message.name === undefined ? occupant?.name : null);
       const newcomer = name != null && name !== occupant?.name;
-      const handInProgress =
-        !differentTable &&
-        state.handId !== null &&
-        state.handId === previous.handId &&
-        state.street !== 'idle' &&
-        !state.complete &&
-        ![
-          'between_hands_delay',
-          'awaiting_hand_start',
-          'insufficient_players',
-          'table_closing',
-        ].includes(state.waitingReason ?? '');
+      const dealtHand =
+        !differentTable && state.handId === previous.handId && handInProgress(state);
       // A seat acquired after the deal joins the next hand. Resolve this before
       // your_turn so its later in_hand=false snapshot cannot invalidate a decision.
       // Duplicate occupancy notices are partial updates, not a new player/deal.
       const update =
-        newcomer && handInProgress && typeof message.in_hand !== 'boolean'
+        newcomer && dealtHand && typeof message.in_hand !== 'boolean'
           ? { ...message, in_hand: false }
           : message;
       return {
