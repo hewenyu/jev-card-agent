@@ -1,4 +1,4 @@
-import { appendFileSync, chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   DuelLoop,
@@ -16,6 +16,7 @@ import {
 } from './domain.js';
 import { createPokerReplayStrategy } from './strategy.js';
 import { AuditedDecisionModel } from './model.js';
+import { appendLedger } from './ledger.js';
 import { validateReplayPlan, type ReplayPlan } from './plan.js';
 import { replayResult, summarizeReplay, type ReplayResult } from './report.js';
 
@@ -43,33 +44,29 @@ export async function runReplayPlan(options: {
   chmodSync(join(options.outputDirectory, 'duelloop.sqlite'), 0o600);
   const attemptFile = join(options.outputDirectory, 'attempts.jsonl');
   let currentSourceId: string | null = null;
+  let currentDeadline = 0;
   const sources = new Map<string, string | null>();
   const model = new AuditedDecisionModel(
     options.model,
     (attempt) => {
       // The file remains available even if the SDK deadline wins before a cancelled
       // HTTP promise settles. A late result is audited, never used as an action.
-      appendFileSync(
-        attemptFile,
-        `${JSON.stringify({ originalDecisionId: sources.get(attempt.requestId), ...attempt })}\n`,
-        { mode: 0o600 },
-      );
+      appendLedger(attemptFile, { originalDecisionId: sources.get(attempt.requestId), ...attempt });
     },
     {
+      deadlineAt: () => currentDeadline,
       onStart(start) {
         sources.set(start.requestId, currentSourceId);
-        appendFileSync(
-          join(options.outputDirectory, 'requests.jsonl'),
-          `${JSON.stringify({ originalDecisionId: currentSourceId, ...start })}\n`,
-          { mode: 0o600 },
-        );
+        appendLedger(join(options.outputDirectory, 'requests.jsonl'), {
+          originalDecisionId: currentSourceId,
+          ...start,
+        });
       },
       onLateResult(result) {
-        appendFileSync(
-          join(options.outputDirectory, 'late-results.jsonl'),
-          `${JSON.stringify({ originalDecisionId: sources.get(result.requestId), ...result })}\n`,
-          { mode: 0o600 },
-        );
+        appendLedger(join(options.outputDirectory, 'late-results.jsonl'), {
+          originalDecisionId: sources.get(result.requestId),
+          ...result,
+        });
       },
     },
   );
@@ -113,6 +110,9 @@ export async function runReplayPlan(options: {
       const started = performance.now();
       try {
         const { observation, candidates } = replayInput(sample, timeoutMs);
+        // Mirror the SDK's execution reserve and retain a wall-clock guard even
+        // when a synchronous ledger flush delays the signal's timer callback.
+        currentDeadline = observation.deadline - 25;
         const decision = await app.decide(observation, candidates);
         rows.push(replayResult(sample, decision, performance.now() - started));
       } catch (error) {
@@ -156,8 +156,8 @@ export async function runReplayPlan(options: {
       completedAt: new Date().toISOString(),
       framework: {
         package: 'duelloop',
-        version: '0.2.0',
-        commit: '4bd7e9bb0e0322fe1d4297beeff3349918b175c9',
+        version: '0.2.1',
+        commit: 'cba13bb69453f7ea2cd7a79db9d3fbe9859eabc4',
         mode: 'shadow',
         executionOwner: 'host',
         releaseDigest,

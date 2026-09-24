@@ -269,6 +269,32 @@ describe('DuelLoop frozen replay runner', () => {
     expect(score).not.toHaveBeenCalled();
   });
 
+  it('preserves token-only and partially billed SDK usage through the final report', async () => {
+    const model: DecisionModel = fixtureModel();
+    const original = model.score.bind(model);
+    let calls = 0;
+    vi.spyOn(model, 'score').mockImplementation(async (request) => ({
+      ...(await original(request)),
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        unknown: false,
+        ...(calls++ === 0 ? {} : { knownCostUsd: 0.2, costUnknown: true }),
+      },
+    }));
+    const report = await runReplayPlan({ plan: frozenPlan(), model, outputDirectory });
+    expect(report.summary.knownUsage).toEqual({ inputTokens: 30, outputTokens: 15 });
+    expect(report.summary.unknownUsageCalls).toBe(0);
+    expect(report.summary.dollarCost).toEqual({
+      knownCostUsd: 0.4,
+      costUnknown: true,
+      totalCostUsd: null,
+      unknownCostCalls: 3,
+    });
+    expect(report.rows.every((row) => row.decision?.usage?.costUnknown === true)).toBe(true);
+    expect(attempts().every((attempt) => !Object.hasOwn(attempt.usage, 'costUsd'))).toBe(true);
+  });
+
   it('rejects an invalid plan before creating even its parent directory or calling a model', async () => {
     const plan = frozenPlan();
     plan.samples[0]!.originalChoice = 'call';

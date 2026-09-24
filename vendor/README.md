@@ -1,9 +1,14 @@
 # DuelLoop SDK distribution
 
-`duelloop-0.2.0.tgz` is the unmodified `npm pack` output of
-[hewenyu/DuelLoop](https://github.com/hewenyu/DuelLoop/tree/4bd7e9bb0e0322fe1d4297beeff3349918b175c9),
-commit `4bd7e9bb0e0322fe1d4297beeff3349918b175c9`, tag `v0.2.0`.
+`duelloop-0.2.1.tgz` is the unmodified `npm pack` output of
+[hewenyu/DuelLoop](https://github.com/hewenyu/DuelLoop/tree/cba13bb69453f7ea2cd7a79db9d3fbe9859eabc4),
+commit `cba13bb69453f7ea2cd7a79db9d3fbe9859eabc4`, tag `v0.2.1`.
 The upstream MIT license and third-party notices are inside the archive.
+
+SHA-256: `4a38c6bec56864a792b5e1279fa464f382c26f9342e870aa4fa785ac86d83adb`.
+The package is 165,230 bytes; its public-source reproduction was verified for
+the PR #6 audit update. The older 0.2.0 real-model evidence retains its original
+version and package hash; it is not a measurement of this SDK update.
 
 Upstream has not published to npm, does not commit `dist/`, and has no Git-install
 `prepare` hook. This archive makes clean checkouts reproducible. It is a

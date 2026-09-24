@@ -3,7 +3,7 @@
 ## Contract before implementation
 
 This PR consumes the public [DuelLoop SDK](https://github.com/hewenyu/DuelLoop) at
-commit `4bd7e9b` (tag `v0.2.0`). It evaluates the framework on this application's
+commit `cba13bb` (tag `v0.2.1`). It evaluates the framework on this application's
 recorded 6-max No-Limit Hold'em decisions. The existing WebSocket runtime retains
 execution ownership. The experiment neither joins a table nor publishes strategy
 to the running bot.
@@ -65,8 +65,9 @@ The web server and Docker production dependencies do not import this experiment.
 
 - Actual SDK imports use only `duelloop`, never private source paths.
 - Preparation and offline tests need no credentials and cannot open Arena sockets.
-- Invalid plans, future outcome leakage, credential-bearing configuration,
+- Invalid plans, direct outcome injection, credential-bearing configuration,
   unsuccessful model results and expired deadlines are rejected and tested.
+  Nested historical evidence depends on the trusted producer's cutoff checks.
 - Frozen plans and source history are immutable; each replay uses a new output
   directory. Failed runs retain their ledger and terminate without invented actions.
 - Run the repository checks and existing browser regressions. A bounded real-model
@@ -102,6 +103,16 @@ the same root or `/v1` URL as the existing bot; `JEV_TIMEOUT_MS` defaults to
 including at most three retries. These are operational deadlines, not monetary
 budget gates. This historical run has no current Arena action authority.
 
+Transient HTTP 429/5xx, transport failures and timeouts use 100/200/400 ms
+exponential backoff plus 0–25% jitter. A valid `Retry-After` is a minimum delay;
+only its numeric duration is retained. The original signal cancels waiting and
+prevents a new request after the shared deadline. Malformed model answers retain
+bounded immediate validation retries and are not classified as network failures.
+The runner also supplies the fixed absolute SDK model deadline, with its 25 ms
+execution reserve, so a synchronous log flush cannot defer the timer and then
+send after that deadline. A start record is an intent; if its flush consumes the
+remaining time, no provider attempt follows it.
+
 Preparation scans at most 10,000 decisions in the specified run and reports
 whether that bound was reached. It samples round-robin across streets, without
 looking at profit, then restores chronological order. The default is 24 decisions;
@@ -109,6 +120,13 @@ looking at profit, then restores chronological order. The default is 24 decision
 missing or corrupt archived requests, mismatched candidate prices and unsupported
 visible-state formats. Source timestamps accept OpenPoker's offset and microsecond
 format. Input hashes detect accidental modification; they are not digital signatures.
+
+Only use archives from a trusted production recorder. The importer does not
+independently authenticate nested `knowledge`, `approvedAdvice` or `opponentMemory`
+evidence timestamps. Top-level visibility checks and separate outcome storage do
+not prove that an arbitrary external archive contains no future information. Such
+imports need versioned nested schemas and independent cutoff verification before
+being treated as causally valid evaluation data.
 
 Every output location must be new. A model failure saves the stopped decision,
 sets remaining samples to `not_run`, writes the report and returns a failing exit
@@ -122,7 +140,7 @@ Private output files:
 | -------------------- | ---------------------------------------------------------------------------------- |
 | `plan.json`          | Frozen inputs, source identities, hashes and separate historical outcomes          |
 | `duelloop.sqlite`    | Actual SDK strategies, releases, hand pins, decisions, feedback and snapshot       |
-| `requests.jsonl`     | Attempt IDs durably written before each model call                                 |
+| `requests.jsonl`     | Attempt IDs flushed before each model call                                         |
 | `attempts.jsonl`     | Per-attempt status, usage, request hash and latency                                |
 | `late-results.jsonl` | Created only for responses arriving after cancellation; never authorizes an action |
 | `report.json`        | Full results and framework dependency bindings                                     |
@@ -135,7 +153,18 @@ attempt records at generation time; late usage is excluded and stays in the
 separate append-only ledger. Keep all complete artifacts
 under ignored `data/`. No new public controls or environment secrets are required.
 
+Attempt files use `appendFileSync(..., { flush: true })` followed by a directory
+`fsync`, including start records before submission. A flush error stops that
+submission. This verifies an OS flush boundary; no physical power-loss test or
+storage-hardware durability guarantee is claimed. Dollar cost is reported
+independently of token usage: `knownCostUsd` is a subtotal and `totalCostUsd` is
+null while any call's billing is unknown. Late usage remains a separate ledger.
+
 ## Measured use of the real SDK
+
+The following immutable result used **SDK 0.2.0 / `4bd7e9b` and wrapper v2**;
+it is not a new 0.2.1/backoff benchmark. The [audit response](duelloop-audit-fixes.md)
+records subsequent verification separately.
 
 On 2026-09-24 UTC, the experiment consumed a previously captured production
 database: 94 source decisions, one incomplete-hand exclusion, and 93 eligible
@@ -145,22 +174,24 @@ six on each street, recorded on 2026-09-22 between 09:39:42 and 10:18:14 UTC.
 pure-Jev-without-advice trial. The new calls used `jev-1.13.0` through the actual
 DuelLoop `JevDecisionModel`, not a mock or a reimplementation of Score transport.
 
-| Measurement                             | Observed result        |
-| --------------------------------------- | ---------------------- |
-| Successful / legal selections           | 24 / 24                |
-| Failed / retried calls                  | 0 / 0                  |
-| Agreement with recorded Choice          | 21 / 24 (87.5%)        |
-| Tied best scores                        | 0                      |
-| Jev requests / expanded Score questions | 24 / 173               |
-| Shadow decision P50 / P95 / maximum     | 728 / 2,215 / 3,126 ms |
-| Model-attempt P50 / P95                 | 722 / 2,210 ms         |
-| Recorded original Choice P50 / P95      | 335 / 538 ms           |
-| Reported input / output tokens          | 266,913 / 3,370        |
+| Measurement                                | Observed result        |
+| ------------------------------------------ | ---------------------- |
+| Successful / archived-candidate selections | 24 / 24                |
+| Failed / retried calls                     | 0 / 0                  |
+| Agreement with recorded Choice             | 21 / 24 (87.5%)        |
+| Tied best scores                           | 0                      |
+| Jev requests / expanded Score questions    | 24 / 173               |
+| Shadow decision P50 / P95 / maximum        | 728 / 2,215 / 3,126 ms |
+| Model-attempt P50 / P95                    | 722 / 2,210 ms         |
+| Recorded original Choice P50 / P95         | 335 / 538 ms           |
+| Reported input / output tokens             | 266,913 / 3,370        |
 
 The original latencies came from a different machine and time. Their comparison
 does not isolate the cost of Score versus Choice. The expanded question count
 does show why adding many overlapping Score dimensions would increase input size.
 One dimension still supplies all candidate scores in one request per decision.
+Candidate membership is not an independent rules-engine validation or new Arena
+acceptance. Reported tokens do not determine an independently verified dollar cost.
 
 The three disagreements provide concrete review cases:
 
@@ -184,13 +215,13 @@ recorded actions were actually played. See the [public aggregate evidence](verif
   migrated unchanged; a strategy comparison is required. Ties select the first
   supplied candidate, so candidate order is part of the behavior contract.
 - The upstream Jev adapter disables retries. The application wrapper supplies
-  three retries, a shared deadline, durable start/finish records and safe late
+  three retries, deadline-bounded backoff, flushed start/finish records and safe late
   usage handling. These settings are included in its behavior digest.
 - The public root entry eagerly loads pi dependencies. Installing it as a dev
   dependency and invoking it only in this CLI avoids loading them in the web
   server or current live fast loop. The archive reproduces byte-for-byte from
-  the pinned public commit; SHA-256 is
-  `99dc235067698eea1faf4e3b04e1208c332ff84ac69edc7c0ae8c03b65e41114`.
+  the pinned public commit; package provenance is in [vendor/README.md](../vendor/README.md)
+  and verification is recorded in the [audit response](duelloop-audit-fixes.md).
 - No `ResearchOrchestrator`, pi research team, DeepSeek call, automatic release
   publication, real match or counterfactual profit evaluation is claimed here.
   A defensible 6-max evaluator and the research budget-policy mismatch remain
@@ -201,7 +232,7 @@ read-only history, visible-state integrity, priced candidates, single-action mod
 calls, strategy pins, cancellation, retry accounting, source outcome isolation
 and CLI configuration. The real-model run above is separate from offline tests.
 
-`npm run check` passed 677 unit/integration tests plus lint, formatting, TypeScript,
+The original 0.2.0 integration's `npm run check` passed 677 unit/integration tests plus lint, formatting, TypeScript,
 build, file-length and secret checks. All 64 Playwright tests passed. A clean
 temporary development install loaded the public SDK and opened its SQLite store;
 a separate `npm ci --omit=dev` could not resolve DuelLoop and successfully started

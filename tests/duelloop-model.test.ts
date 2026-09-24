@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DuelLoopError, type DecisionModel } from 'duelloop';
 import { AuditedDecisionModel, type ModelAttempt } from '../src/duelloop/model.js';
+import { normalizeUsage } from '../src/duelloop/usage.js';
 
 type Response = Awaited<ReturnType<DecisionModel['score']>>;
 function request(signal = new AbortController().signal): Parameters<DecisionModel['score']>[0] {
@@ -41,6 +42,11 @@ function inner(score = vi.fn<DecisionModel['score']>().mockResolvedValue(result(
   };
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
 describe('DuelLoop audited model', () => {
   it('retries transient failures only after persisting each attempt, without replacing the shared signal', async () => {
     const persisted: ModelAttempt[] = [];
@@ -58,7 +64,13 @@ describe('DuelLoop audited model', () => {
     const model = new AuditedDecisionModel(inner(call), (attempt) => persisted.push(attempt));
     const response = await model.score(input);
     expect(call).toHaveBeenCalledTimes(4);
-    expect(response.usage).toEqual({ inputTokens: 26, outputTokens: 6, unknown: false });
+    expect(response.usage).toEqual({
+      inputTokens: 26,
+      outputTokens: 6,
+      unknown: false,
+      knownCostUsd: 0,
+      costUnknown: true,
+    });
     expect(model.attempts).toEqual(persisted);
     expect(persisted.map((a) => a.retryIndex)).toEqual([0, 1, 2, 3]);
     expect(new Set(persisted.map((a) => a.requestHash)).size).toBe(1);
@@ -189,6 +201,77 @@ describe('DuelLoop audited model', () => {
     expect(model.attempts).toHaveLength(0);
   });
 
+  it('does not submit after a start-ledger flush blocks past the fixed wallclock deadline', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const controller = new AbortController();
+    const call = vi.fn<DecisionModel['score']>().mockResolvedValue(result());
+    const onStart = vi.fn(() => {
+      // A synchronous OS flush delays the event loop's abort timer too.
+      vi.setSystemTime(101);
+    });
+    const persisted = vi.fn();
+    const model = new AuditedDecisionModel(inner(call), persisted, {
+      deadlineAt: () => 100,
+      onStart,
+    });
+    await expect(model.score(request(controller.signal))).rejects.toMatchObject({
+      code: 'MODEL_TIMEOUT',
+      context: { usage: { inputTokens: 0, outputTokens: 0, unknown: false, costUsd: 0 } },
+    });
+    expect(controller.signal.aborted).toBe(false);
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect(call).not.toHaveBeenCalled();
+    expect(persisted).not.toHaveBeenCalled();
+    expect(model.attempts).toHaveLength(0);
+  });
+
+  it('checks an expired fixed deadline before writing a start intent', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100);
+    const call = vi.fn<DecisionModel['score']>();
+    const onStart = vi.fn();
+    const model = new AuditedDecisionModel(inner(call), () => {}, {
+      deadlineAt: () => 100,
+      onStart,
+    });
+    await expect(model.score(request())).rejects.toMatchObject({ code: 'MODEL_TIMEOUT' });
+    expect(onStart).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it('freezes the wallclock deadline across a retry wait even before the abort timer fires', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const controller = new AbortController();
+    const deadlineAt = vi.fn().mockReturnValueOnce(100).mockReturnValue(1000);
+    const call = vi.fn<DecisionModel['score']>().mockRejectedValue(
+      new DuelLoopError('MODEL_INVALID', 'private', {
+        status: 429,
+        usage: result().usage,
+      }),
+    );
+    const model = new AuditedDecisionModel(inner(call), () => {}, { deadlineAt });
+    const assertion = expect(model.score(request(controller.signal))).rejects.toMatchObject({
+      code: 'MODEL_TIMEOUT',
+      context: { usage: { inputTokens: 20, outputTokens: 3, unknown: false } },
+    });
+    await vi.advanceTimersByTimeAsync(100);
+    await assertion;
+    expect(controller.signal.aborted).toBe(false);
+    expect(deadlineAt).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(model.attempts).toHaveLength(1);
+  });
+
+  it.each([NaN, Infinity, -Infinity])('rejects invalid wallclock deadline %s', async (value) => {
+    const call = vi.fn<DecisionModel['score']>();
+    const model = new AuditedDecisionModel(inner(call), () => {}, { deadlineAt: () => value });
+    await expect(model.score(request())).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
+    expect(call).not.toHaveBeenCalled();
+  });
+
   it('rejects a late answer, retains its usage, and never starts another request', async () => {
     const controller = new AbortController();
     const call = vi.fn<DecisionModel['score']>(async () => {
@@ -293,7 +376,7 @@ describe('DuelLoop audited model', () => {
     complete(result());
     await Promise.resolve();
     expect(model.lateLedgerFailed).toBe(true);
-    expect(model.lateResults[0]?.usage).toEqual(result().usage);
+    expect(model.lateResults[0]?.usage).toEqual(normalizeUsage(result().usage));
   });
 
   it('does not call a provider if the start record cannot be persisted', async () => {
@@ -344,6 +427,9 @@ describe('DuelLoop audited model', () => {
     const zeroRetries = new AuditedDecisionModel(source, () => {}, { maxRetries: 0 });
     expect(defaultModel.behaviorIdentity).not.toEqual(source.behaviorIdentity);
     expect(defaultModel.behaviorIdentity).not.toEqual(zeroRetries.behaviorIdentity);
+    expect(defaultModel.behaviorIdentity).not.toEqual(
+      new AuditedDecisionModel(source, () => {}, { deadlineAt: () => 100 }).behaviorIdentity,
+    );
     expect(defaultModel.behaviorIdentity).toEqual(
       new AuditedDecisionModel(source, () => {}).behaviorIdentity,
     );

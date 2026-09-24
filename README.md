@@ -94,10 +94,16 @@ table or publish strategy to the live bot.
 npm run duelloop -- --help
 ```
 
-The first real-model sample completed 24/24 legal decisions, matched 21 recorded
+The first real-model sample (SDK 0.2.0) completed 24/24 choices inside the archived candidate lists, matched 21 recorded
 choices, and measured 728 ms P50 / 2,215 ms P95. These are integration and latency
 results, not profitability evidence. Commands, data boundaries and framework
 limitations are in the [experiment report](docs/duelloop.md).
+
+The [audit update](docs/duelloop-audit-fixes.md) pins SDK **0.2.1**, adds cancellable
+retry backoff with `Retry-After`, flushes request ledgers and preserves unknown
+dollar costs. Replay assumes trusted production archives; nested historical
+evidence is not independently authenticated. The original real-model measurements
+remain labelled with their original SDK and wrapper versions.
 
 ## Account chips and rebuys
 

@@ -45,7 +45,7 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.0.3",
     "concurrently": "^9.2.1",
-    "duelloop": "file:vendor/duelloop-0.2.0.tgz",
+    "duelloop": "file:vendor/duelloop-0.2.1.tgz",
     "eslint": "^9.36.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^5.2.0",

@@ -1,9 +1,10 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { FixtureDecisionModel, JevDecisionModel } from 'duelloop';
+import { FixtureDecisionModel } from 'duelloop';
 import { prepareReplayPlan, validateReplayPlan } from '../duelloop/plan.js';
 import { runReplayPlan, writePrivateJson } from '../duelloop/run.js';
 import { sdkBaseUrl } from '../duelloop/config.js';
+import { createReplayJevModel } from '../duelloop/transport.js';
 import { argumentsFor, fail, numberArg } from './args.js';
 
 async function main(): Promise<void> {
@@ -77,7 +78,7 @@ Output paths must be new. Full reports are private; summary.json contains aggreg
             question.criteria.map((_, index) => [String(index), index === 2 ? 1 : 0]),
           ),
         }))
-      : new JevDecisionModel({
+      : createReplayJevModel({
           model: requestedModel,
           apiKeyEnv: 'JEV_API_KEY',
           baseURL: sdkBaseUrl(baseURL),

@@ -2,6 +2,7 @@ import type { DecisionRecord } from 'duelloop';
 import { percentile } from '../evaluation/async-research.js';
 import type { ModelAttempt } from './model.js';
 import type { ReplayPlan, ReplaySample } from './plan.js';
+import { accumulateUsage, emptyUsage } from './usage.js';
 
 export interface ReplayResult {
   originalDecisionId: string;
@@ -36,6 +37,8 @@ export function replayResult(
 }
 export function summarizeReplay(plan: ReplayPlan, rows: ReplayResult[], attempts: ModelAttempt[]) {
   const succeeded = rows.filter((row) => row.status === 'succeeded');
+  const billed = emptyUsage();
+  for (const attempt of attempts) accumulateUsage(billed, attempt.usage);
   const knownUsage = attempts.reduce(
     (total, attempt) => ({
       inputTokens: total.inputTokens + (attempt.usage.inputTokens ?? 0),
@@ -69,6 +72,16 @@ export function summarizeReplay(plan: ReplayPlan, rows: ReplayResult[], attempts
     retries: attempts.filter((a) => a.retryIndex > 0).length,
     unknownUsageCalls: attempts.filter((a) => a.usage.unknown).length,
     knownUsage,
+    dollarCost: {
+      knownCostUsd: billed.knownCostUsd,
+      costUnknown: billed.costUnknown,
+      totalCostUsd: billed.costUnknown ? null : billed.costUsd,
+      unknownCostCalls: attempts.filter((attempt) => {
+        const usage = emptyUsage();
+        accumulateUsage(usage, attempt.usage);
+        return usage.costUnknown;
+      }).length,
+    },
     modelKinds: [...new Set(succeeded.map((r) => r.decision?.modelKind))],
     actualModels: [...new Set(attempts.flatMap((a) => (a.actualModel ? [a.actualModel] : [])))],
     sourceModels: [...new Set(plan.samples.map((s) => s.originalModel))],
@@ -90,6 +103,8 @@ export function summarizeReplay(plan: ReplayPlan, rows: ReplayResult[], attempts
     },
     failureCodes: [...new Set(rows.flatMap((r) => (r.code ? [r.code] : [])))],
     limitations: [
+      'Trusted production archives only: nested knowledge, advice and opponent evidence cutoffs are inherited from the producer, not independently authenticated by this importer.',
+      'Legal selections mean membership in the archived candidate list, not an independent rule-engine check or a new Arena acceptance.',
       'Recorded Choice and fresh Score calls occurred at different times with different request contracts; this is not a randomized A/B test.',
       'Agreement is descriptive and does not establish decision correctness or profitability.',
       'Scores and normalized utilities are ordinal model outputs, not chip EV, poker equity or validated mixed-strategy frequencies.',

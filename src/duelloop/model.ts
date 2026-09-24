@@ -7,6 +7,8 @@ import {
   type ErrorCode,
   type ModelUsage,
 } from 'duelloop';
+import { RETRY_POLICY, retryDelay, waitForRetry, type RetryFailure } from './retry.js';
+import { normalizeUsage as usage, accumulateUsage as accumulate, emptyUsage } from './usage.js';
 
 type ScoreRequest = Parameters<DecisionModel['score']>[0];
 type ScoreResponse = Awaited<ReturnType<DecisionModel['score']>>;
@@ -23,6 +25,8 @@ export interface ModelAttempt extends ModelAttemptStart {
   status: 'succeeded' | 'failed';
   code?: ErrorCode;
   httpStatus?: number;
+  failureKind?: RetryFailure['failureKind'];
+  retryAfterMs?: number;
   usage: ModelUsage;
   actualModel?: string;
 }
@@ -33,6 +37,8 @@ export interface LateModelResult extends ModelAttempt {
 
 export interface AuditedModelOptions {
   maxRetries?: number;
+  /** Absolute SDK model deadline; read once per score call, never renewed by a retry. */
+  deadlineAt?: () => number;
   onStart?: (attempt: ModelAttemptStart) => void;
   onLateResult?: (result: LateModelResult) => void;
 }
@@ -44,43 +50,22 @@ interface AttemptOutcome {
   storageFailed?: boolean;
 }
 
-function usage(value: unknown): ModelUsage {
-  const source = value && typeof value === 'object' ? (value as ModelUsage) : {};
-  const input = Number.isSafeInteger(source.inputTokens) && source.inputTokens! >= 0;
-  const output = Number.isSafeInteger(source.outputTokens) && source.outputTokens! >= 0;
-  const cost =
-    typeof source.costUsd === 'number' && Number.isFinite(source.costUsd) && source.costUsd >= 0;
-  return {
-    ...(input ? { inputTokens: source.inputTokens } : {}),
-    ...(output ? { outputTokens: source.outputTokens } : {}),
-    ...(cost ? { costUsd: source.costUsd } : {}),
-    unknown: source.unknown !== false || !input || !output,
-  };
-}
-
-function accumulate(total: ModelUsage, measured: ModelUsage): void {
-  for (const key of ['inputTokens', 'outputTokens', 'costUsd'] as const) {
-    if (measured[key] !== undefined) total[key] = (total[key] ?? 0) + measured[key];
-  }
-  total.unknown = total.unknown || measured.unknown;
-}
-
-function failure(error: unknown, signal: AbortSignal): { code: ErrorCode; httpStatus?: number } {
+function failure(error: unknown, signal: AbortSignal): RetryFailure {
   if (signal.aborted) return { code: 'CANCELLED' };
   if (!(error instanceof DuelLoopError)) return { code: 'MODEL_INVALID' };
   const status = error.context.status;
+  const failureKind = error.context.failureKind;
+  const retryAfterMs = error.context.retryAfterMs;
   return {
     code: error.code,
     ...(Number.isInteger(status) && Number(status) >= 100 && Number(status) <= 599
       ? { httpStatus: Number(status) }
       : {}),
+    ...(failureKind === 'network' || failureKind === 'http' ? { failureKind } : {}),
+    ...(typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+      ? { retryAfterMs }
+      : {}),
   };
-}
-
-function retryable(error: ReturnType<typeof failure>): boolean {
-  if (!['MODEL_INVALID', 'MODEL_TIMEOUT'].includes(error.code)) return false;
-  if (error.httpStatus !== undefined) return error.httpStatus === 429 || error.httpStatus >= 500;
-  return true;
 }
 
 function validate(response: ScoreResponse, request: ScoreRequest, model: DecisionModel): void {
@@ -139,26 +124,45 @@ export class AuditedDecisionModel implements DecisionModel {
     this.kind = inner.kind;
     this.behaviorIdentity = Object.freeze({
       ...inner.behaviorIdentity,
-      adapterVersion: `poker-audited-score-v2/${inner.behaviorIdentity.adapterVersion}`,
+      adapterVersion: `poker-audited-score-v3/${inner.behaviorIdentity.adapterVersion}`,
       configurationDigest: digest({
         inner: inner.behaviorIdentity,
         maxRetries: this.#maxRetries,
         sharedDeadline: true,
-        accountingVersion: 'cancelled-unknown-with-separate-late-usage-v2',
+        wallclockDeadlineGuard: options.deadlineAt ? 'frozen-before-provider-v1' : 'signal-only',
+        retryPolicy: RETRY_POLICY,
+        accountingVersion: 'cancelled-unknown-with-separate-late-usage-v3',
       }),
     });
   }
 
   async score(request: ScoreRequest): Promise<ScoreResponse> {
+    const total = emptyUsage();
+    let deadlineAt: number | undefined;
+    try {
+      deadlineAt = this.options.deadlineAt?.();
+      if (this.options.deadlineAt && !Number.isFinite(deadlineAt)) throw new Error();
+    } catch {
+      throw new DuelLoopError('CONFIG_INVALID', 'Model deadline must be a finite timestamp', {
+        usage: total,
+      });
+    }
+    const guard = () => {
+      if (request.signal.aborted)
+        throw new DuelLoopError('CANCELLED', 'Model request cancelled', { usage: total });
+      if (deadlineAt !== undefined && Date.now() >= deadlineAt)
+        throw new DuelLoopError('MODEL_TIMEOUT', 'Model deadline expired before submission', {
+          usage: total,
+        });
+    };
+    guard();
     const requestHash = digest({
       model: this.id,
       state: request.state,
       questions: request.questions,
     });
-    const total: ModelUsage = { unknown: false };
     for (let retryIndex = 0; retryIndex <= this.#maxRetries; retryIndex++) {
-      if (request.signal.aborted)
-        throw new DuelLoopError('CANCELLED', 'Model request cancelled', { usage: total });
+      guard();
       const started: ModelAttemptStart = {
         requestId: randomUUID(),
         requestHash,
@@ -172,6 +176,9 @@ export class AuditedDecisionModel implements DecisionModel {
           usage: total,
         });
       }
+      // Synchronous fsync can outlast a deadline while delaying the abort timer.
+      // Its start record is an intent; no attempt is counted before provider submission.
+      guard();
       const outcome = await this.attempt(request, started);
       accumulate(total, outcome.usage);
       if (outcome.storageFailed) {
@@ -181,9 +188,15 @@ export class AuditedDecisionModel implements DecisionModel {
       }
       const { response, error } = outcome;
       if (!error) return { ...response!, usage: total };
-      if (!retryable(error) || retryIndex === this.#maxRetries) {
+      const delayMs = retryDelay(error, retryIndex);
+      if (delayMs === null || retryIndex === this.#maxRetries) {
         throw new DuelLoopError(error.code, 'Audited model request failed', {
           ...(error.httpStatus === undefined ? {} : { status: error.httpStatus }),
+          usage: total,
+        });
+      }
+      if (!(await waitForRetry(delayMs, request.signal))) {
+        throw new DuelLoopError('CANCELLED', 'Model request cancelled during retry delay', {
           usage: total,
         });
       }
@@ -235,7 +248,7 @@ export class AuditedDecisionModel implements DecisionModel {
         cancelled = true;
         // This write occurs synchronously in the abort listener, before an outer deadline
         // race can return and close its ledger. A late response never rewrites this record.
-        finish({ error: { code: 'CANCELLED' }, usage: { unknown: true } });
+        finish({ error: { code: 'CANCELLED' }, usage: usage(undefined) });
       };
       request.signal.addEventListener('abort', abort, { once: true });
       if (request.signal.aborted) {

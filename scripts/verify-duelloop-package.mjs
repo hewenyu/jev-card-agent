@@ -5,10 +5,10 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-const commit = '4bd7e9bb0e0322fe1d4297beeff3349918b175c9';
+const commit = 'cba13bb69453f7ea2cd7a79db9d3fbe9859eabc4';
 const temporary = mkdtempSync(join(tmpdir(), 'duelloop-source-'));
 const source = join(temporary, 'source');
-const archive = 'duelloop-0.2.0.tgz';
+const archive = 'duelloop-0.2.1.tgz';
 const checkedIn = fileURLToPath(new URL(`../vendor/${archive}`, import.meta.url));
 const execute = (command, args, cwd) => execFileSync(command, args, { cwd, stdio: 'pipe' });
 try {
