@@ -16,6 +16,7 @@ import { SqliteStore } from 'duelloop';
 import { Store } from '../../storage/store.js';
 import { Queries } from '../../storage/queries.js';
 import { HostJournal } from './journal.js';
+import { encodeMigrationEnv, writeMigrationCompose } from './migration-compose.js';
 
 type Category = 'raw' | 'knowledge' | 'research' | 'facts' | 'sdk';
 const retired = /^(ASYNC_LLM_|LLM_ADVICE_|LLM_RESEARCH_)|^(REASONING_MODE|HYBRID_TIMEOUT_MS)$/;
@@ -188,28 +189,13 @@ export async function migrateDuelLoop(options: MigrationOptions) {
     FACTS_DATABASE_PATH: copies.facts,
     DUELLOOP_DATABASE_PATH: copies.sdk,
   });
-  // Single quotes are literal in both Node and Compose, including dollars/backslashes.
-  // Double quotes are shared only when Compose has no interpolation/escape to evaluate.
-  const encode = (value: string) => {
-    if (!value.includes("'")) return `'${value}'`;
-    if (!/["\\$]/.test(value)) return `"${value}"`;
-    throw new Error('An environment value cannot be represented losslessly in Node and Compose');
-  };
-  const nextText =
-    Object.entries(next)
-      .map(([k, v]) => `${k}=${encode(v)}`)
-      .join('\n') + '\n';
-  const decoded = parseEnv(nextText);
-  if (
-    Object.keys(decoded).length !== Object.keys(next).length ||
-    Object.entries(next).some(([k, v]) => decoded[k] !== v)
-  )
-    throw new Error('Environment round-trip validation failed');
-  writeFileSync(join(output, '.env.next'), nextText, { mode: 0o600, flag: 'wx' });
+  writeFileSync(join(output, '.env.next'), encodeMigrationEnv(next), { mode: 0o600, flag: 'wx' });
+  const compose = writeMigrationCompose(output, next);
   const manifest = {
-    version: 'duelloop-copy-v1',
+    version: 'duelloop-copy-v2',
     createdAt: new Date().toISOString(),
     output,
+    compose,
     snapshots,
     protocols,
     upgraded,

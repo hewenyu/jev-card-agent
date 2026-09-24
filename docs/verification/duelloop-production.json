@@ -2,6 +2,7 @@
   "applicationVersion": "2.0.0",
   "date": "2026-09-24",
   "applicationBaseline": "96db76540f2bb48f6eb35d15a426f78c8bf0dd1d",
+  "preAuditEvidenceCommit": "20222b827c2e69599db9bb3f8d41d4b44d8e5988",
   "sdk": {
     "version": "0.2.2",
     "sourceCommit": "422e24832919a3d72a2936272365e4c827178ec2",
@@ -34,6 +35,7 @@
       "interpretation": "Protocol comparison only; no equivalence or profitability claim"
     },
     "pokerEvaluator": {
+      "contractStatus": "Historical session-less contract; does not validate the corrected evaluator",
       "stage": "development",
       "seedBlocks": 2,
       "simulatedHands": 12,
@@ -68,5 +70,24 @@
     "productionHistoryCleared": false,
     "researchReleaseActivatedInProduction": false,
     "profitabilityEstablished": false
+  },
+  "auditCorrections": {
+    "report": "../duelloop-v2-audit-fixes.md",
+    "findings": ["R1", "R2", "O1"],
+    "applicationCheck": "passed",
+    "testFilesPassed": 107,
+    "testsPassed": 873,
+    "browserTestsPassed": 65,
+    "migrationTestsPassed": 5,
+    "productionImageRestore": "passed",
+    "productionImageId": "sha256:c55e50d7308a945c5ce3ee42d38681bf335b54bb62229936adad29a57a6ed787",
+    "productionImagePlatform": "linux/arm64",
+    "previousReleaseImageCompatibility": "not tested",
+    "featureContract": "visible-poker-facts-v4",
+    "featureBuilderVersion": "visible-facts-priced-actions-session-v4",
+    "continuationVersion": "same-release-current-visible-state-session-v2",
+    "evaluator": "poker-six-max-session-v2",
+    "paidModelCalls": 0,
+    "arenaSessionStarted": false
   }
 }

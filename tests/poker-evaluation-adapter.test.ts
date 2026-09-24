@@ -62,6 +62,106 @@ function input(model_: DecisionModel) {
 }
 
 describe('independent SDK poker EvaluationAdapter', () => {
+  it('carries only previously applied choices through streets and resets independent branch histories', async () => {
+    type Choice = {
+      street: string;
+      action: { kind: string; raiseToChips?: number };
+      source: string;
+      status: string;
+    };
+    type Poker = { street: string; session: { turn: number; previousChoices: Choice[] } };
+    const branches: { sessions: Poker[]; hands: number; choices: Choice[] }[] = [];
+    function sessionModel(preferRaise: boolean): DecisionModel {
+      const branch = { sessions: [] as Poker[], hands: 0, choices: [] as Choice[] };
+      branches.push(branch);
+      return {
+        id: `session-${preferRaise}`,
+        kind: 'fixture',
+        behaviorIdentity: {
+          adapterVersion: 'session-fixture-v1',
+          deploymentVersion: 'test',
+          protocolVersion: 'score',
+          configurationDigest: String(preferRaise),
+        },
+        async score(request) {
+          const poker = (request.state.features as { poker: Poker }).poker;
+          expect(poker.session).not.toBeNull();
+          if (poker.session.turn === 1) {
+            branch.hands++;
+            branch.choices = [];
+          }
+          expect(poker.session.turn).toBe(branch.choices.length + 1);
+          expect(poker.session.previousChoices).toEqual(branch.choices.slice(-6));
+          branch.sessions.push(structuredClone(poker));
+          const preferred =
+            preferRaise && poker.session.turn === 1
+              ? request.questions.find((q) => q.actionId.startsWith('raise_'))?.actionId
+              : undefined;
+          const id =
+            preferred ??
+            ['check', 'call', 'fold'].find((action) =>
+              request.questions.some((q) => q.actionId === action),
+            )!;
+          branch.choices.push({
+            street: poker.street,
+            action: id.startsWith('raise_')
+              ? { kind: 'raise', raiseToChips: Number(id.slice('raise_to_'.length)) }
+              : { kind: id },
+            status: 'accepted',
+            source: 'jev',
+          });
+          return {
+            model: this.id,
+            usage: { inputTokens: 1, outputTokens: 1 },
+            answers: Object.fromEntries(
+              request.questions.map((q) => {
+                const score = q.actionId === id ? q.criteria.length - 1 : 0;
+                return [
+                  q.id,
+                  {
+                    score,
+                    confidence: 1,
+                    probabilities: Object.fromEntries(
+                      q.criteria.map((_, i) => [String(i), Number(i === score)]),
+                    ),
+                  },
+                ];
+              }),
+            ),
+          };
+        },
+      };
+    }
+    const adapter = createPokerEvaluator({ domain, decisionPolicy: policy });
+    // Shared adapter instance, concurrent episodes, and identical hand IDs must not share memory.
+    await Promise.all([
+      adapter.episode(input(sessionModel(false))),
+      adapter.episode(input(sessionModel(true))),
+    ]);
+    // A hand can end before hero acts (a walk); every observed hand still starts independently.
+    for (const branch of branches) {
+      expect(branch.hands).toBeGreaterThan(1);
+      expect(branch.hands).toBeLessThanOrEqual(6);
+    }
+    expect(new Set(branches[0]!.sessions.map((poker) => poker.street))).toEqual(
+      new Set(['preflop', 'flop', 'turn', 'river']),
+    );
+    expect(
+      branches[0]!.sessions.some(
+        (poker) => poker.session.previousChoices.at(-1)?.street === poker.street,
+      ),
+    ).toBe(true);
+    expect(
+      branches[1]!.sessions.some((poker) =>
+        poker.session.previousChoices.some((choice) => choice.action.kind === 'raise'),
+      ),
+    ).toBe(true);
+    expect(
+      branches[0]!.sessions.every((poker) =>
+        poker.session.previousChoices.every((choice) => choice.action.kind !== 'raise'),
+      ),
+    ).toBe(true);
+  });
   it('calls a supplied model for every hero decision and sends only shared visible features', async () => {
     const seen = vi.fn((state: Features, questions: ScoreQuestion[]) => {
       const features = state.features as {
@@ -196,6 +296,35 @@ describe('independent SDK poker EvaluationAdapter', () => {
         stage: 'development',
       }),
     ).rejects.toThrow('runtime binding');
+    expect(score).not.toHaveBeenCalled();
+  });
+  it('rejects reports using the pre-session behavior identity before any model calls', async () => {
+    const decisionModel = model();
+    const score = vi.spyOn(decisionModel, 'score');
+    const dependencies = behaviorDependencies(
+      {
+        ...domain,
+        featureBuilderVersion: 'visible-facts-priced-actions-v3',
+        continuationVersion: 'same-release-current-visible-state-v1',
+      },
+      decisionModel,
+      policy,
+    );
+    const adapter = createPokerEvaluator({ domain, decisionPolicy: policy });
+    expect(adapter.id).toMatch(/^poker-six-max-session-v2:/);
+    expect(domain.rulesVersion).toBe('six-max-nlhe-v3');
+    await expect(
+      evaluateCandidate({
+        candidate: createPokerStrategy(),
+        baseline: createPokerStrategy(),
+        adapter,
+        model: decisionModel,
+        dependencies,
+        baseReleaseDigest: 'old-contract',
+        protocol: createPokerPilotProtocols(POKER_DOMAIN_ID, 1000).development,
+        stage: 'development',
+      }),
+    ).rejects.toThrow();
     expect(score).not.toHaveBeenCalled();
   });
 });

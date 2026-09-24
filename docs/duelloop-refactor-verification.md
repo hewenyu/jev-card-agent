@@ -8,6 +8,11 @@ performed. This change is being delivered as a PR; production was not updated.
 The sanitized [machine-readable evidence summary](verification/duelloop-production.json)
 records versions, measured probes and aggregate verification results.
 
+This report records the pre-audit implementation at `20222b8`. Follow-up fixes
+and their current verification are recorded in [v2 audit corrections](duelloop-v2-audit-fixes.md).
+The real evaluator diagnostic below predates the session contract correction and
+does not validate the corrected evaluator.
+
 ## Result
 
 The branch routes live actions through one DuelLoop Score coordinator, pins

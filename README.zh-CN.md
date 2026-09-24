@@ -136,7 +136,9 @@ OpenPoker 核心玩法使用虚拟筹码。离桌、无在桌筹码且可用筹�
 
 ## 验证与开发
 
-2026-09-24 真实集成验证：四个 Choice/Score 成对案例中三个选择相同；DeepSeek 只读工具回合耗时 1,494 ms；独立评价器在两个成对 seed block 中完成 36 次真实 Jev 调用。**评价结论为 inconclusive。样本证明链路可运行，不证明盈利或两种协议等价。** 详见[验证报告](docs/duelloop-refactor-verification.md)。
+2026-09-24 历史集成验证：四个 Choice/Score 成对案例中三个选择相同；DeepSeek 只读工具回合耗时 1,494 ms；独立评价器在两个成对 seed block 中完成 36 次真实 Jev 调用。**评价结论为 inconclusive，且早于 session 合同修正。这些样本不能验证新合同，也不证明盈利或两种协议等价。** 详见[验证报告](docs/duelloop-refactor-verification.md)。
+
+[v2 审计修复记录](docs/duelloop-v2-audit-fixes.md)说明同回合取消恢复、线上与评价器共享 session，以及全部迁移数据库的 Compose 挂载交接。部署仍由操作者单独执行。
 
 ```sh
 npm run check

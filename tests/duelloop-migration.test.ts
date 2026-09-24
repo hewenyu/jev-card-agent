@@ -76,6 +76,7 @@ describe('copy-only migration', () => {
     expect(readFileSync(join(f.output, 'backups/raw.sqlite'))).toBeDefined();
     expect(statSync(f.output).mode & 0o777).toBe(0o700);
     expect(statSync(join(f.output, '.env.next')).mode & 0o777).toBe(0o600);
+    expect(statSync(join(f.output, '.env.compose')).mode & 0o777).toBe(0o600);
     const next = parseEnv(readFileSync(join(f.output, '.env.next'), 'utf8'));
     expect(next).toMatchObject({
       JEV_API_KEY: 'secret-jev',
@@ -88,6 +89,25 @@ describe('copy-only migration', () => {
     expect(next.ASYNC_LLM_MODE).toBeUndefined();
     expect(next.LLM_RESEARCH_OLD).toBeUndefined();
     expect(next.DUELLOOP_DATABASE_PATH).not.toBe(next.DATABASE_PATH);
+    const container = parseEnv(readFileSync(join(f.output, '.env.compose'), 'utf8'));
+    expect(container).toMatchObject({
+      DATABASE_PATH: '/app/data/raw.sqlite',
+      KNOWLEDGE_DATABASE_PATH: '/app/data/knowledge.sqlite',
+      RESEARCH_DATABASE_PATH: '/app/data/research.sqlite',
+      FACTS_DATABASE_PATH: '/app/data/facts.sqlite',
+      DUELLOOP_DATABASE_PATH: '/app/data/sdk.sqlite',
+      DUELLOOP_DEVELOPMENT_PROTOCOL: '/app/data/protocol-development.json',
+      DUELLOOP_FINAL_PROTOCOL: '/app/data/protocol-final.json',
+      AUTO_START_BOT: 'false',
+      DUELLOOP_RESEARCH_ENABLED: 'false',
+    });
+    const compose = JSON.parse(readFileSync(join(f.output, 'compose.json'), 'utf8'));
+    expect(compose.services.app.volumes).toEqual([
+      { type: 'bind', source: './working', target: '/app/data', bind: { create_host_path: false } },
+    ]);
+    expect(compose.services.app.environment).not.toHaveProperty('DATABASE_PATH');
+    expect(compose.services.app.user).toBe(`${process.getuid!()}:${process.getgid!()}`);
+    expect(compose.volumes).toBeUndefined();
     const original = new DatabaseSync(f.database, { readOnly: true });
     expect(
       original.prepare("SELECT name FROM sqlite_master WHERE name='framework_hands'").get(),
@@ -136,6 +156,62 @@ describe('copy-only migration', () => {
     );
   });
 
+  it('copies committed WAL rows across all five stores and private protocols without changing originals', async () => {
+    const f = fixture();
+    const categories = ['raw', 'knowledge', 'research', 'facts', 'sdk'];
+    const paths = [
+      f.database,
+      ...['knowledge', 'research', 'facts', 'duelloop'].map(
+        (suffix) => `${f.database}.${suffix}.sqlite`,
+      ),
+    ];
+    const databases = paths.map((path) => new DatabaseSync(path));
+    try {
+      databases.forEach((db, index) =>
+        db.exec(
+          `PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE wal_marker(value TEXT); INSERT INTO wal_marker VALUES('${categories[index]}-committed');`,
+        ),
+      );
+      const originals = paths.map((path) => ({
+        main: readFileSync(path),
+        wal: readFileSync(`${path}-wal`),
+      }));
+      for (const name of ['development', 'final']) {
+        const path = join(f.directory, `${name}.json`);
+        writeFileSync(path, JSON.stringify({ id: name, seeds: [`private-${name}`] }));
+      }
+      writeFileSync(
+        f.env,
+        readFileSync(f.env, 'utf8') +
+          `DUELLOOP_DEVELOPMENT_PROTOCOL='${join(f.directory, 'development.json')}'\nDUELLOOP_FINAL_PROTOCOL='${join(f.directory, 'final.json')}'\n`,
+      );
+      await migrateDuelLoop(f);
+      paths.forEach((path, index) => {
+        expect(readFileSync(path)).toEqual(originals[index]!.main);
+        expect(readFileSync(`${path}-wal`)).toEqual(originals[index]!.wal);
+        for (const section of ['backups', 'working']) {
+          const copy = new DatabaseSync(join(f.output, section, `${categories[index]}.sqlite`), {
+            readOnly: true,
+          });
+          try {
+            expect(copy.prepare('SELECT value FROM wal_marker').get()!.value).toBe(
+              `${categories[index]}-committed`,
+            );
+          } finally {
+            copy.close();
+          }
+        }
+      });
+      for (const name of ['development', 'final']) {
+        expect(readFileSync(join(f.output, 'working', `protocol-${name}.json`))).toEqual(
+          readFileSync(join(f.directory, `${name}.json`)),
+        );
+      }
+    } finally {
+      databases.forEach((db) => db.close());
+    }
+  });
+
   it.runIf(spawnSync('docker', ['compose', 'version'], { stdio: 'ignore' }).status === 0)(
     'preserves migrated synthetic credentials in actual Compose env_file parsing',
     async () => {
@@ -153,11 +229,7 @@ describe('copy-only migration', () => {
           .join('\n'),
       );
       await migrateDuelLoop(f);
-      const compose = join(f.output, 'compose.yaml');
-      writeFileSync(
-        compose,
-        'services:\n  fixture:\n    image: node:24\n    env_file: .env.next\n',
-      );
+      const compose = join(f.output, 'compose.json');
       const result = spawnSync('docker', ['compose', '-f', compose, 'config', '--format', 'json'], {
         encoding: 'utf8',
         timeout: 10000,
@@ -166,7 +238,7 @@ describe('copy-only migration', () => {
       const config = JSON.parse(result.stdout);
       // Compose's canonical config doubles literal dollars so the rendered file can be
       // consumed again. Its interpolation-environment output exposes the parsed value.
-      expect(config.services.fixture.environment).toMatchObject(
+      expect(config.services.app.environment).toMatchObject(
         Object.fromEntries(
           Object.entries(values).map(([k, v]) => [k, v.replaceAll('$', () => '$$')]),
         ),

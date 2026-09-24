@@ -10,10 +10,11 @@ import {
   type Features,
 } from 'duelloop';
 import { performance } from 'node:perf_hooks';
-import { buildContext } from '../../core/context.js';
+import type { SessionTurn } from '../../core/session.js';
 import type { OpponentStats } from '../../core/types.js';
 import type { OpponentMemory } from '../../core/opponent-memory.js';
 import { buildPokerInput } from '../../poker/input.js';
+import { buildPokerContext } from '../../poker/context.js';
 import { withModelDeadline } from '../../duelloop/live/model.js';
 import { PokerHand } from './engine.js';
 import { opponentAction, OPPONENT_SUITES } from './opponents.js';
@@ -96,7 +97,7 @@ export function createPokerEvaluator(options: PokerEvaluatorOptions): Evaluation
     throw new Error('Invalid evaluation decision policy');
   const domain = options.domain;
   return {
-    id: `poker-six-max-v1:${digest(rules)}`,
+    id: `poker-six-max-session-v2:${digest(rules)}`,
     decisionPolicy: policy,
     domainDependencies: {
       rules: domain.rulesVersion,
@@ -143,6 +144,8 @@ export function createPokerEvaluator(options: PokerEvaluatorOptions): Evaluation
           handId: `simulation-hand-${handIndex}`,
         });
         const counts = Array<number>(6).fill(0);
+        // Every hand in every baseline/candidate episode owns a fresh mutable history.
+        const previousTurns: SessionTurn[] = [];
         while (!hand.complete) {
           input.signal.throwIfAborted();
           const seat = hand.actor!;
@@ -179,8 +182,11 @@ export function createPokerEvaluator(options: PokerEvaluatorOptions): Evaluation
             input.signal,
             AbortSignal.timeout(Math.max(1, modelDeadline - Date.now())),
           ]);
-          const context = buildContext(state, knowledge.opponents);
-          context.opponentMemory = knowledge.opponentMemory;
+          const context = buildPokerContext(state, {
+            opponents: knowledge.opponents,
+            opponentMemory: knowledge.opponentMemory,
+            previousTurns,
+          });
           const { observation, candidates: actions } = buildPokerInput(context, candidates, {
             applicationId: 'jev-card-agent-simulation',
             scopeId: 'simulation',
@@ -222,6 +228,22 @@ export function createPokerEvaluator(options: PokerEvaluatorOptions): Evaluation
           if (!action) throw new Error('Model selected unknown action');
           decisionComputeLatenciesMs.push(performance.now() - started);
           hand.act(action);
+          // Only applied actions enter the next request; never append a proposal before act succeeds.
+          previousTurns.push({
+            decisionId: `simulation-${handIndex}-${ordinal}`,
+            createdAt: new Date(observedAt).toISOString(),
+            tableSeq: state.lastTableSeq,
+            street: state.street,
+            status: 'accepted',
+            source: 'jev',
+            fallbackReason: null,
+            action: {
+              kind: action.action,
+              ...(action.amount === undefined ? {} : { raiseToChips: action.amount }),
+            },
+            analysis: null,
+            analysisTruncated: false,
+          });
         }
         profit += hand.finalStacks[heroSeat]! - rules.startingStacks[heroSeat]!;
       }

@@ -9,8 +9,7 @@ import {
   type DecisionModel,
   type DecisionRecord as SdkDecision,
 } from 'duelloop';
-import { buildCandidates, buildContext, validateCandidate } from '../../core/index.js';
-import { buildSession } from '../../core/session.js';
+import { buildCandidates, validateCandidate } from '../../core/index.js';
 import type { DecisionContext, PokerState } from '../../core/types.js';
 import type { DecisionTask, RuntimeDecisionEngine } from '../../runtime/engine.js';
 import type { DecisionRecord, StoredAction } from '../../runtime/types.js';
@@ -20,6 +19,7 @@ import { decisionStateKey, actionAuthorityKey } from '../../runtime/authority.js
 import type { Store } from '../../storage/store.js';
 import type { KnowledgeSnapshot } from '../../knowledge/types.js';
 import { buildPokerInput } from '../../poker/input.js';
+import { buildPokerContext } from '../../poker/context.js';
 import {
   createPokerDomain,
   POKER_APPLICATION_ID,
@@ -32,6 +32,7 @@ import { HandBindings, type HandBinding } from './bindings.js';
 import { withModelDeadline } from './model.js';
 import { providerAttempt } from './usage.js';
 import type { AuditedDecisionModel, ModelAttempt } from '../model.js';
+import { DecisionAttempts } from './attempts.js';
 
 interface Capture {
   runId: string;
@@ -48,7 +49,9 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
   readonly journal: HostJournal;
   readonly bindings: HandBindings;
   readonly bridge: HostBridge;
+  readonly attempts: DecisionAttempts;
   private current?: { task: DecisionTask; capture: Capture };
+  private readonly decisions = new Map<string, ReturnType<RuntimeDecisionEngine['decide']>>();
 
   constructor(
     readonly options: {
@@ -68,6 +71,7 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
       scope TEXT NOT NULL, stream TEXT NOT NULL, revision TEXT NOT NULL, payload TEXT NOT NULL,
       PRIMARY KEY(scope,stream,revision));`);
     this.sdk = new SqliteStore(options.databasePath);
+    this.attempts = new DecisionAttempts(this.journal.db, this.sdk);
     const domain = createPokerDomain({
       observe: async (stream) => {
         const current = this.current;
@@ -142,42 +146,30 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
   }
 
   private input(task: DecisionTask, capture: Capture, state = task.state) {
-    return buildPokerInput(capture.context, buildCandidates(state), {
+    const input = buildPokerInput(capture.context, buildCandidates(state), {
       ...capture.binding,
       revision: decisionStateKey(state),
-      observedAt: task.receivedAt ?? Date.parse(capture.timing.receivedAt),
+      observedAt: Date.parse(capture.timing.receivedAt),
       authorityDeadline: task.deadlineAt,
     });
+    input.observation.deadline = this.attempts.authorityDeadline(input.observation);
+    return input;
   }
 
   private capture(task: DecisionTask, runId: string): Capture {
     const started = Date.now();
     const at = new Date(task.receivedAt ?? started).toISOString();
     const binding = this.bindings.pin(task.state, at);
-    const context = buildContext(task.state, [], {
+    const context = buildPokerContext(task.state, {
       asOf: binding.facts.cutoff,
-      recentOutcomes: [],
-    });
-    context.opponentMemory = binding.facts.opponents.filter((memory) =>
-      task.state.seats.some(
-        (seat) =>
-          seat.name === memory.name &&
-          seat.seat !== task.state.heroSeat &&
-          seat.inHand !== false &&
-          !seat.folded,
-      ),
-    );
-    context.session = buildSession(
-      task.state.tableId!,
-      task.state.handId!,
-      'sdk-pending',
-      this.options.raw.sessionTurns(
+      opponentMemory: binding.facts.opponents,
+      previousTurns: this.options.raw.sessionTurns(
         task.state.tableId!,
         task.state.handId!,
         at,
         task.state.lastTableSeq,
       ),
-    );
+    });
     context.framework = {
       engine: 'duelloop',
       releaseDigest: binding.releaseDigest,
@@ -212,6 +204,26 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
   async decide(
     task: DecisionTask,
     runId: string,
+    budgetMs: number,
+    progress?: (progress: LiveDecisionProgress) => void,
+  ) {
+    const key = decisionStateKey(task.state);
+    const previous = this.decisions.get(key);
+    const operation = (async () => {
+      if (previous) await previous.catch(() => {});
+      return this.decideOnce(task, runId, budgetMs, progress);
+    })();
+    this.decisions.set(key, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.decisions.get(key) === operation) this.decisions.delete(key);
+    }
+  }
+
+  private async decideOnce(
+    task: DecisionTask,
+    runId: string,
     _budgetMs: number,
     progress?: (progress: LiveDecisionProgress) => void,
   ) {
@@ -222,7 +234,7 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
     this.current = { task, capture };
     const input = this.input(task, capture);
     const policy = this.options.decisionPolicy ?? POKER_DECISION_POLICY;
-    const modelDeadline = Math.min(
+    const proposedModelDeadline = Math.min(
       task.decisionDeadlineAt ?? task.deadlineAt - policy.executionReserveMs,
       task.deadlineAt - policy.executionReserveMs,
       Date.now() + policy.maxDecisionMs - policy.executionReserveMs,
@@ -237,26 +249,38 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
       updatedAt: new Date().toISOString(),
     });
     let sdkDecision: SdkDecision | undefined;
+    let attemptId: string | undefined;
     try {
       if (task.recovered && !task.recoveryDeadlineKnown)
         throw new Error('recovered_turn_unknown_remaining_time');
       task.controller.signal.throwIfAborted();
-      if (Date.now() >= modelDeadline) throw new Error('decision_deadline_elapsed');
       this.bridge.assertNoUnknown(capture.binding.streamId);
-      sdkDecision = this.existingDecision(input.observation.revision, capture.binding.streamId);
-      sdkDecision ??= await withModelDeadline(
-        modelDeadline,
-        () =>
-          this.runtime.decide(input.observation, input.candidates, {
-            signal: task.controller.signal,
-            modelDeadline,
-          }),
-        digest([capture.binding.scopeId, input.observation.streamId, input.observation.revision]),
-      );
+      const previous = this.existingDecision(input.observation.revision, capture.binding.streamId);
+      const window = this.attempts.window(input.observation, proposedModelDeadline, previous);
+      input.observation.deadline = window.authorityDeadline;
+      if (Date.now() >= window.authorityDeadline) throw new Error('action_deadline_elapsed');
+      if (previous && !this.attempts.mayRetry(previous)) sdkDecision = previous;
+      if (!sdkDecision) {
+        if (Date.now() >= window.modelDeadline) throw new Error('decision_deadline_elapsed');
+        if (decisionStateKey(this.options.state()) !== input.observation.revision)
+          throw new Error('decision_state_changed');
+        this.options.raw.assertRuntimeLease();
+        attemptId = this.attempts.begin(input.observation, runId);
+        sdkDecision = await withModelDeadline(
+          window.modelDeadline,
+          () =>
+            this.runtime.decide(input.observation, input.candidates, {
+              signal: task.controller.signal,
+              modelDeadline: window.modelDeadline,
+            }),
+          attemptId,
+        );
+        this.recoverProjections();
+      }
       if (sdkDecision.decisionSource !== 'strategy' || !sdkDecision.action)
         throw new Error(sdkDecision.stopReason ?? 'model_decision_unavailable');
-      this.journal.decision(sdkDecision, capture.runId);
       const decision = this.project(sdkDecision, capture);
+      this.journal.decision(sdkDecision, decision.runId);
       task.controller.signal.throwIfAborted();
       const candidate = buildCandidates(task.state).find(
         (item) => item.id === sdkDecision!.action!.id,
@@ -269,11 +293,11 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
       const action: StoredAction = {
         id: command.idempotencyKey,
         decisionId: sdkDecision.decisionId,
-        runId: capture.runId,
+        runId: decision.runId,
         tableId: task.state.tableId,
         status: 'prepared',
         createdAt: new Date().toISOString(),
-        deadlineAt: task.deadlineAt,
+        deadlineAt: command.deadline,
         stateKey: decisionStateKey(task.state, false),
         decisionSource: 'jev',
         timing: decision.timing,
@@ -288,10 +312,14 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
       };
       return { decision, action };
     } catch (error) {
-      sdkDecision ??= this.existingDecision(input.observation.revision, capture.binding.streamId);
+      this.recoverProjections();
+      const recordedId = attemptId ? this.attempts.decisionId(attemptId) : undefined;
+      if (recordedId) sdkDecision = this.journal.getDecision(recordedId);
+      // Without a durable SDK outcome, the attempt remains unresolved even if the
+      // caller aborted. A simultaneous storage failure is not proof of cancellation.
       const decision = sdkDecision
         ? this.project(sdkDecision, capture)
-        : this.failure(capture, error);
+        : this.failure(capture, error, runId);
       decision.status = task.controller.signal.aborted ? 'cancelled' : 'failed';
       decision.fallbackReason = task.controller.signal.aborted
         ? 'decision_cancelled'
@@ -338,11 +366,7 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
       record.candidates,
       this.runtime.domain,
     );
-    const contextId = digest([
-      record.observation.strategyScopeId,
-      record.observation.streamId,
-      record.observation.revision,
-    ]);
+    const contextId = this.attempts.callsContext(record);
     const hasLedger = this.journal.db
       .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='framework_calls'")
       .get();
@@ -362,7 +386,7 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
         );
     return {
       id: record.decisionId,
-      runId: capture.runId,
+      runId: String(this.attempts.forDecision(record.decisionId)?.run_id ?? capture.runId),
       handId: capture.state.handId!,
       createdAt: new Date(record.startedAt).toISOString(),
       context,
@@ -400,10 +424,10 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
     };
   }
 
-  private failure(capture: Capture, error: unknown): DecisionRecord {
+  private failure(capture: Capture, error: unknown, runId = capture.runId): DecisionRecord {
     return {
       id: randomUUID(),
-      runId: capture.runId,
+      runId,
       handId: capture.state.handId!,
       createdAt: new Date().toISOString(),
       context: capture.context,
@@ -441,8 +465,10 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
         if (!row) throw new Error('SDK decision has no original host context');
         const capture = JSON.parse(String(row.payload)) as Capture;
         this.journal.atomic(() => {
-          this.journal.decision(record, capture.runId);
-          this.options.raw.saveDecision(this.project(record, capture));
+          this.attempts.attach(record, event.id);
+          const decision = this.project(record, capture);
+          this.journal.decision(record, decision.runId);
+          this.options.raw.saveDecision(decision);
           this.journal.advance(key, event.id);
         });
       }
@@ -477,7 +503,7 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
       this.bridge.prepare({
         id: intent.command.idempotencyKey,
         decisionId: record.decisionId,
-        runId: capture.runId,
+        runId: String(this.attempts.forDecision(record.decisionId)?.run_id ?? capture.runId),
         tableId: capture.state.tableId,
         status: 'prepared',
         createdAt: new Date(record.finishedAt).toISOString(),

@@ -68,6 +68,14 @@ DUELLOOP_RESEARCH_ENABLED=false
 由对应存储模块管理。原始历史不会转换成虚假的 Score 记录，也不会因迁移清空。
 已有未知动作先对账；旧失败停牌不得通过改配置或换库自动绕过。
 
+`migrate:duelloop` 输出的 `.env.next` 是宿主机路径，不能交给本仓库的
+`compose.yaml` 使用。迁移副本应使用工具同时生成的独立 `compose.json` 与
+`.env.compose`：五个数据库和两个协议都映射到 `/app/data`，唯一数据挂载是
+迁移目录的 `working/`，不会混入原 `jev-card-agent-data` 卷。默认只监听
+`127.0.0.1:18787`，Bot/研究自动启动关闭，并用迁移操作者 UID/GID 访问 0600
+私有文件。先安全停止旧服务、复核镜像 digest 与 manifest，再按
+[迁移流程](duelloop-migration.md) 启动；不要把两个 Compose 文件合并。
+
 ## 准备私有评价协议
 
 研究默认关闭，发布默认为 explicit。先确定实验的独立样本数、每 seed 手数、
