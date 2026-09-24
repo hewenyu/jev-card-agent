@@ -65,7 +65,9 @@ describe('public spectator projection', () => {
     expect(snapshot.runtime.table?.board).toEqual(['2h', '3h', '4h']);
     expect(snapshot.runtime.table?.actorSeat).toBe(2);
     expect(snapshot.runtime.table?.heroCards).toEqual(['As', 'Ad']);
-    expect(snapshot.runtime.error).toBeNull();
+    expect(snapshot.runtime.error).toBe(
+      'Runtime error. Diagnostic details are available to the operator.',
+    );
     expect(snapshot.recentEvents.map((event) => event.movements.map((m) => m.amount))).toEqual([
       [50],
       [50],

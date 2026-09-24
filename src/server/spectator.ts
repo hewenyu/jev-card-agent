@@ -1,5 +1,6 @@
 import type { ServerEvent } from '../openpoker/protocol.js';
 import type { RuntimeView, SpectatorEvent, SpectatorSnapshot } from '../shared/api.js';
+import { publicRuntimeError } from './public-runtime-error.js';
 
 /** Whitelist public table fields; the owner explicitly publishes the agent’s own cards, never action authority. */
 export function publicRuntime(view: RuntimeView): RuntimeView {
@@ -10,7 +11,7 @@ export function publicRuntime(view: RuntimeView): RuntimeView {
     mode: view.mode,
     runId: view.runId,
     strategy: view.strategy,
-    error: null,
+    error: publicRuntimeError(view.error),
     ...(view.asyncResearch
       ? {
           asyncResearch: {
