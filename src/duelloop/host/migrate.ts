@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   chmodSync,
   copyFileSync,
+  createReadStream,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -23,6 +24,12 @@ const retired = /^(ASYNC_LLM_|LLM_ADVICE_|LLM_RESEARCH_)|^(REASONING_MODE|HYBRID
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 function physical(path: string): string {
   return existsSync(path) ? realpathSync(path) : join(physical(dirname(path)), basename(path));
+}
+async function hashDatabase(path: string): Promise<string> {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(path, { highWaterMark: 64 * 1024 }))
+    hash.update(chunk);
+  return hash.digest('hex');
 }
 function inspect(path: string) {
   const db = new DatabaseSync(path, { readOnly: true });
@@ -107,7 +114,7 @@ export async function migrateDuelLoop(options: MigrationOptions) {
     snapshots[category] = {
       present: true,
       backup: `backups/${category}.sqlite`,
-      sha256: createHash('sha256').update(readFileSync(target)).digest('hex'),
+      sha256: await hashDatabase(target),
       ...inspect(target),
     };
     copyFileSync(target, copies[category]);
