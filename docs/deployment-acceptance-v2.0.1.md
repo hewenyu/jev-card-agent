@@ -5,6 +5,22 @@ Checkpoint: 2026-09-25 00:54 UTC; session/facts follow-up 00:56 UTC。
 This is an operational snapshot, not a profitability evaluation.
 本文记录部署时的运行证据，不是盈利能力评价。
 
+后续维护补记（2026-09-25 01:24 UTC）：按所有者要求仅保留最新三个完整备份批次。
+完成哈希及归档检查后，清理 26 个旧备份文件，释放 4,283,113,472 字节，空闲空间
+从约 15 GiB 增至 19 GiB；本地过期合并归档也已清理。保留 9 月 25 日上线前快照、
+9 月 24 日 v1.4.3 前快照及 v1.4.2 发布备份，Bot 全程继续运行。下面恢复过程中的
+旧备份归档数量为历史检查点数据；当前保留清单以私有 `data/backups/retention.json`
+为准。19 GiB 仍低于默认完整备份对原始库约 20.6 GiB 的空间要求。
+
+Maintenance addendum (2026-09-25 01:24 UTC): at the owner's request, only the three
+latest complete backup batches were retained after integrity checks. Removing 26
+older files reclaimed 4,283,113,472 bytes, increasing free space from approximately
+15 to 19 GiB. The expired local aggregate archive was also removed. Retained batches
+are the September 25 predeployment snapshot and September 24 pre-v1.4.3 and v1.4.2
+backups. The bot continued playing throughout. Archive counts in the recovery narrative
+below describe the earlier checkpoint; the private retention catalogue records current
+locations. The default full backup still needs more than the available space.
+
 ## Release identity / 发布身份
 
 | Item / 项目                        | Verified value / 已核对值                                                                    |
