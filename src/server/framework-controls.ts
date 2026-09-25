@@ -25,8 +25,7 @@ export class FrameworkControls {
     this.store = new SqliteStore(
       raw.filename === ':memory:' ? ':memory:' : config.duelloopDatabasePath,
     );
-    if (!this.store.activeRelease(config.duelloopScopeId))
-      this.store.setActivationMode(config.duelloopScopeId, 'explicit');
+    this.store.setActivationMode(config.duelloopScopeId, config.duelloopResearch.activationMode);
     const model = createLiveModel(
       {
         apiKey: config.jevApiKey || 'control-plane-no-network',

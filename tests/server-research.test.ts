@@ -8,7 +8,7 @@ import { AdviceStore } from '../src/knowledge/advice-store.js';
 import { publishFixture } from './helpers/research-fixture.js';
 
 describe('anonymous research observations', () => {
-  it('exposes approved summaries and explicit mode without raw evidence or mutation access', async () => {
+  it('exposes approved summaries and configured activation mode without raw evidence or mutation access', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'jev-research-public-'));
     const config = loadConfig({
       DATABASE_PATH: join(dir, 'raw.sqlite'),
@@ -32,7 +32,7 @@ describe('anonymous research observations', () => {
       expect(framework.statusCode).toBe(200);
       expect(framework.json()).toMatchObject({
         engine: 'duelloop',
-        research: { enabled: false, activationMode: 'explicit' },
+        research: { enabled: false, activationMode: 'automatic_after_validation' },
       });
       for (const forbidden of [
         'private-provider-key-test',

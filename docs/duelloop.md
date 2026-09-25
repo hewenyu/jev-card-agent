@@ -5,7 +5,7 @@ application’s live Score decision and strategy lifecycle. OpenPoker execution
 remains host-owned. This document describes the branch implementation; it does
 not claim this version is deployed.
 
-The production dependency is the public-source SDK **0.2.2**, vendored without
+The production dependency is the official public-source SDK **0.2.2** release package, without
 private source imports. [Package provenance](../vendor/README.md) pins the source
 commit, archive hashes and reproduction command. Clean production installs include
 DuelLoop and require no sibling checkout.
@@ -53,8 +53,11 @@ remote work. Missing/invalid protocol files yield `waiting_protocol` without a
 restart loop or live-play dependency.
 
 Only eligible independent final validation can create a pending research release.
-The default activation mode is `explicit`. Authenticated activation and rollback
-use the SDK’s dependency/eligibility checks and retain an operator audit. Public
+The default activation mode is `automatic_after_validation`. Before pinning a new
+hand, the host activates an eligible validated release through the SDK; existing
+hand bindings remain fixed. `explicit` and `candidate_only` are configurable.
+Authenticated activation and rollback also use the SDK’s dependency/eligibility
+checks and retain an operator audit. See [activation contract](research-auto-activation.md). Public
 visitors can inspect status and pending references, not publish a strategy.
 Research pause, active-run cancellation, activation pause and Bot stop are separate.
 

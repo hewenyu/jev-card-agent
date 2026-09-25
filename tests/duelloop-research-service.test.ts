@@ -85,7 +85,9 @@ describe('isolated SDK research worker', () => {
       expect(service.status().research?.latestRuns).toHaveLength(0);
       await service.command({ type: 'pause', paused: false });
       await until(() => !service.status().paused);
-      expect(service.status().research?.activation.activationMode).toBe('explicit');
+      expect(service.status().research?.activation.activationMode).toBe(
+        'automatic_after_validation',
+      );
     } finally {
       await service.stop();
       rmSync(directory, { recursive: true, force: true });

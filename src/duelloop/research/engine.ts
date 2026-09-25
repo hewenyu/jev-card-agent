@@ -28,8 +28,8 @@ export interface ResearchEngineOptions {
 /** SDK owns all run state transitions, evidence cursors and candidate publication. */
 export function createResearchEngine(options: ResearchEngineOptions) {
   const { store, scopeId, config } = options;
-  // SDK defaults to automatic activation; this application's initial release policy is explicit.
-  store.setActivationMode(scopeId, 'explicit');
+  // Share the host policy, including after an isolated worker restarts.
+  store.setActivationMode(scopeId, config.activationMode);
   const provider =
     options.provider ??
     new DeepSeekResearchProvider(config.provider, {

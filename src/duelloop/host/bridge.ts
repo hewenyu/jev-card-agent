@@ -1,10 +1,4 @@
-import {
-  digest,
-  type DuelLoop,
-  type ExecutionReceipt,
-  type FeedbackEvent,
-  type SqliteStore,
-} from 'duelloop';
+import { digest, type DuelLoop, type ExecutionReceipt, type SqliteStore } from 'duelloop';
 import type { PokerState } from '../../core/types.js';
 import { decisionStateKey } from '../../runtime/authority.js';
 import type { RuntimeStore, StoredAction } from '../../runtime/types.js';
@@ -13,10 +7,12 @@ import { string } from '../../openpoker/protocol.js';
 import type { Store } from '../../storage/store.js';
 import type { HandBindings } from '../live/bindings.js';
 import { HostJournal } from './journal.js';
+import { HostDeferredFeedback } from './feedback.js';
 
 /** At-least-once SDK delivery; raw evidence and its outbox entry share a host transaction. */
 export class HostBridge {
   readonly store: RuntimeStore;
+  private readonly feedback: HostDeferredFeedback;
   constructor(
     readonly raw: Store,
     readonly journal: HostJournal,
@@ -24,6 +20,7 @@ export class HostBridge {
     readonly runtime: DuelLoop,
     readonly bindings: HandBindings,
   ) {
+    this.feedback = new HostDeferredFeedback(journal, runtime, bindings);
     this.store = new Proxy(raw, {
       get: (target, property) => {
         if (property === 'pinKnowledge') return undefined;
@@ -42,7 +39,7 @@ export class HostBridge {
           return (runId: string, state: PokerState, event: ServerEvent) => {
             journal.atomic(() => {
               raw.saveHand(runId, state, event);
-              if (event.type === 'hand_result') this.recordFeedback(state, event);
+              if (event.type === 'hand_result') this.feedback.record(runId, state, event);
             });
           };
         if (property === 'updateAction')
@@ -240,48 +237,8 @@ export class HostBridge {
       throw new Error('Unresolved legacy actions require execution reconciliation before cutover');
   }
 
-  private recordFeedback(state: PokerState, event: ServerEvent): void {
-    if (!state.tableId || !state.handId) return;
-    const identity = this.bindings.identity(state);
-    const pin = this.journal.db
-      .prepare(
-        'SELECT release FROM framework_hands WHERE scope=? AND stream=? AND actor=? AND trajectory=?',
-      )
-      .get(identity.scopeId, identity.streamId, identity.actorId, identity.trajectoryId);
-    if (!pin?.release) return;
-    const hand = this.raw.db
-      .prepare('SELECT profit,complete,big_blind,ended_at FROM hands WHERE id=? AND table_id=?')
-      .get(state.handId, state.tableId);
-    if (!hand?.complete || hand.profit === null || Number(hand.big_blind) <= 0) return;
-    const id = `hand:${identity.scopeId}:${identity.trajectoryId}`;
-    const metrics = {
-      netChips: Number(hand.profit),
-      netBb: Number(hand.profit) / Number(hand.big_blind),
-    };
-    const contentHash = digest({ metrics, settled: true });
-    const previous = this.journal.db
-      .prepare('SELECT revision,content_hash FROM framework_feedback WHERE feedback_id=?')
-      .get(id);
-    if (previous?.content_hash === contentHash) return;
-    const revision = Number(previous?.revision ?? 0) + 1;
-    const eventTime = Date.parse(String(event.ts ?? hand.ended_at));
-    const feedback: FeedbackEvent = {
-      feedbackId: id,
-      revision,
-      applicationId: 'jev-card-agent',
-      strategyScopeId: identity.scopeId,
-      trajectoryId: identity.trajectoryId,
-      eventTime: Number.isFinite(eventTime) ? eventTime : Date.now(),
-      receivedAt: Date.now(),
-      metrics,
-      settled: true,
-    };
-    this.journal.enqueue(`feedback:${id}:${revision}`, { kind: 'feedback', value: feedback });
-    this.journal.db
-      .prepare(
-        'INSERT INTO framework_feedback VALUES(?,?,?) ON CONFLICT(feedback_id) DO UPDATE SET revision=excluded.revision,content_hash=excluded.content_hash',
-      )
-      .run(id, revision, contentHash);
+  reconcileFeedback(): void {
+    this.feedback.reconcile();
   }
 
   flushReceipts(): void {
@@ -312,6 +269,7 @@ export class HostBridge {
 
   async flush(): Promise<void> {
     this.flushReceipts();
+    this.reconcileFeedback();
     for (const item of this.journal.pending('feedback')) {
       if (item.payload.kind !== 'feedback') continue;
       try {

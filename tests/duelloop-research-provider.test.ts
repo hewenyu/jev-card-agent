@@ -82,7 +82,8 @@ describe('DeepSeek SDK research provider', () => {
     const body = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
     expect(body).toMatchObject({
       model: 'deepseek-flash',
-      thinking: { type: 'disabled' },
+      thinking: { type: 'enabled' },
+      output_config: { effort: 'high' },
       stream: false,
     });
     expect(body.messages[2]).toMatchObject({
@@ -98,17 +99,81 @@ describe('DeepSeek SDK research provider', () => {
     expect(provider.sessionCount()).toBe(0);
     expect(JSON.stringify(events)).not.toContain('test-secret');
   });
-  it('keeps high effort only when thinking is explicitly enabled', async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(final());
-    const provider = new DeepSeekResearchProvider(
-      { ...config(), thinking: 'enabled' },
-      { fetch: fetcher },
+  it('preserves thinking and signatures across tools while recording only verifiable counts', async () => {
+    const thinking = {
+      type: 'thinking',
+      thinking: 'private-reasoning',
+      signature: 'private-signature',
+    };
+    const redacted = { type: 'redacted_thinking', data: 'private-redacted' };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        response(
+          [thinking, redacted, { type: 'tool_use', id: 'inspect-1', name: 'inspect', input: {} }],
+          { stop_reason: 'tool_use' },
+        ),
+      )
+      .mockResolvedValueOnce(final());
+    const events: ResearchRequestEvent[] = [];
+    const provider = new DeepSeekResearchProvider(config(), {
+      fetch: fetcher,
+      record: (event) => events.push(event),
+    });
+    await provider.run(
+      input([
+        {
+          name: 'inspect',
+          description: 'Inspect evidence',
+          schema: {},
+          execute: async () => ({ samples: 1 }),
+        },
+      ]),
     );
-    await provider.run(input());
-    expect(JSON.parse(String(fetcher.mock.calls[0]![1]!.body))).toMatchObject({
+    const continuation = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
+    expect(continuation).toMatchObject({
       thinking: { type: 'enabled' },
       output_config: { effort: 'high' },
     });
+    expect(continuation.messages[1].content.slice(0, 2)).toEqual([thinking, redacted]);
+    expect(continuation.messages[2].content[0]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: 'inspect-1',
+    });
+    expect(events.filter((event) => event.status === 'completed')).toMatchObject([
+      {
+        thinking: 'enabled',
+        effort: 'high',
+        thinkingBlocks: 1,
+        redactedThinkingBlocks: 1,
+        thinkingCharacters: 17,
+      },
+      {
+        thinking: 'enabled',
+        effort: 'high',
+        thinkingBlocks: 0,
+        redactedThinkingBlocks: 0,
+        thinkingCharacters: 0,
+      },
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(
+      /private-reasoning|private-signature|private-redacted|Inspect the current evidence/,
+    );
+  });
+  it('omits effort from disabled-thinking requests and their audit events', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(final());
+    const events: ResearchRequestEvent[] = [];
+    const provider = new DeepSeekResearchProvider(
+      { ...config(), thinking: 'disabled' },
+      { fetch: fetcher, record: (event) => events.push(event) },
+    );
+    await provider.run(input());
+    const body = JSON.parse(String(fetcher.mock.calls[0]![1]!.body));
+    expect(body.thinking).toEqual({ type: 'disabled' });
+    expect(body.output_config).toBeUndefined();
+    expect(
+      events.every((event) => event.thinking === 'disabled' && event.effort === undefined),
+    ).toBe(true);
   });
   it('rejects unexpected model identities without retry or executing tools', async () => {
     const execute = vi.fn();
@@ -278,6 +343,29 @@ describe('research configuration isolation', () => {
     expect(worker.enabled).toBe(false);
     expect(JSON.stringify(worker)).not.toMatch(/arena-private|control-private|injected|nested/);
     expect(Object.keys(worker.budget)).not.toContain('costUsd');
+  });
+  it('defaults to enabled high thinking and automatic activation after validation', () => {
+    const config = parseDuelLoopResearchConfig({});
+    expect(config).toMatchObject({
+      activationMode: 'automatic_after_validation',
+      provider: { thinking: 'enabled', effort: 'high' },
+    });
+    expect(researchWorkerConfig(config).activationMode).toBe('automatic_after_validation');
+  });
+  it.each(['explicit', 'candidate_only', 'automatic_after_validation'] as const)(
+    'preserves configured %s activation across worker isolation',
+    (activationMode) => {
+      const config = parseDuelLoopResearchConfig({ DUELLOOP_ACTIVATION_MODE: activationMode });
+      expect(config.activationMode).toBe(activationMode);
+      expect(researchWorkerConfig(config).activationMode).toBe(activationMode);
+    },
+  );
+  it.each([
+    { DUELLOOP_ACTIVATION_MODE: 'automatic' },
+    { DUELLOOP_RESEARCH_THINKING: 'true' },
+    { DUELLOOP_RESEARCH_EFFORT: 'low' },
+  ])('rejects unsupported activation and thinking configuration: %j', (env) => {
+    expect(() => parseDuelLoopResearchConfig(env)).toThrow();
   });
   it('requires both DeepSeek and Jev evaluation keys when enabled', () => {
     expect(() => parseDuelLoopResearchConfig({ DUELLOOP_RESEARCH_ENABLED: 'true' })).toThrow();

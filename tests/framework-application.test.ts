@@ -22,7 +22,7 @@ describe('framework-only production assembly', () => {
       expect(result.statusCode).toBe(200);
       expect(result.json()).toMatchObject({
         engine: 'duelloop',
-        research: { enabled: false, activationMode: 'explicit' },
+        research: { enabled: false, activationMode: 'automatic_after_validation' },
       });
       expect(result.body).not.toContain('backend-only');
       expect(result.body).not.toContain('private-operator');

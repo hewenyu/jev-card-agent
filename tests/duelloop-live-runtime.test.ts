@@ -103,6 +103,87 @@ function raiseTurn(ws: WebSocket, hand: number) {
 }
 
 describe('production engine through simulated OpenPoker WebSocket', () => {
+  it('retains a resync batch settlement until asynchronous hand binding finishes', async () => {
+    const urls = await arena((ws, message) => {
+      if (message.type === 'join_lobby') {
+        joined(ws);
+        send(ws, {
+          type: 'resync_response',
+          table_id: 't1',
+          to_table_seq: 102,
+          replayed_events: [
+            {
+              type: 'hand_start',
+              table_id: 't1',
+              hand_id: 'h1',
+              table_seq: 100,
+              seat: 0,
+              blinds: { small_blind: 10, big_blind: 20 },
+            },
+            {
+              type: 'hand_result',
+              table_id: 't1',
+              hand_id: 'h1',
+              table_seq: 102,
+              final_stacks: { '0': 2040, '1': 1960 },
+            },
+          ],
+          snapshot: { table_id: 't1', hand_id: 'h1', street: 'showdown', seats: [] },
+        });
+      }
+    });
+    const f = createLive(urls);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const activate = f.coordinator.runtime.activatePending.bind(f.coordinator.runtime);
+    vi.spyOn(f.coordinator.runtime, 'activatePending').mockImplementationOnce(async (scope) => {
+      await gate;
+      return activate(scope);
+    });
+    try {
+      await f.runtime.start({ maxHands: 1 });
+      await vi.waitFor(() =>
+        expect(f.raw.db.prepare('SELECT complete FROM hands WHERE id=?').get('h1')?.complete).toBe(
+          1,
+        ),
+      );
+      expect(
+        f.coordinator.sdk.feedbackProgress('websocket-scope', 0, 'first_settlement')
+          .settledTrajectories,
+      ).toBe(0);
+    } finally {
+      release();
+    }
+    await vi.waitFor(() =>
+      expect(f.raw.db.prepare('SELECT release FROM framework_hands').get()?.release).toBeTruthy(),
+    );
+    await f.coordinator.bridge.flush();
+    await f.coordinator.bridge.flush();
+    expect(
+      f.coordinator.sdk.feedbackProgress('websocket-scope', 0, 'first_settlement')
+        .settledTrajectories,
+    ).toBe(1);
+    expect(f.coordinator.sdk.events({ types: ['feedback.received'] })).toHaveLength(1);
+    expect(urls.messages.filter((message) => message.type === 'action')).toHaveLength(0);
+  });
+
+  it('observes asynchronous hand-binding failure before any model action is submitted', async () => {
+    const urls = await arena((ws, message) => {
+      if (message.type === 'join_lobby') {
+        joined(ws);
+        send(ws, { type: 'hand_start', table_id: 't1', hand_id: 'h1', table_seq: 100 });
+      }
+    });
+    const { runtime, coordinator } = createLive(urls);
+    vi.spyOn(coordinator, 'pin').mockRejectedValue(new Error('binding storage unavailable'));
+    await runtime.start({ maxHands: 0 });
+    await vi.waitFor(() => expect(runtime.status().phase).toBe('failed'));
+    expect(runtime.status().lastError).toContain('binding storage unavailable');
+    expect(urls.messages.some((message) => message.type === 'action')).toBe(false);
+  });
+
   it.each([false, true])(
     'cold restart resumes the original intent without Score (missing host-ready=%s)',
     async (missingReady) => {
