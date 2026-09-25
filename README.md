@@ -39,7 +39,7 @@ flowchart LR
   S --> L[DeepSeek Messages researcher]
   L --> E[Independent six-max evaluator · Jev]
   E --> P[Validated pending release]
-  P --> A[Explicit operator activation]
+  P --> A[Automatic activation at a new hand]
   A --> D
 ```
 
@@ -48,7 +48,7 @@ flowchart LR
 - **The host alone sends actions.** SDK intent, application journal, turn identity, lease, legal amount and original deadline must all agree. Acknowledgment and completed execution are distinct, duplicate receipts are deduplicated and unknown execution blocks the stream.
 - **No local decision fallback.** Jev uses an initial request plus at most three retries: 10 seconds per request and a 40-second decision window by default, bounded by original Arena authority and a submission reserve. Invalid/stale results are not reused. Genuine decision failures preserve a stop requiring explicit recovery.
 - **Research never delays the current action.** Deterministic facts/audits run separately. The isolated LLM worker uses SDK-frozen evidence, controlled tools, cancellation, recovery and independent development/final evaluation. It receives model credentials for research/evaluation, but no Arena execution key.
-- **Research registration is not activation.** Only an eligible final validation can register a research release. Default activation is explicit; the public site cannot approve or roll back. Interrupted paid work is not silently replayed, corrections to an old settlement do not count as new hands, and inconclusive evaluation leaves the current strategy in place.
+- **Research registration is not activation.** Only an eligible final validation can register a research release. Default activation is automatic after independent final validation, at the next unbound hand; the public site cannot change this policy or roll back. Interrupted paid work is not silently replayed, corrections to an old settlement do not count as new hands, and inconclusive evaluation leaves the current strategy in place.
 
 The initial bootstrap strategy is explicitly enabled but has not passed independent statistical validation. Deployment acceptance confirms operation, not profitability.
 
@@ -96,7 +96,7 @@ For the combined website and Bot, build and start the server. Explicitly set `AU
 
 ## Enable asynchronous research
 
-Use `DUELLOOP_RESEARCH_API_KEY` or the existing `DEEPSEEK_API_KEY`, exact model `deepseek-flash`, and its Messages endpoint. Default research thinking is disabled; when enabled, default effort is high. Jev remains the live action selector and also evaluates candidate strategies independently.
+Use `DUELLOOP_RESEARCH_API_KEY` or the existing `DEEPSEEK_API_KEY`, exact model `deepseek-flash`, and its Messages endpoint. Research thinking is enabled by default with high effort (`DUELLOOP_RESEARCH_THINKING=enabled`, `DUELLOOP_RESEARCH_EFFORT=high`). Jev remains the live action selector and also evaluates candidate strategies independently.
 
 Before enabling research, lock development and final evaluation parameters. `prepare-protocols` generates fresh, disjoint private seeds, writes files with exclusive creation and makes **no model calls**. Set the variables below from your reviewed experiment plan; sample size and thresholds must be chosen before inspecting final results.
 
@@ -108,7 +108,7 @@ npm run research -- --op prepare-protocols --output data/protocols \
   --max-latency-ms "$MAX_LATENCY_MS"
 ```
 
-Set `DUELLOOP_RESEARCH_ENABLED=true` and the private protocol paths, then restart safely. Missing/invalid protocols put only research into `waiting_protocol`; live decisions continue. A consumed final holdout requires a fresh locked protocol. The research model cannot read final seeds through its tools.
+Set `DUELLOOP_RESEARCH_ENABLED=true`, `DUELLOOP_ACTIVATION_MODE=automatic_after_validation` and the private protocol paths, then restart safely. Only validated eligible releases activate; existing hand bindings stay fixed. `explicit` and `candidate_only` remain available for controlled operation. See [activation contract](docs/research-auto-activation.md). Missing/invalid protocols put only research into `waiting_protocol`; live decisions continue. A consumed final holdout requires a fresh locked protocol. The research model cannot read final seeds through its tools.
 
 ```sh
 npm run research -- --op status

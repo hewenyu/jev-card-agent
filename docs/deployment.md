@@ -90,7 +90,7 @@ DUELLOOP_RESEARCH_ENABLED=false
 
 ## 准备私有评价协议
 
-研究默认关闭，发布默认为 explicit。先确定实验的独立样本数、每 seed 手数、
+研究默认关闭，启用后策略默认使用 `automatic_after_validation`：独立最终验证通过后，在新手绑定前自动激活；`explicit` 与 `candidate_only` 可按需要配置。先确定实验的独立样本数、每 seed 手数、
 改善/退化阈值、置信水平和延迟门槛，再生成协议；不要看过最终结果才调整阈值。
 下面变量由操作者根据审阅过的计划设置，不是已证明有统计功效的默认值。
 
@@ -107,8 +107,9 @@ sh scripts/manage.sh research --op prepare-protocols --output /app/data/protocol
 摘要，不能读取 final seeds。最终 holdout 使用次数耗尽后，需要新的独立协议。
 
 配置 `DUELLOOP_RESEARCH_API_KEY` 或已有 `DEEPSEEK_API_KEY`，精确模型
-`deepseek-flash`，端点 `https://api.deepseek.com/anthropic`；默认关闭思考，启用
-时 effort 默认 high。同时保留 Jev key，独立评价会真实调用 Jev。设置
+`deepseek-flash`，端点 `https://api.deepseek.com/anthropic`；默认开启思考，
+effort 默认 high。设置 `DUELLOOP_RESEARCH_THINKING=enabled`、
+`DUELLOOP_RESEARCH_EFFORT=high` 和 `DUELLOOP_ACTIVATION_MODE=automatic_after_validation`。同时保留 Jev key，独立评价会真实调用 Jev。设置
 `DUELLOOP_RESEARCH_ENABLED=true` 后安全重启。协议缺失/无效时研究显示
 `waiting_protocol`，不反复重启 worker，Bot 可继续使用已有 release。
 

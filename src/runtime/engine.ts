@@ -16,7 +16,7 @@ export interface DecisionTask {
   opponents: OpponentStats[];
 }
 export interface RuntimeDecisionEngine {
-  pin(state: PokerState, at: string): void;
+  pin(state: PokerState, at: string): void | Promise<void>;
   decide(
     task: DecisionTask,
     runId: string,

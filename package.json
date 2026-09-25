@@ -1,6 +1,6 @@
 {
   "name": "jev-card-agent",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "private": true,
   "description": "Autonomous Jev poker agent and evaluation console for OpenPoker.ai",
   "type": "module",

@@ -190,6 +190,7 @@ export class Controller {
         state: () => this.runtime?.state ?? createInitialState(),
         facts: (at) => this.research.latest(at),
         decisionPolicy: this.config.duelloopResearch.decisionPolicy,
+        activationMode: this.config.duelloopResearch.activationMode,
       });
       this.coordinator = coordinator;
       this.runtime = new PokerRuntime({

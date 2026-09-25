@@ -51,6 +51,7 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
   readonly bridge: HostBridge;
   readonly attempts: DecisionAttempts;
   private current?: { task: DecisionTask; capture: Capture };
+  private pendingPins: Promise<void> = Promise.resolve();
   private readonly decisions = new Map<string, ReturnType<RuntimeDecisionEngine['decide']>>();
 
   constructor(
@@ -64,6 +65,7 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
       facts: (asOf: string) => KnowledgeSnapshot;
       decisionPolicy?: typeof POKER_DECISION_POLICY;
       mode?: 'live' | 'simulation';
+      activationMode?: 'automatic_after_validation' | 'explicit' | 'candidate_only';
     },
   ) {
     this.journal = new HostJournal(options.raw.db);
@@ -104,6 +106,10 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
       this.sdk.setActivationMode(options.scopeId, 'explicit');
       this.runtime.bootstrap(createPokerStrategy(), options.scopeId);
     }
+    this.sdk.setActivationMode(
+      options.scopeId,
+      options.activationMode ?? 'automatic_after_validation',
+    );
     this.bindings = new HandBindings(
       this.journal,
       this.runtime,
@@ -117,8 +123,24 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
     this.bridge.flushReceipts();
   }
 
-  pin(state: PokerState, at: string): void {
-    this.bindings.pin(state, at);
+  pin(state: PokerState, at: string): Promise<void> {
+    const snapshot = structuredClone(state);
+    const operation = this.pendingPins.then(async () => {
+      this.options.raw.assertRuntimeLease();
+      if (
+        !this.bindings.hasDurableBinding(snapshot) &&
+        this.sdk.scopeSummary(this.options.scopeId).activationMode ===
+          'automatic_after_validation' &&
+        this.sdk.unresolvedIntents(this.options.scopeId).length === 0
+      )
+        await this.runtime.activatePending(this.options.scopeId);
+      this.options.raw.assertRuntimeLease();
+      this.bindings.pin(snapshot, at);
+      this.bridge.reconcileFeedback();
+    });
+    // Serializes hand-start events with decision capture, without poisoning future recovery.
+    this.pendingPins = operation.catch(() => {});
+    return operation;
   }
 
   rememberTurn(
@@ -230,6 +252,7 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
     if (!task.state.tableId || !task.state.handId || !task.state.turnToken) return null;
     this.options.raw.assertRuntimeLease();
     await this.bridge.flush();
+    await this.pin(task.state, new Date(task.receivedAt ?? Date.now()).toISOString());
     const capture = this.capture(task, runId);
     this.current = { task, capture };
     const input = this.input(task, capture);
@@ -553,6 +576,7 @@ export class LiveDecisionCoordinator implements RuntimeDecisionEngine {
     }
   }
   async close(): Promise<void> {
+    await this.pendingPins;
     try {
       await this.bridge.flush();
     } finally {

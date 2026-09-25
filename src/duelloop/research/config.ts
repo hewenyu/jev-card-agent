@@ -14,6 +14,7 @@ export interface ResearchProviderConfig {
 }
 export interface DuelLoopResearchConfig {
   enabled: boolean;
+  activationMode: 'explicit' | 'candidate_only' | 'automatic_after_validation';
   provider: ResearchProviderConfig;
   jev: { apiKey: string; baseUrl: string; model: string; timeoutMs: number };
   decisionPolicy: { maxDecisionMs: number; executionReserveMs: number };
@@ -42,13 +43,21 @@ export function parseDuelLoopResearchConfig(env: NodeJS.ProcessEnv): DuelLoopRes
   const model = env.DUELLOOP_RESEARCH_MODEL || env.DEEPSEEK_MODEL || 'deepseek-flash';
   if (model !== 'deepseek-flash' && model !== 'deepseek-v4-pro')
     throw new Error('DUELLOOP_RESEARCH_MODEL requires an exact supported DeepSeek identity');
-  const thinking = env.DUELLOOP_RESEARCH_THINKING || 'disabled';
+  const thinking = env.DUELLOOP_RESEARCH_THINKING || 'enabled';
   if (thinking !== 'enabled' && thinking !== 'disabled')
     throw new Error('DUELLOOP_RESEARCH_THINKING must be enabled or disabled');
   const effort = env.DUELLOOP_RESEARCH_EFFORT || 'high';
   if (effort !== 'high' && effort !== 'max') throw new Error('Invalid DUELLOOP_RESEARCH_EFFORT');
+  const activationMode = env.DUELLOOP_ACTIVATION_MODE || 'automatic_after_validation';
+  if (
+    activationMode !== 'explicit' &&
+    activationMode !== 'candidate_only' &&
+    activationMode !== 'automatic_after_validation'
+  )
+    throw new Error('Invalid DUELLOOP_ACTIVATION_MODE');
   const config: DuelLoopResearchConfig = {
     enabled,
+    activationMode,
     provider: {
       apiKey: env.DUELLOOP_RESEARCH_API_KEY || env.DEEPSEEK_API_KEY || env.REASONING_API_KEY || '',
       baseUrl:
@@ -101,6 +110,7 @@ export function researchWorkerConfig(c: DuelLoopResearchConfig): DuelLoopResearc
   const p = c.provider;
   return {
     enabled: c.enabled,
+    activationMode: c.activationMode,
     provider: {
       apiKey: p.apiKey,
       baseUrl: p.baseUrl,

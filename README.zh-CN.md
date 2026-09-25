@@ -39,7 +39,7 @@ flowchart LR
   S --> L[DeepSeek Messages 研究]
   L --> E[独立六人评价器 · Jev]
   E --> P[验证合格的 pending release]
-  P --> A[操作者明确激活]
+  P --> A[新手开始前自动激活]
   A --> D
 ```
 
@@ -48,7 +48,7 @@ flowchart LR
 - **只有宿主能发送动作。** SDK intent、应用日志、行动身份、租约、合法金额与原始截止时间都必须匹配。收到 ack 与确认执行完成分别处理；重复回执去重，执行状态未知时阻断该 stream。
 - **没有本地动作兜底。** Jev 初次请求后最多重试三次，默认单次 10 秒、整次决策 40 秒，并受原始 Arena 期限及提交预留约束。无效、过期结果不复用；真实决策故障保存停牌状态，需要明确恢复。
 - **研究不串行等待当前动作。** 确定性事实与审计独立运行；LLM worker 使用 SDK 冻结证据、受控工具、取消/恢复及独立开发与最终评价。它持有研究和评价模型凭据，没有 Arena 执行密钥。
-- **登记候选不等于激活。** 只有合格最终验证才能产生研究 release，默认操作者明确激活。中断的付费工作不自动重放；旧结算修订不算新增手数；评价 inconclusive 时保留原策略。
+- **登记候选不等于激活。** 只有独立最终验证通过才能产生研究 release，默认由宿主在下一手尚未绑定时自动激活；同手版本不变。中断的付费工作不自动重放；旧结算修订不算新增手数；评价 inconclusive 时保留原策略。
 
 初始 bootstrap 策略已显式启用，但尚未通过独立统计验证。部署验收确认运行情况，不证明盈利能力。
 
@@ -96,7 +96,7 @@ npm run bot -- --strategy jev --max-hands 10 --max-minutes 30
 
 ## 开启异步研究
 
-使用 `DUELLOOP_RESEARCH_API_KEY` 或已有 `DEEPSEEK_API_KEY`，精确模型名 `deepseek-flash`，采用其 Messages 端点。默认研究关闭 thinking；启用时 effort 默认 high。Jev 始终选择实时动作，也负责候选策略独立评价中的模型判断。
+使用 `DUELLOOP_RESEARCH_API_KEY` 或已有 `DEEPSEEK_API_KEY`，精确模型名 `deepseek-flash`，采用其 Messages 端点。研究默认开启 thinking，effort 为 high（`DUELLOOP_RESEARCH_THINKING=enabled`、`DUELLOOP_RESEARCH_EFFORT=high`）。Jev 始终选择实时动作，也负责候选策略独立评价中的模型判断。
 
 启用之前先锁定开发与最终评价参数。`prepare-protocols` 生成新的互不重叠私有种子，以禁止覆盖方式写文件，**不会调用模型**。下面变量应来自审阅过的实验计划；样本数与阈值必须在看到最终结果之前确定。
 
@@ -108,7 +108,7 @@ npm run research -- --op prepare-protocols --output data/protocols \
   --max-latency-ms "$MAX_LATENCY_MS"
 ```
 
-配置 `DUELLOOP_RESEARCH_ENABLED=true` 和私有协议路径，再安全重启。协议缺失或无效时仅研究进入 `waiting_protocol`，实时决策继续。最终 holdout 用完后需要新的锁定协议；研究模型无法通过工具读取最终种子。
+配置 `DUELLOOP_RESEARCH_ENABLED=true`、`DUELLOOP_ACTIVATION_MODE=automatic_after_validation` 和私有协议路径，再安全重启。只有验证合格的策略才能自动启用，已有手牌继续使用固定版本；仍支持 `explicit` 和 `candidate_only` 模式。详见[自动激活合同](docs/research-auto-activation.md)。协议缺失或无效时仅研究进入 `waiting_protocol`，实时决策继续。最终 holdout 用完后需要新的锁定协议；研究模型无法通过工具读取最终种子。
 
 ```sh
 npm run research -- --op status

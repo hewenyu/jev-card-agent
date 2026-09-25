@@ -46,7 +46,9 @@ disjoint seed blocks and holdouts. An injected independent evaluator is mandator
 No evaluator or no final validation means no research release. Statistical
 inconclusive results do not establish profitability.
 
-Activation defaults to `explicit`. Research only registers pending releases.
+Activation defaults to `automatic_after_validation`. Research only registers pending
+releases; the live host consumes eligible validated releases before pinning a new
+hand. `DUELLOOP_ACTIVATION_MODE` can select `explicit` or `candidate_only`.
 Authenticated host controls approve/activate a specific release or roll back using
 the live SDK runtime, preserving its boundary and compatibility checks. Research
 pause, run cancellation, activation pause and bot stop are distinct operations.

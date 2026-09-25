@@ -18,10 +18,11 @@ describe('published environment example', () => {
       duelloopActorId: 'openpoker-self',
       duelloopResearch: {
         enabled: false,
+        activationMode: 'automatic_after_validation',
         provider: {
           apiKey: '',
           model: 'deepseek-flash',
-          thinking: 'disabled',
+          thinking: 'enabled',
           effort: 'high',
           maxRetries: 3,
         },

@@ -30,6 +30,7 @@ import {
 import { markAcknowledged, markSent } from './timing.js';
 import { recordDecision } from './recording.js';
 import { runtimeStatus } from './status.js';
+import { pinHand } from './pinning.js';
 import type {
   DecisionRecord,
   RuntimeDependencies,
@@ -463,7 +464,7 @@ export class PokerRuntime extends EventEmitter {
       !this.snapshot.state.complete &&
       ['hand_start', 'your_turn', 'resync_response'].includes(event.type)
     )
-      this.dependencies.engine.pin(this.snapshot.state, new Date().toISOString());
+      pinHand(this.dependencies, this.snapshot, this.lifetime, this.fail.bind(this));
     this.dependencies.store.saveCheckpoint({
       opponents: this.opponents.exportState(),
       tableId: this.snapshot.state.tableId,

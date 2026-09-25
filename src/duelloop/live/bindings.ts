@@ -43,6 +43,19 @@ export class HandBindings {
     };
   }
 
+  /** Partial host writes and SDK-only pins are recovery evidence, never a new-hand boundary. */
+  hasDurableBinding(state: PokerState): boolean {
+    const id = this.identity(state);
+    return (
+      !!this.journal.db
+        .prepare(
+          'SELECT 1 FROM framework_hands WHERE scope=? AND stream=? AND actor=? AND trajectory=?',
+        )
+        .get(id.scopeId, id.streamId, id.actorId, id.trajectoryId) ||
+      !!this.runtime.lookupTrajectoryRelease({ ...id, strategyScopeId: id.scopeId })
+    );
+  }
+
   pin(state: PokerState, at: string): HandBinding {
     if (!Number.isFinite(Date.parse(at))) throw new Error('Hand binding time is invalid');
     const id = this.identity(state);

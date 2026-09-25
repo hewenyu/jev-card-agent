@@ -24,7 +24,7 @@ describe('synthetic application research-to-live release lifecycle', () => {
   it('validates a candidate, explicitly approves it for later hands and rolls back without changing existing pins', async () => {
     const raw = new Store(':memory:');
     const state = pokerState();
-    const config = parseDuelLoopResearchConfig({});
+    const config = parseDuelLoopResearchConfig({ DUELLOOP_ACTIVATION_MODE: 'explicit' });
     const model = new FixtureDecisionModel(
       'synthetic-lifecycle-no-poker-performance-claim',
       () => ({
@@ -43,6 +43,7 @@ describe('synthetic application research-to-live release lifecycle', () => {
       model,
       mode: 'simulation',
       decisionPolicy: config.decisionPolicy,
+      activationMode: config.activationMode,
     });
     const store = coordinator.sdk;
     const domain = createPokerDomain({
