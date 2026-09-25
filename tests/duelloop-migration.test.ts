@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,6 +9,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { buildContext, createInitialState } from '../src/core/index.js';
 import { Store } from '../src/storage/store.js';
 import { migrateDuelLoop } from '../src/duelloop/host/migrate.js';
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, readFileSync: vi.fn(actual.readFileSync) };
+});
 const directories: string[] = [];
 afterEach(() => {
   for (const p of directories.splice(0)) rmSync(p, { recursive: true, force: true });
@@ -63,6 +68,31 @@ function fixture() {
   return { directory, database, env, output: join(directory, 'out') };
 }
 describe('copy-only migration', () => {
+  it('hashes multi-chunk snapshots without loading a whole database into a Buffer', async () => {
+    const f = fixture();
+    const db = new DatabaseSync(f.database);
+    db.exec(
+      'CREATE TABLE large_payload(value); INSERT INTO large_payload VALUES(zeroblob(2097152))',
+    );
+    db.close();
+    const original = (await vi.importActual<typeof import('node:fs')>('node:fs')).readFileSync;
+    vi.mocked(readFileSync).mockImplementation((...args: Parameters<typeof readFileSync>) => {
+      if (String(args[0]).endsWith('.sqlite'))
+        throw new Error('Whole-database reads are forbidden');
+      return original(...args);
+    });
+    let manifest;
+    try {
+      manifest = await migrateDuelLoop(f);
+    } finally {
+      vi.mocked(readFileSync).mockImplementation(original);
+    }
+    const backup = readFileSync(join(f.output, 'backups/raw.sqlite'));
+    expect(backup.byteLength).toBeGreaterThan(2 * 1024 * 1024);
+    expect(manifest.snapshots.raw).toMatchObject({
+      sha256: createHash('sha256').update(backup).digest('hex'),
+    });
+  });
   it('preserves original bytes and blockers, initializes separate schemas and excludes secrets from manifest', async () => {
     const f = fixture();
     const raw = readFileSync(f.database);

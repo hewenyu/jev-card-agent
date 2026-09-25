@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -19,7 +20,11 @@ const compatibility = resolve('scripts/update-container.sh');
 const psRunning = ['compose', 'ps', '--status', 'running', '-q', 'app'];
 const exec = ['compose', 'exec', '-T', 'app', 'node', '--input-type=module'];
 const recreate = ['compose', 'up', '-d', '--no-deps', '--force-recreate', 'app'];
-const backupPath = '/app/data/backups/jev-2025-01-01T00-00-00-000Z.sqlite';
+const backupPath = '/app/data/backups/jev-2025-01-01T00-00-00-000Z.sqlite.gz';
+
+const backupDigest = createHash('sha256').update('SQLite backup fixture').digest('hex');
+const inspectBackup = (path: string) => [...exec, '-', path];
+const removeBackup = (path: string) => [...exec, '-', path, backupDigest];
 
 // Every invocation is intercepted by this temporary binary. The child environment
 // contains no inherited credentials, Docker context, or application configuration.
@@ -36,7 +41,14 @@ if (action === 'ps' && args.includes('--status')) {
   if (process.env.TEST_RUNNING === '1') process.stdout.write('fake-container\n');
 } else if (action === 'exec') {
   const source = fs.readFileSync(0, 'utf8');
-  if (source.includes('/api/runtime/resume')) {
+  if (source.includes('Backup changed during verification')) {
+    if (args.length > 8) {
+      log(['backup-remove', args[7]]);
+      if (process.env.FAIL_REMOVE === '1') process.exit(43);
+    } else {
+      process.stdout.write(require('node:crypto').createHash('sha256').update('SQLite backup fixture').digest('hex') + ' 21\n');
+    }
+  } else if (source.includes('/api/runtime/resume')) {
     if (!source.includes('http://127.0.0.1:') || !source.includes("method: 'POST'") ||
         !source.includes('process.env.API_TOKEN') || !source.includes('Authorization:')) process.exit(93);
     log(['resume-start', 'POST', 'loopback', 'backend-token']);
@@ -58,7 +70,7 @@ if (action === 'ps' && args.includes('--status')) {
   if (process.env.FAIL_PULL === '1') process.exit(29);
 } else if (action === 'cp') {
   if (process.env.FAIL_COPY === '1') process.exit(37);
-  fs.writeFileSync(path.join(args[3], path.basename(args[2])), 'SQLite backup fixture');
+  fs.writeFileSync(path.join(args[3], path.basename(args[2])), process.env.CORRUPT_COPY === '1' ? 'broken copy' : 'SQLite backup fixture');
 }
 `;
 
@@ -223,7 +235,10 @@ describe('manual Compose management', () => {
       exec,
       ['backup-start'],
       ['backup-complete'],
-      ['compose', 'cp', `app:${backupPath}`, 'data/backups/'],
+      inspectBackup(backupPath),
+      ['compose', 'cp', `app:${backupPath}`, expect.stringMatching(/^data\/backups\/\.incoming-/)],
+      removeBackup(backupPath),
+      ['backup-remove', backupPath],
     ]);
     const target = join(test.directory, 'data/backups', basename(backupPath));
     expect(readFileSync(target, 'utf8')).toBe('SQLite backup fixture');
@@ -253,10 +268,8 @@ describe('manual Compose management', () => {
       TEST_BACKUP_PATH: `${backupPath}\n${knowledgePath}`,
     });
     expect(status).toBe(0);
-    expect(calls.slice(-2)).toEqual([
-      ['compose', 'cp', `app:${backupPath}`, 'data/backups/'],
-      ['compose', 'cp', `app:${knowledgePath}`, 'data/backups/'],
-    ]);
+    expect(calls).toContainEqual(removeBackup(backupPath));
+    expect(calls).toContainEqual(removeBackup(knowledgePath));
     expect(
       statSync(join(test.directory, 'data/backups', basename(knowledgePath))).mode & 0o777,
     ).toBe(0o600);
@@ -286,7 +299,12 @@ describe('manual Compose management', () => {
       TEST_BACKUP_PATH: `${researchPath}\n${backupPath}`,
     });
     expect(status).toBe(0);
-    expect(calls).toContainEqual(['compose', 'cp', `app:${researchPath}`, 'data/backups/']);
+    expect(calls).toContainEqual([
+      'compose',
+      'cp',
+      `app:${researchPath}`,
+      expect.stringMatching(/^data\/backups\/\.incoming-/),
+    ]);
     expect(
       statSync(join(test.directory, 'data/backups', basename(researchPath))).mode & 0o777,
     ).toBe(0o600);
@@ -297,13 +315,18 @@ describe('manual Compose management', () => {
     const files = [
       backupPath.replace('/jev-', '/facts-'),
       backupPath.replace('/jev-', '/duelloop-'),
-      backupPath.replace('/jev-', '/protocol-final-').replace('.sqlite', '.json'),
-      backupPath.replace('/jev-', '/protocol-development-').replace('.sqlite', '.json'),
+      backupPath.replace('/jev-', '/protocol-final-').replace('.sqlite.gz', '.json'),
+      backupPath.replace('/jev-', '/protocol-development-').replace('.sqlite.gz', '.json'),
     ];
     const { status, calls } = test.run('backup', { TEST_BACKUP_PATH: files.join('\n') });
     expect(status).toBe(0);
     for (const path of files) {
-      expect(calls).toContainEqual(['compose', 'cp', `app:${path}`, 'data/backups/']);
+      expect(calls).toContainEqual([
+        'compose',
+        'cp',
+        `app:${path}`,
+        expect.stringMatching(/^data\/backups\/\.incoming-/),
+      ]);
       expect(statSync(join(test.directory, 'data/backups', basename(path))).mode & 0o777).toBe(
         0o600,
       );
@@ -313,6 +336,24 @@ describe('manual Compose management', () => {
   it('does not report success if the backup cannot be copied', () => {
     const { status, stdout } = fixture().run('backup', { FAIL_COPY: '1' });
     expect(status).toBe(37);
+    expect(stdout).not.toContain('Consistent SQLite backup');
+  });
+
+  it('preserves the container archive when the copied checksum differs', () => {
+    const { status, calls, stdout, stderr } = fixture().run('backup', { CORRUPT_COPY: '1' });
+    expect(status).toBe(1);
+    expect(stderr).toContain('checksum mismatch');
+    expect(calls).not.toContainEqual(removeBackup(backupPath));
+    expect(stdout).not.toContain('Consistent SQLite backup');
+  });
+
+  it('preserves the verified host archive if container cleanup fails', () => {
+    const test = fixture();
+    const { status, stdout } = test.run('backup', { FAIL_REMOVE: '1' });
+    expect(status).toBe(43);
+    expect(readFileSync(join(test.directory, 'data/backups', basename(backupPath)), 'utf8')).toBe(
+      'SQLite backup fixture',
+    );
     expect(stdout).not.toContain('Consistent SQLite backup');
   });
 

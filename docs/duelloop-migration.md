@@ -4,6 +4,15 @@ Run `npm run migrate:duelloop -- --database data/jev.sqlite --env .env --output 
 
 The output directory must not already exist. It is private (0700); `.env.next`, the manifest and database files are 0600. Keep it under ignored `data/`. It contains `backups/` (original schemas), `working/` (new runtime paths), `.env.next`, and a sanitized `manifest.json`. All existing raw, legacy knowledge, legacy research, facts and SDK stores are copied, together with private development/final protocol files when present; seed contents are excluded from the manifest. Missing optional stores are reported; new raw host tables and a physically separate SDK database are initialized only in `working/`.
 
+Deployment preparation on 2026-09-25 found a raw database larger than 10 GB and
+a legacy knowledge database larger than 2 GB. Reading each complete backup into
+one Buffer to calculate SHA-256 can fail at this scale or exhaust memory.
+Database snapshot hashes are therefore calculated from a read stream with 64 KiB
+chunks; the digest still covers every byte of the completed SQLite backup.
+Hashing memory does not grow with database size. This does not reduce required
+disk space: budget for both immutable backups and upgraded working copies, and
+retain source files until the new deployment has been verified.
+
 The Compose handoff consists of a **standalone** `compose.json` and private
 `.env.compose`. The latter maps all five databases and both protocols to
 `/app/data`; the only database mount is `./working:/app/data`. Never combine this

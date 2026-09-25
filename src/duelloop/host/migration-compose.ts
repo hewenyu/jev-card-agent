@@ -40,7 +40,7 @@ export function writeMigrationCompose(output: string, next: Record<string, strin
   const compose = {
     services: {
       app: {
-        image: '${JEV_IMAGE:-hewenyulucky/jev-card-agent:2.0.0}',
+        image: '${JEV_IMAGE:-hewenyulucky/jev-card-agent:2.0.1}',
         init: true,
         user: `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
         restart: 'unless-stopped',
