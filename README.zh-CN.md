@@ -8,7 +8,7 @@
 
 采用 Node.js 24、TypeScript、Fastify、React/Vite 与 SQLite。OpenPoker 提供真实 6-max No-Limit Texas Hold’em、匹配、合法动作、结算和赛季积分；本项目通过 WebSocket V2 接入，不重建 Arena 服务器。
 
-**2.0.0 重构将实时决策与策略研究生命周期统一交给 DuelLoop。本次交付为 PR，不代表生产已经更新。** 公开站点可能运行此前版本；[验证与限制](docs/duelloop-refactor-verification.md)分别记录本地测试、真实模型调用和未执行的线上验收。
+**v2.0.1 已部署至[公开演示站](https://openpoker.zve.ccwu.cc)，使用 DuelLoop v0.2.2 官方发行包。** 实时决策与策略研究生命周期由 DuelLoop 管理。[部署验收记录](docs/deployment-acceptance-v2.0.1.md)记录 2026-09-25 的上线过程、实际运行表现和验证范围；[此前验证报告](docs/duelloop-refactor-verification.md)保留为历史证据。
 
 ## 公开页面
 
@@ -49,6 +49,8 @@ flowchart LR
 - **没有本地动作兜底。** Jev 初次请求后最多重试三次，默认单次 10 秒、整次决策 40 秒，并受原始 Arena 期限及提交预留约束。无效、过期结果不复用；真实决策故障保存停牌状态，需要明确恢复。
 - **研究不串行等待当前动作。** 确定性事实与审计独立运行；LLM worker 使用 SDK 冻结证据、受控工具、取消/恢复及独立开发与最终评价。它持有研究和评价模型凭据，没有 Arena 执行密钥。
 - **登记候选不等于激活。** 只有合格最终验证才能产生研究 release，默认操作者明确激活。中断的付费工作不自动重放；旧结算修订不算新增手数；评价 inconclusive 时保留原策略。
+
+初始 bootstrap 策略已显式启用，但尚未通过独立统计验证。部署验收确认运行情况，不证明盈利能力。
 
 **不设置金额预算门槛。** token 和不完整费用继续留存；时间、token、请求及评价调用限制用于防止研究任务失控。无法确认 token 用量时，研究任务可能停止，因为运行资源无法可靠计量；这不代表推断供应商余额不足，也不把未知费用写成零。
 
@@ -130,7 +132,7 @@ sh scripts/manage.sh update
 sh scripts/manage.sh logs
 ```
 
-`stop`、`restart`、`update` 先完成当前手，再由官方确认离桌，随后替换进程。保留原始库、facts 库、DuelLoop 库、旧版历史归档和私有评价协议；不要开第二个 Bot 或清空历史来迁移。[部署说明](docs/deployment.md)包含配置迁移、备份和回滚。本 PR 未执行这次线上发布。
+`stop`、`restart`、`update` 先完成当前手，再由官方确认离桌，随后替换进程。保留原始库、facts 库、DuelLoop 库、旧版历史归档和私有评价协议；不要开第二个 Bot 或清空历史来迁移。[部署说明](docs/deployment.md)包含配置迁移、备份和回滚；[v2.0.1 验收记录](docs/deployment-acceptance-v2.0.1.md)记录已完成的生产部署。
 
 OpenPoker 核心玩法使用虚拟筹码。离桌、无在桌筹码且可用筹码低于 1,000 时可以 rebuy 1,500；首次立即，Free 后续冷却五分钟，Pro 两分钟。后端重新确认官方余额后再入队，并将补筹记录与净收益分开。
 
@@ -138,7 +140,7 @@ OpenPoker 核心玩法使用虚拟筹码。离桌、无在桌筹码且可用筹�
 
 2026-09-24 历史集成验证：四个 Choice/Score 成对案例中三个选择相同；DeepSeek 只读工具回合耗时 1,494 ms；独立评价器在两个成对 seed block 中完成 36 次真实 Jev 调用。**评价结论为 inconclusive，且早于 session 合同修正。这些样本不能验证新合同，也不证明盈利或两种协议等价。** 详见[验证报告](docs/duelloop-refactor-verification.md)。
 
-[v2 审计修复记录](docs/duelloop-v2-audit-fixes.md)说明同回合取消恢复、线上与评价器共享 session，以及全部迁移数据库的 Compose 挂载交接。部署仍由操作者单独执行。
+[v2 审计修复记录](docs/duelloop-v2-audit-fixes.md)说明同回合取消恢复、线上与评价器共享 session，以及全部迁移数据库的 Compose 挂载交接。这些修复已包含在上线的 v2.0.1 中；之后的服务器更新仍由操作者明确执行。
 生产依赖使用正式的 [DuelLoop v0.2.2 发布包](https://github.com/hewenyu/DuelLoop/releases/tag/v0.2.2)，通过固定 URL 与 lockfile 校验值锁定；详见[包来源记录](vendor/README.md)。
 
 ```sh

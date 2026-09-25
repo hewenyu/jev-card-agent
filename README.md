@@ -8,7 +8,7 @@
 
 Node.js 24, TypeScript, Fastify, React/Vite and SQLite. OpenPoker supplies real six-max No-Limit Texas Hold’em, matchmaking, legal actions, settlement and season scores. This application connects through WebSocket V2; it does not replace the Arena server.
 
-**The 2.0.0 refactor makes DuelLoop the live decision and strategy-research lifecycle. This change is a PR delivery, not a production deployment.** The public site may run an earlier release. [Verification and limitations](docs/duelloop-refactor-verification.md) distinguish local tests, real model probes and unperformed production checks.
+**v2.0.1 is deployed at the [public observatory](https://openpoker.zve.ccwu.cc), using the official DuelLoop v0.2.2 release package.** DuelLoop manages the live decision and strategy-research lifecycle. The [deployment acceptance record](docs/deployment-acceptance-v2.0.1.md) records the 2026-09-25 rollout, observed production behavior and verification limits; [earlier verification](docs/duelloop-refactor-verification.md) remains historical evidence.
 
 ## What visitors see
 
@@ -49,6 +49,8 @@ flowchart LR
 - **No local decision fallback.** Jev uses an initial request plus at most three retries: 10 seconds per request and a 40-second decision window by default, bounded by original Arena authority and a submission reserve. Invalid/stale results are not reused. Genuine decision failures preserve a stop requiring explicit recovery.
 - **Research never delays the current action.** Deterministic facts/audits run separately. The isolated LLM worker uses SDK-frozen evidence, controlled tools, cancellation, recovery and independent development/final evaluation. It receives model credentials for research/evaluation, but no Arena execution key.
 - **Research registration is not activation.** Only an eligible final validation can register a research release. Default activation is explicit; the public site cannot approve or roll back. Interrupted paid work is not silently replayed, corrections to an old settlement do not count as new hands, and inconclusive evaluation leaves the current strategy in place.
+
+The initial bootstrap strategy is explicitly enabled but has not passed independent statistical validation. Deployment acceptance confirms operation, not profitability.
 
 There is **no monetary budget gate**. Usage and incomplete dollar amounts remain auditable. Time, token, request and evaluation-call bounds prevent runaway research; unknown token usage can stop that research task because its resource use cannot be established. This does not infer a provider account balance or invent a zero charge.
 
@@ -130,7 +132,7 @@ sh scripts/manage.sh update
 sh scripts/manage.sh logs
 ```
 
-`stop`, `restart` and `update` finish the current hand and confirm official departure before replacing the process. Preserve the raw, facts and DuelLoop databases, retained legacy archives and private evaluation protocols. Do not start a second Bot or delete history to migrate. [Deployment](docs/deployment.md) covers configuration changes, backup and rollback. This PR has not performed that production rollout.
+`stop`, `restart` and `update` finish the current hand and confirm official departure before replacing the process. Preserve the raw, facts and DuelLoop databases, retained legacy archives and private evaluation protocols. Do not start a second Bot or delete history to migrate. [Deployment](docs/deployment.md) covers configuration changes, backup and rollback; [v2.0.1 acceptance](docs/deployment-acceptance-v2.0.1.md) documents the completed production rollout.
 
 OpenPoker core gameplay uses virtual chips. A rebuy credits 1,500 chips when off table with no table chips and fewer than 1,000 available; the first is immediate, later Free cooldown is five minutes and Pro cooldown is two. The backend confirms the official balance before joining again and records funding separately from profit.
 
@@ -138,7 +140,7 @@ OpenPoker core gameplay uses virtual chips. A rebuy credits 1,500 chips when off
 
 Historical integration probes on 2026-09-24: four paired Choice/Score cases agreed on three actions; DeepSeek completed a read-only tool round in 1,494 ms; the independent evaluator executed 36 real Jev calls across two paired seed blocks. **The evaluator result was inconclusive and predates the corrected session contract. These samples do not validate that contract, profitability or protocol equivalence.** See [full verification](docs/duelloop-refactor-verification.md).
 
-The [v2 audit corrections](docs/duelloop-v2-audit-fixes.md) cover same-turn cancellation recovery, shared live/evaluator session input, and an explicit Compose handoff for all migrated stores. Deployment remains a separate operator action.
+The [v2 audit corrections](docs/duelloop-v2-audit-fixes.md) cover same-turn cancellation recovery, shared live/evaluator session input, and an explicit Compose handoff for all migrated stores. These corrections are included in the deployed v2.0.1 release; future server updates remain explicit operator actions.
 Production dependencies use the official [DuelLoop v0.2.2 release package](https://github.com/hewenyu/DuelLoop/releases/tag/v0.2.2), pinned by URL and lockfile integrity; see [package provenance](vendor/README.md).
 
 ```sh

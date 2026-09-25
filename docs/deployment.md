@@ -1,8 +1,8 @@
-# Docker 服务器部署与 2.0.0 迁移
+# Docker 服务器部署与 2.x 迁移
 
-本文描述部署操作，不代表 2.0.0 已上线。本次重构交付 PR，未替换生产容器、
-未启动第二个真实 Bot、未清理线上历史。[验证报告](duelloop-refactor-verification.md)
-区分实际执行与后续运维检查。
+`v2.0.1` 已于 2026-09-25 部署，使用正式 DuelLoop SDK `v0.2.2`，并已恢复真实对局。
+[部署验收报告](deployment-acceptance-v2.0.1.md)记录镜像、数据恢复及线上核对结果。
+[重构验证报告](duelloop-refactor-verification.md)保留合并前的验证范围，不代表当前部署状态。
 
 ## 自动构建，手动更新
 
@@ -76,6 +76,18 @@ DUELLOOP_RESEARCH_ENABLED=false
 私有文件。先安全停止旧服务、复核镜像 digest 与 manifest，再按
 [迁移流程](duelloop-migration.md) 启动；不要把两个 Compose 文件合并。
 
+迁移跨机器传输时，先用 `id -u`、`id -g` 核对目标操作者身份，再核对工作副本
+属主。容器的 `user` 必须与私有数据的 UID/GID 一致，不能假定一定是 `1000:1000`；
+本次生产使用 `1001:1001`，数据文件仍保持私有权限。
+
+本次验收后已将迁移配置整理到部署根目录：根 `compose.yaml` 单独挂载
+`./data/releases/v2.0.1/working:/app/data`，移除旧 named volume 挂载，并将
+`DATABASE_PATH` 指向 `/app/data/raw.sqlite`。私有 `.env` 对应设置 facts、SDK、
+旧归档及协议的容器内路径，固定已验证镜像 digest。因此该部署根目录可直接执行
+`sh scripts/manage.sh ...`；不需要额外设置 `COMPOSE_FILE`。这是一份已审阅的独立
+配置，不是合并两个 Compose 文件。今后同步仓库文件时，不要用默认 `compose.yaml`
+覆盖这些数据挂载、路径和用户设置，也不要发布会展开凭据的 `docker compose config` 输出。
+
 ## 准备私有评价协议
 
 研究默认关闭，发布默认为 explicit。先确定实验的独立样本数、每 seed 手数、
@@ -119,6 +131,12 @@ sh scripts/manage.sh research --op prepare-protocols --output /app/data/protocol
 排空等待当前手结束，然后由 OpenPoker REST 确认离桌；无法确认时停止更新。
 150 秒容器退出宽限期不是强制终止一手牌的时限。
 
+**当前生产空间限制：** 2026-09-25 恢复后约有 15 GiB 空闲，但约 9.675 GiB 的
+原始库在现有保守备份检查下，仅该库就要求约 20.6 GiB 空闲（其他库和增长另计）。
+因此当前余量可支持运行，尚不足以执行下面的完整备份命令。备份会先排空 Bot，
+随后因容量不足失败并保持停止；下一次维护前应先扩充备份所在文件系统，核对
+容量再执行排空/备份。不能把本次已保存的回滚归档视为之后新牌局的持续备份。
+
 ```sh
 sh scripts/manage.sh backup
 sh scripts/manage.sh update
@@ -132,7 +150,8 @@ sh scripts/manage.sh logs
 
 ## 备份与回滚
 
-更新保留 `jev-card-agent-data` 卷。不要执行 `docker compose down -v`。SQLite
+更新保留实际使用的持久数据挂载；默认安装为 `jev-card-agent-data` 卷，迁移安装
+为已确认的工作目录 bind mount。不要执行 `docker compose down -v`。SQLite
 online backup 包含已提交 WAL；不要只复制活跃主文件。发布备份应先安全离桌并
 暂停派生写入，然后核对备份清单包含原始、facts、DuelLoop 和存在的旧归档。
 各数据库备份分别一致，不宣称跨数据库同一原子时刻。私有评价协议文件也需保留。
@@ -169,6 +188,13 @@ sh scripts/manage.sh research --op rollback --release PRIOR_RELEASE_DIGEST --act
 程序回滚使用通过验证的旧镜像及其兼容数据库副本，仍需完成当前手和官方离桌。
 不能让旧程序直接写入它不支持的新 schema，也不能删掉未知 intent 来解除阻断。
 保留回滚前后的所有证据和失败原因。
+
+2026-09-25 的旧生产主库、WAL 和配置已完整保存在经过逐文件 SHA-256 校验的
+私有压缩归档中，服务器与本地各有一份；旧卷中的六个原始主库/WAL 文件在核对
+归档与新工作副本后移除以释放空间。**不能直接启动旧 named volume 回滚。**
+应先验证 `stopped-production.tar.gz` 及其私有清单，将配套主库和 WAL 一起恢复
+到新的可写回滚目录，再将旧 `1.4.3` 镜像、原私有配置和路径映射指向该目录。
+归档本身不得作为可写数据挂载；先隔离核对 SQLite 与历史 HTTP 读取，再切换。
 
 ## 部署后核对
 
