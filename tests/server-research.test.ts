@@ -19,7 +19,7 @@ describe('anonymous research observations', () => {
     });
     const app = await buildApp(config);
     try {
-      const advice = new AdviceStore(config.asyncLlm.databasePath);
+      const advice = new AdviceStore(config.researchDatabasePath);
       const { publication } = publishFixture(advice);
       advice.close();
       await app.controller.restartResearch();

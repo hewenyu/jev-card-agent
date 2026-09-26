@@ -22,7 +22,7 @@ describe('isolated SDK research worker', () => {
     const directory = mkdtempSync(join(tmpdir(), 'duelloop-no-protocol-'));
     const config = parseDuelLoopResearchConfig({
       DUELLOOP_RESEARCH_ENABLED: 'true',
-      DEEPSEEK_API_KEY: 'fixture',
+      DUELLOOP_RESEARCH_API_KEY: 'fixture',
       JEV_API_KEY: 'fixture',
       DUELLOOP_DEVELOPMENT_PROTOCOL: join(directory, 'missing-dev.json'),
       DUELLOOP_FINAL_PROTOCOL: join(directory, 'missing-final.json'),
@@ -46,7 +46,7 @@ describe('isolated SDK research worker', () => {
     const path = join(directory, 'framework.sqlite');
     const config = parseDuelLoopResearchConfig({
       DUELLOOP_RESEARCH_ENABLED: 'true',
-      DEEPSEEK_API_KEY: 'fixture-never-sent',
+      DUELLOOP_RESEARCH_API_KEY: 'fixture-never-sent',
       JEV_API_KEY: 'fixture-never-sent',
       DUELLOOP_RESEARCH_POLL_MS: '50',
       DUELLOOP_DEVELOPMENT_PROTOCOL: join(directory, 'development.json'),

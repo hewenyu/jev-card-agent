@@ -15,7 +15,7 @@ async function main(): Promise<void> {
   if (typeof args.run !== 'string' || !args.run) throw new Error('--run RUN_ID is required');
   if (args.strategy !== 'baseline' && args.strategy !== 'jev' && args.strategy !== 'jev-reasoning')
     throw new Error('--strategy must be baseline, jev or jev-reasoning');
-  const config = loadConfig(process.env, args.demo === true);
+  const config = loadConfig(process.env, args.demo === true, { offline: true });
   const store = new Store(config.databasePath, config.jevModel);
   try {
     const evaluationId = randomUUID();

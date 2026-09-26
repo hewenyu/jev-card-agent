@@ -50,9 +50,38 @@ DUELLOOP_RESEARCH_ENABLED=false
 
 删除退役的 `ASYNC_LLM_*`、`LLM_ADVICE_*`、`LLM_RESEARCH_*`、`REASONING_MODE` 和
 `HYBRID_TIMEOUT_MS` 运行配置；真实启动检测这些旧值会明确报错。旧研究数据库路径
-`RESEARCH_DATABASE_PATH` 用于历史只读展示，不用于启动旧发布器。DeepSeek 凭据可
-继续作为新研究的来源；研究控制改用 `DUELLOOP_RESEARCH_*`，不把旧 live/auto
+`RESEARCH_DATABASE_PATH` 用于历史只读展示，不用于启动旧发布器。DeepSeek 凭据迁移
+到正式变量后可继续用于新研究；研究控制改用 `DUELLOOP_RESEARCH_*`，不把旧 live/auto
 模式静默转换为自动策略激活。
+
+### 清理重构前的模型环境变量
+
+生产对局使用 `JEV_*`，后台研究使用 `DUELLOOP_RESEARCH_*`。不再使用旧历史回放
+评价或诊断功能的部署，可以按下表清理 `.env`：
+
+| 配置                                                                                    | 处理方式                                                                                                                          |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `JEV_API_KEY`、`JEV_BASE_URL`、`JEV_MODEL`、`JEV_TIMEOUT_MS`、`JEV_DECISION_TIMEOUT_MS` | 保留，实时决策和研究中的独立评价共用 Jev                                                                                          |
+| `DUELLOOP_RESEARCH_*`                                                                   | 保留，研究 provider 和任务控制                                                                                                    |
+| `ASYNC_LLM_*`、`LLM_ADVICE_*`、`LLM_RESEARCH_*`、`REASONING_MODE`、`HYBRID_TIMEOUT_MS`  | 删除；真实启动按变量是否存在检查，空值也会被拒绝                                                                                  |
+| 其他 `REASONING_*`                                                                      | 仅供旧回放评价和诊断使用；不使用这些功能时可删除                                                                                  |
+| `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL`、`DEEPSEEK_BASE_URL`                               | 先迁移到对应的 `DUELLOOP_RESEARCH_API_KEY`、`DUELLOOP_RESEARCH_MODEL`、`DUELLOOP_RESEARCH_BASE_URL`，再删除旧名；已配置的新名优先 |
+| `DEEPSEEK_API_BASE_URL`、`DEEPSEEK_THINKING`、`DEEPSEEK_*_PRICE_PER_MILLION`            | 仅供旧回放评价和诊断使用；不使用这些功能时可删除                                                                                  |
+| `RESEARCH_DATABASE_PATH`、`KNOWLEDGE_DATABASE_PATH`                                     | 保留历史归档路径，它们不是模型配置                                                                                                |
+| `OPEN_POKER_*`、`API_TOKEN`                                                             | 保留，分别用于牌桌连接与内部管理鉴权                                                                                              |
+
+`DEEPSEEK_API_BASE_URL` 与 `DEEPSEEK_BASE_URL` 是两个不同变量：前者属于旧评估，
+后者才是旧版本新研究地址的兼容来源。不要把旧评估地址或思考设置直接覆盖到新研究配置。
+新研究只读取 `DUELLOOP_RESEARCH_*`，不再读取 `DEEPSEEK_*` 或 `REASONING_*`。
+升级前先填写研究专用凭据；`migrate:duelloop` 会在生成配置时迁移旧 DeepSeek
+凭据、模型和研究地址，再删除旧模型变量，并继续保持 Bot/研究自动启动关闭。
+手工仅重命名模型变量时保持原有 `DUELLOOP_RESEARCH_ENABLED` 状态，不因迁移凭据启用研究。
+
+`BOT_STRATEGY=jev` 只限制实时 Bot；私有 `/api/evaluations` 仍能显式选择
+`jev-reasoning` 做历史回放，不经过 `controller.start()`。删除旧推理凭据后，
+这项旧评估将不可用，但 Jev 实时对局和已独立配置的新研究不受影响。
+旧 provider 代码因此仍保留；需要旧 `REASONING_MODE` 等控制的实验应使用
+`npm run evaluate` 或 `npm run diagnose` 的离线入口和独立环境配置。
 
 默认数据库位于持久卷中：
 
@@ -106,12 +135,17 @@ sh scripts/manage.sh research --op prepare-protocols --output /app/data/protocol
 分区，拒绝覆盖已有文件。保持 final 种子私有；研究工具只能读公开阈值和协议
 摘要，不能读取 final seeds。最终 holdout 使用次数耗尽后，需要新的独立协议。
 
-配置 `DUELLOOP_RESEARCH_API_KEY` 或已有 `DEEPSEEK_API_KEY`，精确模型
+配置 `DUELLOOP_RESEARCH_API_KEY`，精确模型
 `deepseek-flash`，端点 `https://api.deepseek.com/anthropic`；默认开启思考，
 effort 默认 high。设置 `DUELLOOP_RESEARCH_THINKING=enabled`、
 `DUELLOOP_RESEARCH_EFFORT=high` 和 `DUELLOOP_ACTIVATION_MODE=automatic_after_validation`。同时保留 Jev key，独立评价会真实调用 Jev。设置
 `DUELLOOP_RESEARCH_ENABLED=true` 后安全重启。协议缺失/无效时研究显示
 `waiting_protocol`，不反复重启 worker，Bot 可继续使用已有 release。
+
+兼容 Messages 的代理服务使用 `DUELLOOP_RESEARCH_BASE_URL` 和独立的
+`DUELLOOP_RESEARCH_API_KEY`。例如 `https://api.apikey.fan` 会请求
+`https://api.apikey.fan/v1/messages`，不额外追加 `/anthropic`。切换之前用隔离的
+合成数据验证模型身份、thinking、工具调用及结果续接，再更新私有配置并安全重启。
 
 ## Compose 管理与安全替换
 

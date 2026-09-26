@@ -40,7 +40,7 @@ export function parseDuelLoopResearchConfig(env: NodeJS.ProcessEnv): DuelLoopRes
   if (env.DUELLOOP_RESEARCH_ENABLED && !['true', 'false'].includes(env.DUELLOOP_RESEARCH_ENABLED))
     throw new Error('DUELLOOP_RESEARCH_ENABLED must be true or false');
   const enabled = env.DUELLOOP_RESEARCH_ENABLED === 'true';
-  const model = env.DUELLOOP_RESEARCH_MODEL || env.DEEPSEEK_MODEL || 'deepseek-flash';
+  const model = env.DUELLOOP_RESEARCH_MODEL || 'deepseek-flash';
   if (model !== 'deepseek-flash' && model !== 'deepseek-v4-pro')
     throw new Error('DUELLOOP_RESEARCH_MODEL requires an exact supported DeepSeek identity');
   const thinking = env.DUELLOOP_RESEARCH_THINKING || 'enabled';
@@ -59,11 +59,8 @@ export function parseDuelLoopResearchConfig(env: NodeJS.ProcessEnv): DuelLoopRes
     enabled,
     activationMode,
     provider: {
-      apiKey: env.DUELLOOP_RESEARCH_API_KEY || env.DEEPSEEK_API_KEY || env.REASONING_API_KEY || '',
-      baseUrl:
-        env.DUELLOOP_RESEARCH_BASE_URL ||
-        env.DEEPSEEK_BASE_URL ||
-        'https://api.deepseek.com/anthropic',
+      apiKey: env.DUELLOOP_RESEARCH_API_KEY || '',
+      baseUrl: env.DUELLOOP_RESEARCH_BASE_URL || 'https://api.deepseek.com/anthropic',
       model,
       thinking,
       effort,
@@ -101,7 +98,7 @@ export function parseDuelLoopResearchConfig(env: NodeJS.ProcessEnv): DuelLoopRes
     },
   };
   if (enabled && (!config.provider.apiKey || !config.jev.apiKey))
-    throw new Error('Enabled DuelLoop research requires DeepSeek and Jev credentials');
+    throw new Error('Enabled DuelLoop research requires DUELLOOP_RESEARCH_API_KEY and JEV_API_KEY');
   return config;
 }
 

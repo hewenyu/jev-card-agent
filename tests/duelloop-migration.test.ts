@@ -68,6 +68,44 @@ function fixture() {
   return { directory, database, env, output: join(directory, 'out') };
 }
 describe('copy-only migration', () => {
+  it.each([false, true])(
+    'migrates legacy model settings without overwriting explicit research settings (%s)',
+    async (explicit) => {
+      const f = fixture();
+      writeFileSync(
+        f.env,
+        readFileSync(f.env, 'utf8') +
+          [
+            'DEEPSEEK_MODEL=deepseek-v4-pro',
+            'DEEPSEEK_BASE_URL=https://legacy-research.example/anthropic',
+            'DEEPSEEK_API_BASE_URL=https://offline-only.example/anthropic',
+            'DEEPSEEK_THINKING=disabled',
+            'REASONING_API_KEY=secret-standard',
+            ...(explicit
+              ? [
+                  'DUELLOOP_RESEARCH_API_KEY=secret-explicit',
+                  'DUELLOOP_RESEARCH_MODEL=deepseek-flash',
+                  'DUELLOOP_RESEARCH_BASE_URL=https://explicit.example/anthropic',
+                ]
+              : []),
+            '',
+          ].join('\n'),
+      );
+      const manifest = await migrateDuelLoop(f);
+      const next = parseEnv(readFileSync(join(f.output, '.env.next'), 'utf8'));
+      expect(next).toMatchObject({
+        DUELLOOP_RESEARCH_API_KEY: explicit ? 'secret-explicit' : 'secret-deepseek',
+        DUELLOOP_RESEARCH_MODEL: explicit ? 'deepseek-flash' : 'deepseek-v4-pro',
+        DUELLOOP_RESEARCH_BASE_URL: explicit
+          ? 'https://explicit.example/anthropic'
+          : 'https://legacy-research.example/anthropic',
+        DUELLOOP_RESEARCH_ENABLED: 'false',
+      });
+      expect(Object.keys(next).some((key) => /^(DEEPSEEK_|REASONING_)/.test(key))).toBe(false);
+      expect(next.DUELLOOP_RESEARCH_THINKING).toBeUndefined();
+      expect(JSON.stringify(manifest)).not.toContain('secret-');
+    },
+  );
   it('hashes multi-chunk snapshots without loading a whole database into a Buffer', async () => {
     const f = fixture();
     const db = new DatabaseSync(f.database);
@@ -110,12 +148,14 @@ describe('copy-only migration', () => {
     const next = parseEnv(readFileSync(join(f.output, '.env.next'), 'utf8'));
     expect(next).toMatchObject({
       JEV_API_KEY: 'secret-jev',
-      DEEPSEEK_API_KEY: 'secret-deepseek',
+      DUELLOOP_RESEARCH_API_KEY: 'secret-deepseek',
       AUTO_START_BOT: 'false',
       DUELLOOP_RESEARCH_ENABLED: 'false',
       FACTS_ENABLED: 'false',
       BOT_STRATEGY: 'jev',
     });
+    expect(next.DEEPSEEK_API_KEY).toBeUndefined();
+    expect(next.REASONING_MODE).toBeUndefined();
     expect(next.ASYNC_LLM_MODE).toBeUndefined();
     expect(next.LLM_RESEARCH_OLD).toBeUndefined();
     expect(next.DUELLOOP_DATABASE_PATH).not.toBe(next.DATABASE_PATH);

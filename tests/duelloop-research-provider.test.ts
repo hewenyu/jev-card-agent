@@ -371,10 +371,48 @@ describe('research configuration isolation', () => {
     expect(() => parseDuelLoopResearchConfig({ DUELLOOP_RESEARCH_ENABLED: 'true' })).toThrow();
     const config = parseDuelLoopResearchConfig({
       DUELLOOP_RESEARCH_ENABLED: 'true',
-      DEEPSEEK_API_KEY: 'research',
+      DUELLOOP_RESEARCH_API_KEY: 'research',
       JEV_API_KEY: 'score',
     });
     expect(config.provider.apiKey).toBe('research');
     expect(config.jev.apiKey).toBe('score');
+  });
+  it('never sends a legacy reasoning credential to the research provider', () => {
+    const env = { REASONING_API_KEY: 'standard-provider-only', JEV_API_KEY: 'score' };
+    expect(parseDuelLoopResearchConfig(env).provider.apiKey).toBe('');
+    expect(() =>
+      parseDuelLoopResearchConfig({ ...env, DUELLOOP_RESEARCH_ENABLED: 'true' }),
+    ).toThrow('requires DUELLOOP_RESEARCH_API_KEY and JEV_API_KEY');
+  });
+  it('ignores legacy DeepSeek aliases and only uses explicit research settings', () => {
+    const legacy = {
+      DEEPSEEK_API_KEY: 'legacy-key',
+      DEEPSEEK_BASE_URL: 'https://legacy.example/anthropic',
+      DEEPSEEK_MODEL: 'deepseek-v4-pro',
+    };
+    expect(parseDuelLoopResearchConfig(legacy).provider).toMatchObject({
+      apiKey: '',
+      baseUrl: 'https://api.deepseek.com/anthropic',
+      model: 'deepseek-flash',
+    });
+    expect(() =>
+      parseDuelLoopResearchConfig({
+        ...legacy,
+        DUELLOOP_RESEARCH_ENABLED: 'true',
+        JEV_API_KEY: 'score',
+      }),
+    ).toThrow('DUELLOOP_RESEARCH_API_KEY');
+    expect(
+      parseDuelLoopResearchConfig({
+        ...legacy,
+        DUELLOOP_RESEARCH_API_KEY: 'explicit-key',
+        DUELLOOP_RESEARCH_BASE_URL: 'https://research.example/anthropic',
+        DUELLOOP_RESEARCH_MODEL: 'deepseek-flash',
+      }).provider,
+    ).toMatchObject({
+      apiKey: 'explicit-key',
+      baseUrl: 'https://research.example/anthropic',
+      model: 'deepseek-flash',
+    });
   });
 });

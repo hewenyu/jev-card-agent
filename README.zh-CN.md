@@ -96,7 +96,7 @@ npm run bot -- --strategy jev --max-hands 10 --max-minutes 30
 
 ## 开启异步研究
 
-使用 `DUELLOOP_RESEARCH_API_KEY` 或已有 `DEEPSEEK_API_KEY`，精确模型名 `deepseek-flash`，采用其 Messages 端点。研究默认开启 thinking，effort 为 high（`DUELLOOP_RESEARCH_THINKING=enabled`、`DUELLOOP_RESEARCH_EFFORT=high`）。Jev 始终选择实时动作，也负责候选策略独立评价中的模型判断。
+使用 `DUELLOOP_RESEARCH_API_KEY`，精确模型名 `deepseek-flash`，采用其 Messages 端点。研究默认开启 thinking，effort 为 high（`DUELLOOP_RESEARCH_THINKING=enabled`、`DUELLOOP_RESEARCH_EFFORT=high`）。Jev 始终选择实时动作，也负责候选策略独立评价中的模型判断。
 
 启用之前先锁定开发与最终评价参数。`prepare-protocols` 生成新的互不重叠私有种子，以禁止覆盖方式写文件，**不会调用模型**。下面变量应来自审阅过的实验计划；样本数与阈值必须在看到最终结果之前确定。
 

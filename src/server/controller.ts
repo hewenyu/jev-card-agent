@@ -81,7 +81,7 @@ export class Controller {
       },
     );
     this.researchMonitor = new ResearchMonitor(
-      config.asyncLlm.databasePath,
+      config.researchDatabasePath,
       store.db,
       this.legacyResearchStatus(),
     );

@@ -34,7 +34,7 @@ describe('published environment example', () => {
       config.factsDatabasePath,
       config.duelloopDatabasePath,
       config.knowledgeDatabasePath,
-      config.asyncLlm.databasePath,
+      config.researchDatabasePath,
     ];
     expect(new Set(paths).size).toBe(paths.length);
     expect(config.duelloopResearch.developmentProtocolPath).not.toBe(
@@ -57,5 +57,29 @@ describe('published environment example', () => {
     expect(config.duelloopResearch.provider.apiKey).toBe('test-research-key');
     expect(config.duelloopResearch.jev.apiKey).toBe('test-jev-key');
     expect(config.duelloopResearch.provider.baseUrl).toBe('https://api.deepseek.com/anthropic');
+  });
+
+  it('reads legacy archives without parsing retired research model settings in offline mode', () => {
+    const config = loadConfig(
+      {
+        DATABASE_PATH: 'data/archive-raw.sqlite',
+        RESEARCH_DATABASE_PATH: 'data/archive-research.sqlite',
+        LLM_RESEARCH_PROVIDER: 'retired-provider',
+        LLM_RESEARCH_BASE_URL: 'invalid-retired-url',
+        LLM_RESEARCH_TIMEOUT_MS: 'invalid',
+      },
+      false,
+      { offline: true },
+    );
+    expect(config.researchDatabasePath).toMatch(/\/data\/archive-research.sqlite$/);
+    expect(() =>
+      loadConfig({ DATABASE_PATH: 'data/raw.sqlite', RESEARCH_DATABASE_PATH: 'data/raw.sqlite' }),
+    ).toThrow('Research database must be separate');
+    expect(() =>
+      loadConfig({
+        KNOWLEDGE_DATABASE_PATH: 'data/shared.sqlite',
+        RESEARCH_DATABASE_PATH: 'data/shared.sqlite',
+      }),
+    ).toThrow('Research database must be separate');
   });
 });

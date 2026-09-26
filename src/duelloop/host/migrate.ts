@@ -20,7 +20,7 @@ import { HostJournal } from './journal.js';
 import { encodeMigrationEnv, writeMigrationCompose } from './migration-compose.js';
 
 type Category = 'raw' | 'knowledge' | 'research' | 'facts' | 'sdk';
-const retired = /^(ASYNC_LLM_|LLM_ADVICE_|LLM_RESEARCH_)|^(REASONING_MODE|HYBRID_TIMEOUT_MS)$/;
+const retired = /^(ASYNC_LLM_|LLM_ADVICE_|LLM_RESEARCH_|REASONING_|DEEPSEEK_)|^HYBRID_TIMEOUT_MS$/;
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 function physical(path: string): string {
   return existsSync(path) ? realpathSync(path) : join(physical(dirname(path)), basename(path));
@@ -185,6 +185,15 @@ export async function migrateDuelLoop(options: MigrationOptions) {
       (entry): entry is [string, string] => entry[1] !== undefined && !retired.test(entry[0]),
     ),
   );
+  // Preserve the previously effective research settings before removing legacy aliases.
+  // REASONING_API_KEY and DEEPSEEK_API_BASE_URL belong to legacy evaluation providers.
+  for (const [current, legacy] of [
+    ['DUELLOOP_RESEARCH_API_KEY', 'DEEPSEEK_API_KEY'],
+    ['DUELLOOP_RESEARCH_BASE_URL', 'DEEPSEEK_BASE_URL'],
+    ['DUELLOOP_RESEARCH_MODEL', 'DEEPSEEK_MODEL'],
+  ] as const) {
+    if (!next[current] && env[legacy]) next[current] = env[legacy];
+  }
   Object.assign(next, protocolPaths, {
     AUTO_START_BOT: 'false',
     DUELLOOP_RESEARCH_ENABLED: 'false',

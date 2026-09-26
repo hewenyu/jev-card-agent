@@ -96,7 +96,7 @@ For the combined website and Bot, build and start the server. Explicitly set `AU
 
 ## Enable asynchronous research
 
-Use `DUELLOOP_RESEARCH_API_KEY` or the existing `DEEPSEEK_API_KEY`, exact model `deepseek-flash`, and its Messages endpoint. Research thinking is enabled by default with high effort (`DUELLOOP_RESEARCH_THINKING=enabled`, `DUELLOOP_RESEARCH_EFFORT=high`). Jev remains the live action selector and also evaluates candidate strategies independently.
+Use `DUELLOOP_RESEARCH_API_KEY`, exact model `deepseek-flash`, and its Messages endpoint. Research thinking is enabled by default with high effort (`DUELLOOP_RESEARCH_THINKING=enabled`, `DUELLOOP_RESEARCH_EFFORT=high`). Jev remains the live action selector and also evaluates candidate strategies independently.
 
 Before enabling research, lock development and final evaluation parameters. `prepare-protocols` generates fresh, disjoint private seeds, writes files with exclusive creation and makes **no model calls**. Set the variables below from your reviewed experiment plan; sample size and thresholds must be chosen before inspecting final results.
 

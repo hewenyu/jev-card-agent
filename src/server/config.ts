@@ -5,7 +5,6 @@ import {
   type DuelLoopResearchConfig,
 } from '../duelloop/research/config.js';
 import type { StrategyName } from '../shared/api.js';
-import { loadAsyncResearchConfig, type AsyncResearchConfig } from '../research/config.js';
 
 export interface AppConfig {
   host: string;
@@ -18,7 +17,7 @@ export interface AppConfig {
   duelloopActorId: string;
   duelloopResearch: DuelLoopResearchConfig;
   researchEnabled: boolean;
-  asyncLlm: AsyncResearchConfig;
+  researchDatabasePath: string;
   apiToken: string;
   demo: boolean;
   readOnlyDemo: boolean;
@@ -127,6 +126,13 @@ export function loadConfig(
   );
   if (knowledgeDatabasePath === databasePath)
     throw new Error('Knowledge database must be separate from the raw database');
+  const researchDatabasePath = resolve(
+    env.RESEARCH_DATABASE_PATH || `${databasePath}.research.sqlite`,
+  );
+  if (researchDatabasePath === databasePath)
+    throw new Error('Research database must be separate from raw history');
+  if (researchDatabasePath === knowledgeDatabasePath)
+    throw new Error('Research database must be separate from the statistics database');
   const factsDatabasePath = resolve(env.FACTS_DATABASE_PATH || `${databasePath}.facts.sqlite`);
   const duelloopDatabasePath = resolve(
     env.DUELLOOP_DATABASE_PATH || `${databasePath}.duelloop.sqlite`,
@@ -163,7 +169,7 @@ export function loadConfig(
     duelloopScopeId,
     duelloopResearch,
     researchEnabled: !synthetic && (env.FACTS_ENABLED ?? env.RESEARCH_ENABLED) !== 'false',
-    asyncLlm: loadAsyncResearchConfig({ ...env, ASYNC_LLM_MODE: 'off' }, databasePath, synthetic),
+    researchDatabasePath,
     apiToken: env.API_TOKEN || '',
     demo: synthetic,
     readOnlyDemo,
@@ -218,8 +224,6 @@ export function loadConfig(
   };
   if (env.REASONING_API_FORMAT && !['responses', 'messages'].includes(env.REASONING_API_FORMAT))
     throw new Error('REASONING_API_FORMAT must be responses or messages');
-  if (config.asyncLlm.databasePath === knowledgeDatabasePath)
-    throw new Error('Research database must be separate from the statistics database');
   if (config.hybridTimeoutMs > 40_000)
     throw new Error('HYBRID_TIMEOUT_MS must leave submission time below the 45-second turn');
   if (config.jevDecisionTimeoutMs > 40_000 || config.jevTimeoutMs > config.jevDecisionTimeoutMs)
@@ -240,7 +244,7 @@ export function loadConfig(
   const paths = [
     config.databasePath,
     config.knowledgeDatabasePath,
-    config.asyncLlm.databasePath,
+    config.researchDatabasePath,
     config.factsDatabasePath,
     config.duelloopDatabasePath,
   ].map(physicalPath);
