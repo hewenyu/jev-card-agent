@@ -8,7 +8,7 @@
 
 采用 Node.js 24、TypeScript、Fastify、React/Vite 与 SQLite。OpenPoker 提供真实 6-max No-Limit Texas Hold’em、匹配、合法动作、结算和赛季积分；本项目通过 WebSocket V2 接入，不重建 Arena 服务器。
 
-**v2.0.2 已部署至[公开演示站](https://openpoker.zve.ccwu.cc)，使用 DuelLoop v0.2.2 官方发行包。** 实时决策与策略研究生命周期由 DuelLoop 管理。[部署验收记录](docs/deployment-acceptance-v2.0.2.md)记录 2026-09-25 的上线过程、实际运行表现和验证范围；[此前验证报告](docs/duelloop-refactor-verification.md)保留为历史证据。
+**v2.0.4 已部署至[公开演示站](https://openpoker.zve.ccwu.cc)，使用 DuelLoop v0.2.3 官方发行包。** 实时决策与策略研究生命周期由 DuelLoop 管理。[部署验收记录](docs/deployment-acceptance-v2.0.4.md)记录 2026-09-26 的上线过程、Jev HTTP 403 重试、运行恢复和验证范围；[此前验证报告](docs/duelloop-refactor-verification.md)保留为历史证据。
 
 ## 公开页面
 
@@ -132,7 +132,7 @@ sh scripts/manage.sh update
 sh scripts/manage.sh logs
 ```
 
-`stop`、`restart`、`update` 先完成当前手，再由官方确认离桌，随后替换进程。保留原始库、facts 库、DuelLoop 库、旧版历史归档和私有评价协议；不要开第二个 Bot 或清空历史来迁移。[部署说明](docs/deployment.md)包含配置迁移、备份和回滚；[v2.0.2 验收记录](docs/deployment-acceptance-v2.0.2.md)记录已完成的生产部署。
+`stop`、`restart`、`update` 先完成当前手，再由官方确认离桌，随后替换进程。保留原始库、facts 库、DuelLoop 库、旧版历史归档和私有评价协议；不要开第二个 Bot 或清空历史来迁移。[部署说明](docs/deployment.md)包含配置迁移、备份和回滚；[v2.0.4 验收记录](docs/deployment-acceptance-v2.0.4.md)记录上线过程和当前验收状态。
 
 OpenPoker 核心玩法使用虚拟筹码。离桌、无在桌筹码且可用筹码低于 1,000 时可以 rebuy 1,500；首次立即，Free 后续冷却五分钟，Pro 两分钟。后端重新确认官方余额后再入队，并将补筹记录与净收益分开。
 
