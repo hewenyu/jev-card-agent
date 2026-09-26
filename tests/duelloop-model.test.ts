@@ -79,7 +79,7 @@ describe('DuelLoop audited model', () => {
     expect(JSON.stringify(model.attempts)).not.toContain('provider private body');
   });
 
-  it.each([401, 402, 403, 400, 404])('does not retry terminal HTTP %s', async (status) => {
+  it.each([401, 402, 400, 404])('does not retry terminal HTTP %s', async (status) => {
     const call = vi
       .fn<DecisionModel['score']>()
       .mockRejectedValue(new DuelLoopError('MODEL_INVALID', 'private', { status }));

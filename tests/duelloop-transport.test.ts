@@ -1,11 +1,16 @@
 import { createServer, type RequestListener, type Server } from 'node:http';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { type AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DuelLoopError } from 'duelloop';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createReplayJevModel, parseRetryAfter } from '../src/duelloop/transport.js';
 import { AuditedDecisionModel } from '../src/duelloop/model.js';
+import { appendLedger } from '../src/duelloop/ledger.js';
 
 const servers: Server[] = [];
+const directories: string[] = [];
 async function endpoint(listener: RequestListener): Promise<string> {
   const server = createServer(listener);
   servers.push(server);
@@ -22,6 +27,7 @@ afterEach(async () => {
         }),
     ),
   );
+  directories.splice(0).forEach((directory) => rmSync(directory, { recursive: true, force: true }));
 });
 
 function request(signal = new AbortController().signal) {
@@ -72,19 +78,80 @@ describe('DuelLoop public Jev transport', () => {
     });
   });
 
-  it('never retries before a server delay that exceeds the shared deadline', async () => {
+  it('recovers after two real HTTP 403 responses with each failed attempt persisted before retry', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'jev-403-retry-'));
+    directories.push(directory);
+    const ledger = join(directory, 'attempts.jsonl');
+    const persistedBeforeRequest: number[] = [];
+    const baseURL = await endpoint((_req, res) => {
+      persistedBeforeRequest.push(
+        existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').length : 0,
+      );
+      if (persistedBeforeRequest.length < 3) res.writeHead(403).end('private gateway error');
+      else {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(success));
+      }
+    });
+    const inner = createReplayJevModel({ model: 'jev-test', apiKey: 'test', baseURL });
+    const model = new AuditedDecisionModel(inner, (attempt) => appendLedger(ledger, attempt));
+    await expect(model.score(request(AbortSignal.timeout(3000)))).resolves.toMatchObject({
+      model: 'jev-test',
+      answers: { quality: { score: 1 } },
+      usage: { unknown: true },
+    });
+    expect(persistedBeforeRequest).toEqual([0, 1, 2]);
+    const attempts = readFileSync(ledger, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(attempts).toEqual(model.attempts);
+    expect(attempts).toMatchObject([
+      { retryIndex: 0, status: 'failed', httpStatus: 403, failureKind: 'http' },
+      { retryIndex: 1, status: 'failed', httpStatus: 403, failureKind: 'http' },
+      { retryIndex: 2, status: 'succeeded' },
+    ]);
+    expect(new Set(model.attempts.map((attempt) => attempt.requestHash)).size).toBe(1);
+    expect(readFileSync(ledger, 'utf8')).not.toContain('private gateway error');
+  });
+
+  it('terminates after three real HTTP 403 failures without issuing a fourth request', async () => {
     let calls = 0;
     const baseURL = await endpoint((_req, res) => {
       calls++;
-      res.writeHead(429, { 'Retry-After': '1' }).end();
+      res.writeHead(403).end();
     });
     const inner = createReplayJevModel({ model: 'jev-test', apiKey: 'test', baseURL });
     const model = new AuditedDecisionModel(inner, () => {});
-    await expect(model.score(request(AbortSignal.timeout(150)))).rejects.toMatchObject({
-      code: 'CANCELLED',
+    await expect(model.score(request(AbortSignal.timeout(3000)))).rejects.toMatchObject({
+      code: 'MODEL_INVALID',
+      context: { status: 403, usage: { unknown: true } },
     });
-    expect(calls).toBe(1);
+    expect(calls).toBe(3);
+    expect(model.attempts).toMatchObject([
+      { retryIndex: 0, status: 'failed', httpStatus: 403 },
+      { retryIndex: 1, status: 'failed', httpStatus: 403 },
+      { retryIndex: 2, status: 'failed', httpStatus: 403 },
+    ]);
   });
+
+  it.each([429, 403])(
+    'never retries HTTP %i before a server delay that exceeds the shared deadline',
+    async (status) => {
+      let calls = 0;
+      const baseURL = await endpoint((_req, res) => {
+        calls++;
+        res.writeHead(status, { 'Retry-After': '1' }).end();
+      });
+      const inner = createReplayJevModel({ model: 'jev-test', apiKey: 'test', baseURL });
+      const model = new AuditedDecisionModel(inner, () => {});
+      await expect(model.score(request(AbortSignal.timeout(150)))).rejects.toMatchObject({
+        code: 'CANCELLED',
+      });
+      expect(calls).toBe(1);
+      expect(model.attempts).toMatchObject([{ httpStatus: status, retryAfterMs: 1000 }]);
+    },
+  );
 
   it('isolates error metadata between simultaneous calls on one public adapter', async () => {
     let calls = 0;
@@ -108,6 +175,7 @@ describe('DuelLoop public Jev transport', () => {
   it.each([
     [429, '0.1', 100],
     [503, '2', 2000],
+    [403, '0.2', 200],
     [401, '5', 5000],
     [429, 'bad-provider-secret', undefined],
     [429, undefined, undefined],

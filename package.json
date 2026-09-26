@@ -1,6 +1,6 @@
 {
   "name": "jev-card-agent",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "private": true,
   "description": "Autonomous Jev poker agent and evaluation console for OpenPoker.ai",
   "type": "module",
@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@fastify/static": "^10.1.4",
-    "duelloop": "https://github.com/hewenyu/DuelLoop/releases/download/v0.2.2/duelloop-0.2.2.tgz",
+    "duelloop": "https://github.com/hewenyu/DuelLoop/releases/download/v0.2.3/duelloop-0.2.3.tgz",
     "fastify": "^5.6.2",
     "pino": "^9.13.1",
     "react": "^19.1.1",

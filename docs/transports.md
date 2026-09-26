@@ -43,6 +43,12 @@ OpenPoker 公开场当前行动窗口为 45 秒，重连不延长。TypeSafe SDK
 
 Runtime 使用覆盖请求、响应读取和重试的 AbortSignal。纯 Jev 单次 10 秒、整次决策 40 秒，首次后最多重试 3 次并保留提交余量，不作金额限制。同一进程已观察过的同桌、同手、同 turn token 重连回合复用原始行动与决策 deadline；冷恢复缺少原期限证据时停牌，不从恢复时刻重新计时。Jev 最终失败不提交本地行动并持久停牌，迟到结果不能用于新回合。
 
+Jev HTTP 403 也按临时网关错误退避重试；出现 403 后，同次决策收紧为总计最多 3 次请求
+（首次 + 2 次重试），后续错误类型变化也不增加次数。若第 3 次成功则继续决策，否则停牌；
+取消或原期限耗尽时提前终止。401、402 等其他不可重试错误仍立即终止，后台研究 provider
+的 403 处理不变。若前三次均为其他可重试错误，第 4 次才首次收到 403，则立即终止。
+每次尝试独立落盘，所有尝试共用原始输入和行动期限。
+
 依据：[RequestOptions](https://docs.typesafe.ai/sdk/javascript/api/interfaces/RequestOptions)、[RetryPolicy](https://docs.typesafe.ai/sdk/javascript/api/interfaces/RetryPolicy)、[OpenPoker Reconnection](https://docs.openpoker.ai/building-bots/reconnection-idempotency/)。
 
 ## 已记录的探针结果

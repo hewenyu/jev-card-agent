@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DuelLoopError, type DecisionModel } from 'duelloop';
-import { AuditedDecisionModel } from '../src/duelloop/model.js';
+import { AuditedDecisionModel, type AuditedModelOptions } from '../src/duelloop/model.js';
 import { retryDelay, waitForRetry } from '../src/duelloop/retry.js';
 
 type Response = Awaited<ReturnType<DecisionModel['score']>>;
@@ -24,7 +24,11 @@ const request = (signal: AbortSignal): Parameters<DecisionModel['score']>[0] => 
     },
   ],
 });
-const model = (score: DecisionModel['score'], record = vi.fn()) =>
+const model = (
+  score: DecisionModel['score'],
+  record = vi.fn(),
+  options: AuditedModelOptions = {},
+) =>
   new AuditedDecisionModel(
     {
       id: 'retry-test',
@@ -38,6 +42,7 @@ const model = (score: DecisionModel['score'], record = vi.fn()) =>
       score,
     },
     record,
+    options,
   );
 
 afterEach(() => {
@@ -101,6 +106,71 @@ describe('DuelLoop shared-deadline backoff', () => {
     expect(retryDelay({ ...failure, retryAfterMs: 90_000 }, 2)).toBe(90_000);
     expect(retryDelay({ code: 'MODEL_TIMEOUT' }, 0)).toBe(112.5);
     expect(retryDelay({ ...failure, httpStatus: 401 }, 0)).toBeNull();
+  });
+
+  it('caps a decision at three attempts after a 403, even when later errors change', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const call = vi
+      .fn<DecisionModel['score']>()
+      .mockRejectedValueOnce(
+        new DuelLoopError('MODEL_INVALID', 'private', { status: 403, failureKind: 'http' }),
+      )
+      .mockRejectedValue(
+        new DuelLoopError('MODEL_INVALID', 'private', { status: 503, failureKind: 'http' }),
+      );
+    const audited = model(call);
+    const pending = audited.score(request(new AbortController().signal));
+    const assertion = expect(pending).rejects.toMatchObject({
+      code: 'MODEL_INVALID',
+      context: { status: 503 },
+    });
+    await vi.advanceTimersByTimeAsync(300);
+    await assertion;
+    expect(call).toHaveBeenCalledTimes(3);
+    expect(audited.attempts.map((attempt) => attempt.httpStatus)).toEqual([403, 503, 503]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([0, 1])(
+    'respects the lower explicit retry limit of %s after a 403',
+    async (maxRetries) => {
+      vi.useFakeTimers();
+      const call = vi
+        .fn<DecisionModel['score']>()
+        .mockRejectedValue(
+          new DuelLoopError('MODEL_INVALID', 'private', { status: 403, failureKind: 'http' }),
+        );
+      const audited = model(call, vi.fn(), { maxRetries });
+      const pending = audited.score(request(new AbortController().signal));
+      const assertion = expect(pending).rejects.toMatchObject({ code: 'MODEL_INVALID' });
+      await vi.runAllTimersAsync();
+      await assertion;
+      expect(call).toHaveBeenCalledTimes(maxRetries + 1);
+    },
+  );
+
+  it('stops immediately if the first 403 arrives on an already permitted fourth attempt', async () => {
+    vi.useFakeTimers();
+    const call = vi.fn<DecisionModel['score']>(async () => {
+      throw new DuelLoopError('MODEL_INVALID', 'private', {
+        status: call.mock.calls.length < 4 ? 503 : 403,
+        failureKind: 'http',
+      });
+    });
+    const pending = model(call).score(request(new AbortController().signal));
+    const assertion = expect(pending).rejects.toMatchObject({
+      code: 'MODEL_INVALID',
+      context: { status: 403 },
+    });
+    await vi.runAllTimersAsync();
+    await assertion;
+    expect(call).toHaveBeenCalledTimes(4);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps HTTP 403 terminal for callers that do not opt into Jev retries', () => {
+    expect(retryDelay({ code: 'MODEL_INVALID', httpStatus: 403 }, 0)).toBeNull();
   });
 
   it.each([5_000, Number.MAX_VALUE])(

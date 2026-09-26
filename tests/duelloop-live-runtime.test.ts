@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DuelLoopError, FixtureDecisionModel, type DecisionModel } from 'duelloop';
 import type { WebSocket } from 'ws';
 import { LiveDecisionCoordinator } from '../src/duelloop/live/coordinator.js';
+import { AuditedDecisionModel, type ModelAttempt } from '../src/duelloop/model.js';
 import { PokerRuntime } from '../src/runtime/runtime.js';
 import { Store } from '../src/storage/store.js';
 import { baselineSnapshot } from '../src/knowledge/store.js';
@@ -357,6 +358,35 @@ describe('production engine through simulated OpenPoker WebSocket', () => {
       source: 'unavailable',
       status: 'failed',
     });
+  });
+
+  it('blocks live play only after the third HTTP 403 failure without submitting an action', async () => {
+    const urls = await arena((ws, message) => {
+      if (message.type === 'join_lobby') {
+        joined(ws);
+        turn(ws, 1);
+      }
+    });
+    const source = scoreModel();
+    const recorded: ModelAttempt[] = [];
+    const model = new AuditedDecisionModel(source, (attempt) => recorded.push(attempt));
+    const f = createLive(urls, model);
+    const score = vi.spyOn(source, 'score').mockImplementation(async () => {
+      expect(f.raw.loadDecisionBlock()).toBeNull();
+      throw new DuelLoopError('MODEL_INVALID', 'gateway failure', {
+        status: 403,
+        failureKind: 'http',
+      });
+    });
+    await f.runtime.start({ strategy: 'jev' });
+    await vi.waitFor(() => expect(f.raw.loadDecisionBlock()?.reason).toBe('MODEL_INVALID'));
+    expect(score).toHaveBeenCalledTimes(3);
+    expect(recorded.map((attempt) => attempt.retryIndex)).toEqual([0, 1, 2]);
+    expect(urls.messages.filter((message) => message.type === 'action')).toHaveLength(0);
+    expect(f.coordinator.sdk.intents()).toHaveLength(0);
+    expect(f.raw.db.prepare('SELECT source,status FROM decisions').all()).toEqual([
+      { source: 'unavailable', status: 'failed' },
+    ]);
   });
 
   it('reconnects and retries the same durable command without a second Score request', async () => {

@@ -7,6 +7,7 @@ export const RETRY_POLICY = Object.freeze({
   additiveJitterRatio: 0.25,
   retryAfter: 'minimum-delay',
   malformedAnswer: 'immediate-bounded-retry',
+  jevHttp403MaxAttempts: 3,
 });
 
 export interface RetryFailure {
@@ -17,9 +18,18 @@ export interface RetryFailure {
 }
 
 /** null is terminal; zero preserves bounded retries of malformed score answers. */
-export function retryDelay(error: RetryFailure, retryIndex: number): number | null {
+export function retryDelay(
+  error: RetryFailure,
+  retryIndex: number,
+  options: { retryForbidden?: boolean } = {},
+): number | null {
   if (!['MODEL_INVALID', 'MODEL_TIMEOUT'].includes(error.code)) return null;
-  if (error.httpStatus !== undefined && error.httpStatus !== 429 && error.httpStatus < 500)
+  if (
+    error.httpStatus !== undefined &&
+    error.httpStatus !== 429 &&
+    !(error.httpStatus === 403 && options.retryForbidden) &&
+    error.httpStatus < 500
+  )
     return null;
   const transient =
     error.httpStatus !== undefined ||

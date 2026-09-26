@@ -161,7 +161,8 @@ export class AuditedDecisionModel implements DecisionModel {
       state: request.state,
       questions: request.questions,
     });
-    for (let retryIndex = 0; retryIndex <= this.#maxRetries; retryIndex++) {
+    let maxRetries = this.#maxRetries;
+    for (let retryIndex = 0; retryIndex <= maxRetries; retryIndex++) {
       guard();
       const started: ModelAttemptStart = {
         requestId: randomUUID(),
@@ -188,8 +189,12 @@ export class AuditedDecisionModel implements DecisionModel {
       }
       const { response, error } = outcome;
       if (!error) return { ...response!, usage: total };
-      const delayMs = retryDelay(error, retryIndex);
-      if (delayMs === null || retryIndex === this.#maxRetries) {
+      // A gateway 403 may be transient. Once seen, cap this entire decision at
+      // three attempts, even if a later request fails with a different status.
+      if (error.httpStatus === 403)
+        maxRetries = Math.min(maxRetries, RETRY_POLICY.jevHttp403MaxAttempts - 1);
+      const delayMs = retryDelay(error, retryIndex, { retryForbidden: true });
+      if (delayMs === null || retryIndex >= maxRetries) {
         throw new DuelLoopError(error.code, 'Audited model request failed', {
           ...(error.httpStatus === undefined ? {} : { status: error.httpStatus }),
           usage: total,
